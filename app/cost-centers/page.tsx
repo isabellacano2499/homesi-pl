@@ -17,6 +17,7 @@ export default function CostCentersPage() {
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteErr, setDeleteErr] = useState("");
   const [reapplying, setReapplying] = useState(false);
   const [reapplyMsg, setReapplyMsg] = useState("");
 
@@ -60,11 +61,19 @@ export default function CostCentersPage() {
   }
 
   async function handleDelete(id: string, name: string) {
-    if (!confirm(`Delete "${name}" and all its rules?`)) return;
+    if (!confirm(`Delete "${name}"? Its rules will also be deleted.`)) return;
     setDeletingId(id);
+    setDeleteErr("");
     try {
-      await fetch(`/api/cost-centers/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/cost-centers/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setDeleteErr(j.error ?? `Failed to delete "${name}".`);
+        return; // do NOT remove from UI — the delete didn't happen
+      }
       setRecords((p) => p.filter((r) => r.id !== id));
+    } catch (err) {
+      setDeleteErr(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setDeletingId(null);
     }
@@ -130,6 +139,12 @@ export default function CostCentersPage() {
       {reapplyMsg && (
         <p className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-2 text-sm text-blue-700">
           {reapplyMsg}
+        </p>
+      )}
+
+      {deleteErr && (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {deleteErr}
         </p>
       )}
 

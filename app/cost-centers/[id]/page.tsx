@@ -74,6 +74,7 @@ function RuleEditRow({
     value: rule.value,
   });
   const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
 
   function setField<K extends keyof RuleForm>(key: K, val: RuleForm[K]) {
     setForm((prev) => {
@@ -88,7 +89,14 @@ function RuleEditRow({
 
   async function handleSave() {
     setSaving(true);
-    try { await onSave(form); } finally { setSaving(false); }
+    setSaveErr("");
+    try {
+      await onSave(form);
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
   }
 
   const isNumeric = getFieldKind(form.field) === "numeric";
@@ -157,20 +165,23 @@ function RuleEditRow({
         )}
       </td>
       <td className="px-4 py-2">
-        <div className="flex items-center gap-1">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-[10px] text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            <Save size={10} /> {saving ? "…" : "Save"}
-          </button>
-          <button
-            onClick={onCancel}
-            className="rounded border border-gray-200 px-2 py-1 text-[10px] text-gray-500 hover:bg-gray-50"
-          >
-            <X size={10} />
-          </button>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-[10px] text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              <Save size={10} /> {saving ? "…" : "Save"}
+            </button>
+            <button
+              onClick={onCancel}
+              className="rounded border border-gray-200 px-2 py-1 text-[10px] text-gray-500 hover:bg-gray-50"
+            >
+              <X size={10} />
+            </button>
+          </div>
+          {saveErr && <p className="text-[10px] text-red-600">{saveErr}</p>}
         </div>
       </td>
     </tr>
@@ -200,7 +211,9 @@ export default function CostCenterDetailPage() {
 
   const [glMappings, setGlMappings] = useState<GLMapping[]>([]);
   const [movingId, setMovingId] = useState<string | null>(null);
+  const [moveErr, setMoveErr] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteRuleErr, setDeleteRuleErr] = useState("");
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -292,13 +305,17 @@ export default function CostCenterDetailPage() {
 
   // ── Edit rule ───────────────────────────────────────────────────────────────
 
+  // Throws on failure so RuleEditRow can display the error inline
   async function handleEditRule(ruleId: string, data: RuleForm) {
     const res = await fetch(`/api/cost-centers/${id}/rules/${ruleId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.error ?? "Failed to save rule");
+    }
     setEditingRuleId(null);
     load();
   }
@@ -307,13 +324,21 @@ export default function CostCenterDetailPage() {
 
   async function handleMove(ruleId: string, direction: "up" | "down") {
     setMovingId(ruleId);
+    setMoveErr("");
     try {
-      await fetch(`/api/cost-centers/${id}/rules/${ruleId}`, {
+      const res = await fetch(`/api/cost-centers/${id}/rules/${ruleId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ direction }),
       });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setMoveErr(j.error ?? "Failed to move rule");
+        return;
+      }
       load();
+    } catch (err) {
+      setMoveErr(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setMovingId(null);
     }
@@ -324,9 +349,17 @@ export default function CostCenterDetailPage() {
   async function handleDelete(ruleId: string) {
     if (!confirm("Delete this condition?")) return;
     setDeletingId(ruleId);
+    setDeleteRuleErr("");
     try {
-      await fetch(`/api/cost-centers/${id}/rules/${ruleId}`, { method: "DELETE" });
+      const res = await fetch(`/api/cost-centers/${id}/rules/${ruleId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setDeleteRuleErr(j.error ?? "Failed to delete condition");
+        return; // do NOT remove from UI
+      }
       setRules((prev) => prev.filter((r) => r.id !== ruleId));
+    } catch (err) {
+      setDeleteRuleErr(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setDeletingId(null);
     }
@@ -399,6 +432,12 @@ export default function CostCenterDetailPage() {
 
         {cc.description && <p className="text-sm text-gray-500">{cc.description}</p>}
       </div>
+
+      {(moveErr || deleteRuleErr) && (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {moveErr || deleteRuleErr}
+        </p>
+      )}
 
       {/* Rules card */}
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">

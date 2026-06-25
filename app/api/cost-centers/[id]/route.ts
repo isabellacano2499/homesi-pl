@@ -32,6 +32,42 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
 export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = createServerClient();
+
+  // Pre-flight: count records that reference this CC and can't be auto-deleted
+  const [
+    { count: txCount },
+    { count: snapCount },
+  ] = await Promise.all([
+    supabase
+      .from("pl_transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("cost_center_id", id),
+    supabase
+      .from("conflict_snapshots")
+      .select("id", { count: "exact", head: true })
+      .eq("resolved_cc_id", id),
+  ]);
+
+  const blockers: string[] = [];
+  if ((txCount ?? 0) > 0)
+    blockers.push(`${txCount} transaction${txCount !== 1 ? "s" : ""} assigned to it`);
+  if ((snapCount ?? 0) > 0)
+    blockers.push(`${snapCount} resolved conflict${snapCount !== 1 ? "s" : ""} referencing it`);
+
+  if (blockers.length > 0) {
+    return NextResponse.json(
+      {
+        error: `Cannot delete: ${blockers.join(" and ")}. Reassign or reopen them first.`,
+        tx_count: txCount ?? 0,
+        snap_count: snapCount ?? 0,
+      },
+      { status: 409 }
+    );
+  }
+
+  // Rules are owned by the CC — delete them first (cascade guard)
+  await supabase.from("cost_center_rules").delete().eq("cost_center_id", id);
+
   const { error } = await supabase.from("cost_centers").delete().eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   return new NextResponse(null, { status: 204 });
