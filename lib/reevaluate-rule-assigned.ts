@@ -1,9 +1,10 @@
 /**
- * Targeted re-evaluation of rule-assigned transactions.
+ * Targeted re-evaluation of non-manual transactions.
  *
  * Used when a Cost Center is deleted or a rule condition is modified/deleted.
- * Only touches transactions with assignment_origin = 'rule'.
- * Manual-assigned transactions are never touched here.
+ * Covers assignment_origin = 'rule', NULL (legacy rows created before the column
+ * existed), and any other non-'manual' value — all treated as auto-assignable.
+ * Transactions with assignment_origin = 'manual' are NEVER touched here.
  */
 
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
@@ -49,8 +50,12 @@ export async function loadAllCCsWithRules(supabase: SupabaseClient): Promise<Cos
 }
 
 /**
- * Fetches the IDs of all rule-assigned transactions for a given Cost Center.
- * "Rule-assigned" means assignment_origin = 'rule' (excludes manual, conflict_resolved).
+ * Fetches the IDs of all re-evaluable transactions for a given Cost Center.
+ * Includes assignment_origin = 'rule', NULL (legacy), and any unrecognized value.
+ * Excludes only assignment_origin = 'manual' — those are never auto-reassigned.
+ *
+ * NOTE: In SQL, `col != 'manual'` returns NULL for NULL values, so we must use
+ * an OR with IS NULL to capture both cases.
  */
 export async function getRuleAssignedTxIds(
   supabase: SupabaseClient,
@@ -64,7 +69,8 @@ export async function getRuleAssignedTxIds(
       .from("pl_transactions")
       .select("id")
       .eq("cost_center_id", ccId)
-      .eq("assignment_origin", "rule")
+      // Captures: 'rule', 'conflict_resolved', any unknown value, AND null
+      .or("assignment_origin.neq.manual,assignment_origin.is.null")
       .range(offset, offset + 999);
 
     if (!data || data.length === 0) break;

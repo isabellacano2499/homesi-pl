@@ -38,23 +38,33 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = createServerClient();
 
-  // ── Pre-flight: block only on records that can't be auto-handled ──────────
+  // ── Pre-flight: classify ALL transactions pointing to this CC ─────────────
+  // Three parallel counts to characterize what we're dealing with.
 
   const [
     { count: manualCount },
     { count: snapCount },
+    { count: nullOriginCount },
   ] = await Promise.all([
-    // Manual-assigned: user chose these explicitly, must reassign manually
+    // (1) Manual: user chose these explicitly — must block
     supabase
       .from("pl_transactions")
       .select("id", { count: "exact", head: true })
       .eq("cost_center_id", id)
       .eq("assignment_origin", "manual"),
-    // Resolved conflicts pointing to this CC: user chose these explicitly
+
+    // (2) Resolved conflicts snapshot: user resolved explicitly — must block
     supabase
       .from("conflict_snapshots")
       .select("id", { count: "exact", head: true })
       .eq("resolved_cc_id", id),
+
+    // (3) NULL-origin: legacy rows assigned before the column existed — will re-evaluate
+    supabase
+      .from("pl_transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("cost_center_id", id)
+      .is("assignment_origin", null),
   ]);
 
   const blockers: string[] = [];
@@ -73,25 +83,56 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
         error: `Cannot delete: ${blockers.join("; ")}.`,
         manual_count: manualCount ?? 0,
         snap_count: snapCount ?? 0,
+        null_origin_count: nullOriginCount ?? 0,
       },
       { status: 409 }
     );
   }
 
-  // ── Collect rule-assigned tx IDs before deletion ──────────────────────────
+  // ── Collect all re-evaluable tx IDs before deletion ───────────────────────
+  // This now includes: 'rule', NULL (legacy), 'conflict_resolved' edge-cases, etc.
+  // Anything that isn't explicitly 'manual'.
 
-  const ruleAssignedIds = await getRuleAssignedTxIds(supabase, id);
+  const idsToReeval = await getRuleAssignedTxIds(supabase, id);
 
-  // ── Delete the CC and its rules ───────────────────────────────────────────
+  // ── Delete rules then the CC ──────────────────────────────────────────────
 
   await supabase.from("cost_center_rules").delete().eq("cost_center_id", id);
+
   const { error } = await supabase.from("cost_centers").delete().eq("id", id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-  // ── Re-evaluate affected transactions against remaining rules ─────────────
+  if (error) {
+    // Safety net: catch FK violation in case any transactions slipped through
+    // the pre-flight (e.g. a race condition or a data inconsistency in the DB).
+    const isForeignKey =
+      (error as { code?: string }).code === "23503" ||
+      error.message.toLowerCase().includes("foreign key") ||
+      error.message.toLowerCase().includes("fkey");
 
-  const remaining = await loadAllCCsWithRules(supabase); // deleted CC is gone
-  const stats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, remaining);
+    if (isForeignKey) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot delete: some transactions still reference this Cost Center " +
+            "despite the pre-flight check. This usually means there are transactions " +
+            "with an unexpected status in the database. Please open a Supabase SQL " +
+            "editor and run: SELECT assignment_origin, COUNT(*) FROM pl_transactions " +
+            `WHERE cost_center_id = '${id}' GROUP BY assignment_origin`,
+        },
+        { status: 409 }
+      );
+    }
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
 
-  return NextResponse.json({ deleted: true, ...stats });
+  // ── Re-evaluate against remaining rules ───────────────────────────────────
+
+  const remaining = await loadAllCCsWithRules(supabase);
+  const stats = await reevaluateRuleAssigned(supabase, idsToReeval, remaining);
+
+  return NextResponse.json({
+    deleted: true,
+    null_origin_count: nullOriginCount ?? 0, // how many were legacy/unknown-origin
+    ...stats,
+  });
 }
