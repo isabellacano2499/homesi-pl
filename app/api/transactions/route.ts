@@ -41,7 +41,7 @@ function withFilters(query: any, f: TransactionFilters): any {
 }
 
 function sumTotals(rows: { debit: unknown; credit: unknown; movement: unknown }[]) {
-  return rows.reduce(
+  return rows.reduce<{ debit: number; credit: number; movement: number }>(
     (acc, r) => ({
       debit: acc.debit + (Number(r.debit) || 0),
       credit: acc.credit + (Number(r.credit) || 0),

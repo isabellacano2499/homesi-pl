@@ -5,6 +5,7 @@ import {
   AlertTriangle, CheckCircle, ChevronDown, ChevronRight,
   RotateCcw, UserCheck, Layers, ClipboardList,
 } from "lucide-react";
+import { ReportFilter } from "@/components/report-filter";
 import type { CostCenter, ConflictGroup, ResolvedConflictGroup, AssignmentGroup, AssignmentTx } from "@/types";
 
 function fmt(n: number | null | undefined) {
@@ -14,6 +15,11 @@ function fmt(n: number | null | undefined) {
 function mvCls(n: number | null | undefined) {
   const v = n ?? 0;
   return v > 0 ? "text-green-700" : v < 0 ? "text-red-600" : "text-gray-400";
+}
+
+function branchParams(branches: string[]): string {
+  if (branches.length === 0) return "";
+  return "?" + branches.map((b) => `branch=${encodeURIComponent(b)}`).join("&");
 }
 
 // ─── Shared: assign multiple txs to a CC ─────────────────────────────────────
@@ -28,28 +34,15 @@ async function apiAssign(transactionIds: string[], costCenterId: string): Promis
   return null;
 }
 
-// ─── Unassigned Tab ───────────────────────────────────────────────────────────
-
-function UnassignedTab({ costCenters }: { costCenters: CostCenter[] }) {
-  return <AssignTab costCenters={costCenters} endpoint="/api/cost-center-assignment/unassigned" mode="assign" />;
-}
-
-// ─── Assigned by Rule Tab ─────────────────────────────────────────────────────
-
-function AssignedByRuleTab({ costCenters }: { costCenters: CostCenter[] }) {
-  return <AssignTab costCenters={costCenters} endpoint="/api/cost-center-assignment/assigned-by-rule" mode="override" />;
-}
-
 // ─── Shared AssignTab ─────────────────────────────────────────────────────────
 
 function AssignTab({
-  costCenters,
-  endpoint,
-  mode,
+  costCenters, endpoint, mode, branches,
 }: {
   costCenters: CostCenter[];
   endpoint: string;
   mode: "assign" | "override";
+  branches: string[];
 }) {
   const [groups, setGroups] = useState<AssignmentGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,10 +56,10 @@ function AssignTab({
   const load = useCallback(async () => {
     setLoading(true); setMsg("");
     try {
-      const res = await fetch(endpoint);
+      const res = await fetch(`${endpoint}${branchParams(branches)}`);
       if (res.ok) setGroups(await res.json());
     } finally { setLoading(false); }
-  }, [endpoint]);
+  }, [endpoint, branches]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -111,6 +104,7 @@ function AssignTab({
       <CheckCircle size={20} className="mx-auto mb-2 text-green-500" />
       <p className="text-sm font-medium text-green-700">
         {mode === "assign" ? "No unassigned transactions." : "No rule-assigned transactions."}
+        {branches.length > 0 && " (within selected branches)"}
       </p>
     </div>
   );
@@ -121,7 +115,6 @@ function AssignTab({
 
   return (
     <div className="space-y-4">
-      {/* Bulk action bar */}
       <div className={`flex flex-wrap items-center gap-3 rounded-xl border ${bgBanner} px-4 py-3`}>
         <span className={`text-xs font-medium ${textBanner}`}>
           {totalCount} transaction{totalCount !== 1 ? "s" : ""}
@@ -242,20 +235,32 @@ function AssignTab({
   );
 }
 
+// ─── Unassigned / Assigned by Rule (wrappers) ─────────────────────────────────
+
+function UnassignedTab({ costCenters, branches }: { costCenters: CostCenter[]; branches: string[] }) {
+  return <AssignTab costCenters={costCenters} endpoint="/api/cost-center-assignment/unassigned" mode="assign" branches={branches} />;
+}
+
+function AssignedByRuleTab({ costCenters, branches }: { costCenters: CostCenter[]; branches: string[] }) {
+  return <AssignTab costCenters={costCenters} endpoint="/api/cost-center-assignment/assigned-by-rule" mode="override" branches={branches} />;
+}
+
 // ─── Manual Assigned Tab ──────────────────────────────────────────────────────
 
-function ManualTab() {
+function ManualTab({ branches }: { branches: string[] }) {
   const [groups, setGroups] = useState<AssignmentGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    fetch("/api/cost-center-assignment/manual")
-      .then((r) => r.json())
-      .then(setGroups)
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/cost-center-assignment/manual${branchParams(branches)}`);
+      if (res.ok) setGroups(await res.json());
+    } finally { setLoading(false); }
+  }, [branches]);
+
+  useEffect(() => { load(); }, [load]);
 
   const totalCount = groups.reduce((s, g) => s + g.transactions.length, 0);
 
@@ -270,7 +275,9 @@ function ManualTab() {
   );
 
   if (totalCount === 0) return (
-    <p className="py-10 text-center text-sm text-gray-400">No manually assigned transactions yet.</p>
+    <p className="py-10 text-center text-sm text-gray-400">
+      No manually assigned transactions{branches.length > 0 ? " in selected branches" : ""}.
+    </p>
   );
 
   return (
@@ -331,7 +338,7 @@ function ManualTab() {
 
 // ─── Conflict (Pending) Tab ───────────────────────────────────────────────────
 
-function ConflictTab({ costCenters }: { costCenters: CostCenter[] }) {
+function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; branches: string[] }) {
   const [groups, setGroups] = useState<ConflictGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -344,10 +351,10 @@ function ConflictTab({ costCenters }: { costCenters: CostCenter[] }) {
   const load = useCallback(async () => {
     setLoading(true); setMsg("");
     try {
-      const res = await fetch("/api/conflicts");
+      const res = await fetch(`/api/conflicts${branchParams(branches)}`);
       if (res.ok) setGroups(await res.json());
     } finally { setLoading(false); }
-  }, []);
+  }, [branches]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -392,7 +399,9 @@ function ConflictTab({ costCenters }: { costCenters: CostCenter[] }) {
   if (totalCount === 0) return (
     <div className="rounded-xl border border-green-100 bg-green-50 px-6 py-8 text-center">
       <CheckCircle size={20} className="mx-auto mb-2 text-green-500" />
-      <p className="text-sm font-medium text-green-700">No pending conflicts.</p>
+      <p className="text-sm font-medium text-green-700">
+        No pending conflicts{branches.length > 0 ? " in selected branches" : ""}.
+      </p>
     </div>
   );
 
@@ -498,20 +507,38 @@ function ConflictTab({ costCenters }: { costCenters: CostCenter[] }) {
 
 // ─── Conflict Resolved Tab ────────────────────────────────────────────────────
 
-function ConflictResolvedTab() {
+function ConflictResolvedTab({
+  costCenters, branches,
+}: {
+  costCenters: CostCenter[];
+  branches: string[];
+}) {
   const [groups, setGroups] = useState<ResolvedConflictGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [reopening, setReopening] = useState<string | null>(null);
+  const [rowCcId, setRowCcId] = useState<Record<string, string>>({});
+  const [reassigning, setReassigning] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true); setMsg("");
     try {
-      const res = await fetch("/api/conflicts/resolved");
-      if (res.ok) setGroups(await res.json());
+      const res = await fetch(`/api/conflicts/resolved${branchParams(branches)}`);
+      if (res.ok) {
+        const data = await res.json() as ResolvedConflictGroup[];
+        setGroups(data);
+        // Pre-populate rowCcId from current assignment
+        const initial: Record<string, string> = {};
+        for (const g of data) for (const tx of g.transactions) {
+          if ((tx as ResolvedConflictGroup["transactions"][number] & { cost_center_id?: string }).cost_center_id) {
+            initial[tx.id] = (tx as ResolvedConflictGroup["transactions"][number] & { cost_center_id?: string }).cost_center_id!;
+          }
+        }
+        setRowCcId(initial);
+      }
     } finally { setLoading(false); }
-  }, []);
+  }, [branches]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -532,6 +559,20 @@ function ConflictResolvedTab() {
     } finally { setReopening(null); }
   }
 
+  async function handleReassign(txId: string, ccId: string) {
+    if (!ccId) return;
+    setReassigning(txId); setMsg("");
+    try {
+      const res = await fetch("/api/conflicts/reassign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_id: txId, cost_center_id: ccId }),
+      });
+      if (!res.ok) { const j = await res.json(); setMsg(`Error: ${j.error}`); return; }
+      load();
+    } finally { setReassigning(null); }
+  }
+
   const totalCount = groups.reduce((s, g) => s + g.transactions.length, 0);
 
   if (loading) return (
@@ -540,13 +581,16 @@ function ConflictResolvedTab() {
     </div>
   );
   if (totalCount === 0) return (
-    <p className="py-10 text-center text-sm text-gray-400">No resolved conflicts yet.</p>
+    <p className="py-10 text-center text-sm text-gray-400">
+      No resolved conflicts{branches.length > 0 ? " in selected branches" : ""}.
+    </p>
   );
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-400">{totalCount} resolved conflict{totalCount !== 1 ? "s" : ""}</p>
       {msg && <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">{msg}</p>}
+
       {groups.map((group) => {
         const key = group.gl_code;
         const isCollapsed = collapsedGroups.has(key);
@@ -559,6 +603,7 @@ function ConflictResolvedTab() {
               <span className="text-xs text-gray-500">{group.gl_name}</span>
               <span className="ml-auto text-xs text-gray-400">{group.transactions.length} resolved</span>
             </div>
+
             {!isCollapsed && (
               <table className="w-full text-xs">
                 <thead>
@@ -569,42 +614,75 @@ function ConflictResolvedTab() {
                     <th className="px-4 py-2 font-medium">Vendor</th>
                     <th className="px-4 py-2 text-right font-medium">Movement</th>
                     <th className="px-4 py-2 font-medium">Was conflicting</th>
-                    <th className="px-4 py-2 font-medium">Assigned to</th>
+                    <th className="px-4 py-2 font-medium">Assigned CC</th>
                     <th className="px-4 py-2 font-medium">Resolved at</th>
                     <th className="px-4 py-2" />
                   </tr>
                 </thead>
                 <tbody>
-                  {group.transactions.map((tx) => (
-                    <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="px-4 py-2 text-gray-700">{tx.month ?? "—"}</td>
-                      <td className="px-4 py-2 text-gray-700">{tx.branch ?? "—"}</td>
-                      <td className="max-w-[160px] truncate px-4 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
-                      <td className="max-w-[120px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
-                      <td className={`px-4 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
-                      <td className="px-4 py-2">
-                        <span className="inline-flex flex-wrap gap-1">
-                          {tx.conflicting_ccs.map((cc) => (
-                            <span key={cc.id} className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 text-[10px]">{cc.name}</span>
-                          ))}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2">
-                        {tx.resolved_cc
-                          ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800 font-medium">{tx.resolved_cc.name}</span>
-                          : "—"}
-                      </td>
-                      <td className="px-4 py-2 text-gray-400">
-                        {tx.resolved_at ? new Date(tx.resolved_at).toLocaleDateString() : "—"}
-                      </td>
-                      <td className="px-4 py-2">
-                        <button onClick={() => handleReopen(tx.id)} disabled={reopening === tx.id} title="Reopen conflict"
-                          className="flex items-center gap-1 rounded px-2 py-1 text-[10px] text-gray-500 hover:text-amber-700 hover:bg-amber-50 disabled:opacity-40">
-                          <RotateCcw size={11} /> Reopen
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {group.transactions.map((tx) => {
+                    const txWithCcId = tx as typeof tx & { cost_center_id?: string | null };
+                    const currentCcId = rowCcId[tx.id] ?? txWithCcId.cost_center_id ?? "";
+                    const resolvedCcId = txWithCcId.cost_center_id ?? "";
+                    const isDirty = currentCcId !== resolvedCcId && currentCcId !== "";
+
+                    return (
+                      <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50">
+                        <td className="px-4 py-2 text-gray-700">{tx.month ?? "—"}</td>
+                        <td className="px-4 py-2 text-gray-700">{tx.branch ?? "—"}</td>
+                        <td className="max-w-[140px] truncate px-4 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
+                        <td className="max-w-[110px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
+                        <td className={`px-4 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
+                        <td className="px-4 py-2">
+                          <span className="inline-flex flex-wrap gap-1">
+                            {tx.conflicting_ccs.map((cc) => (
+                              <span key={cc.id} className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 text-[10px]">{cc.name}</span>
+                            ))}
+                          </span>
+                        </td>
+
+                        {/* Editable CC column */}
+                        <td className="px-4 py-2">
+                          <div className="flex items-center gap-1.5">
+                            <select
+                              value={currentCcId}
+                              onChange={(e) => setRowCcId((prev) => ({ ...prev, [tx.id]: e.target.value }))}
+                              className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none max-w-[140px]"
+                              disabled={reassigning === tx.id}
+                            >
+                              <option value="">Choose…</option>
+                              {costCenters.map((cc) => (
+                                <option key={cc.id} value={cc.id}>{cc.name}</option>
+                              ))}
+                            </select>
+                            {isDirty && (
+                              <button
+                                onClick={() => handleReassign(tx.id, currentCcId)}
+                                disabled={reassigning === tx.id}
+                                className="rounded-lg bg-blue-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-blue-700 disabled:opacity-40 whitespace-nowrap"
+                              >
+                                {reassigning === tx.id ? "…" : "Save"}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="px-4 py-2 text-gray-400">
+                          {tx.resolved_at ? new Date(tx.resolved_at).toLocaleDateString() : "—"}
+                        </td>
+                        <td className="px-4 py-2">
+                          <button
+                            onClick={() => handleReopen(tx.id)}
+                            disabled={reopening === tx.id}
+                            title="Reopen conflict"
+                            className="flex items-center gap-1 rounded px-2 py-1 text-[10px] text-gray-500 hover:text-amber-700 hover:bg-amber-50 disabled:opacity-40"
+                          >
+                            <RotateCcw size={11} /> Reopen
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
@@ -630,11 +708,19 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
 export default function CCAssignmentPage() {
   const [tab, setTab] = useState<Tab>("unassigned");
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
+  const [branches, setBranches] = useState<string[]>([]);
+  const [allBranches, setAllBranches] = useState<string[]>([]);
 
   useEffect(() => {
     fetch("/api/cost-centers")
       .then((r) => r.json())
       .then((data: CostCenter[]) => setCostCenters(data))
+      .catch(console.error);
+
+    // Fetch branch options from filter-options
+    fetch("/api/transactions/filter-options")
+      .then((r) => r.json())
+      .then((d: { branch: string[] }) => setAllBranches(d.branch ?? []))
       .catch(console.error);
   }, []);
 
@@ -643,6 +729,12 @@ export default function CCAssignmentPage() {
       <div>
         <h2 className="text-xl font-bold text-gray-900">Cost Center Assignment</h2>
         <p className="text-sm text-gray-500">Assign, override, and resolve cost center conflicts.</p>
+      </div>
+
+      {/* Branch filter */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-500 font-medium">Filter by branch:</span>
+        <ReportFilter label="Branch" options={allBranches} selected={branches} onChange={setBranches} />
       </div>
 
       {/* Tabs */}
@@ -667,11 +759,11 @@ export default function CCAssignmentPage() {
         })}
       </div>
 
-      {tab === "unassigned"        && <UnassignedTab costCenters={costCenters} />}
-      {tab === "assigned-by-rule"  && <AssignedByRuleTab costCenters={costCenters} />}
-      {tab === "manual"            && <ManualTab />}
-      {tab === "conflict"          && <ConflictTab costCenters={costCenters} />}
-      {tab === "conflict-resolved" && <ConflictResolvedTab />}
+      {tab === "unassigned"        && <UnassignedTab costCenters={costCenters} branches={branches} />}
+      {tab === "assigned-by-rule"  && <AssignedByRuleTab costCenters={costCenters} branches={branches} />}
+      {tab === "manual"            && <ManualTab branches={branches} />}
+      {tab === "conflict"          && <ConflictTab costCenters={costCenters} branches={branches} />}
+      {tab === "conflict-resolved" && <ConflictResolvedTab costCenters={costCenters} branches={branches} />}
     </div>
   );
 }
