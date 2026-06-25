@@ -48,5 +48,12 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+  // Bump rules_last_modified_at on the cost center
+  await supabase
+    .from("cost_centers")
+    .update({ rules_last_modified_at: new Date().toISOString() })
+    .eq("id", id);
+
   return NextResponse.json(data, { status: 201 });
 }

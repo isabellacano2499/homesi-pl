@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowLeft, Plus, Trash2, ChevronUp, ChevronDown, Save, X,
+  ArrowLeft, Plus, Trash2, ChevronUp, ChevronDown, Save, X, Pencil,
 } from "lucide-react";
 import {
   CC_FIELDS, TEXT_OPERATORS, NUMERIC_OPERATORS,
@@ -52,6 +52,131 @@ function opLabel(field: string, op: string) {
   return ops.find((o) => o.value === op)?.label ?? op;
 }
 
+// ─── Inline rule edit form ────────────────────────────────────────────────────
+
+function RuleEditRow({
+  rule,
+  isFirst,
+  glMappings,
+  onSave,
+  onCancel,
+}: {
+  rule: CostCenterRule;
+  isFirst: boolean;
+  glMappings: GLMapping[];
+  onSave: (data: RuleForm) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [form, setForm] = useState<RuleForm>({
+    logic_connector: rule.logic_connector ?? "AND",
+    field: rule.field,
+    operator: rule.operator,
+    value: rule.value,
+  });
+  const [saving, setSaving] = useState(false);
+
+  function setField<K extends keyof RuleForm>(key: K, val: RuleForm[K]) {
+    setForm((prev) => {
+      const next = { ...prev, [key]: val };
+      if (key === "field") {
+        next.operator = defaultOperator(val as string);
+        next.value = "";
+      }
+      return next;
+    });
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try { await onSave(form); } finally { setSaving(false); }
+  }
+
+  const isNumeric = getFieldKind(form.field) === "numeric";
+  const isGLCode = form.field === "gl_code";
+  const availableOps = isNumeric ? NUMERIC_OPERATORS : TEXT_OPERATORS;
+
+  return (
+    <tr className="border-b border-blue-100 bg-blue-50/40">
+      <td className="px-4 py-2 text-gray-400 text-xs">{rule.sequence}</td>
+      <td className="px-4 py-2">
+        {isFirst ? (
+          <span className="text-gray-300 text-xs">—</span>
+        ) : (
+          <select
+            value={form.logic_connector}
+            onChange={(e) => setField("logic_connector", e.target.value as "AND" | "OR")}
+            className="rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:border-blue-400 focus:outline-none"
+          >
+            <option value="AND">AND</option>
+            <option value="OR">OR</option>
+          </select>
+        )}
+      </td>
+      <td className="px-4 py-2">
+        <select
+          value={form.field}
+          onChange={(e) => setField("field", e.target.value)}
+          className="rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:border-blue-400 focus:outline-none"
+        >
+          {CC_FIELDS.map((f) => (
+            <option key={f.value} value={f.value}>{f.label}</option>
+          ))}
+        </select>
+      </td>
+      <td className="px-4 py-2">
+        <select
+          value={form.operator}
+          onChange={(e) => setField("operator", e.target.value)}
+          className="rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:border-blue-400 focus:outline-none"
+        >
+          {availableOps.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </td>
+      <td className="px-4 py-2">
+        {isGLCode ? (
+          <select
+            value={form.value}
+            onChange={(e) => setField("value", e.target.value)}
+            className="rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:border-blue-400 focus:outline-none min-w-[160px]"
+          >
+            <option value="">Select GL Code…</option>
+            {glMappings.map((m) => (
+              <option key={m.id} value={m.gl_code}>{m.gl_code} — {m.gl_name}</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type={isNumeric ? "number" : "text"}
+            value={form.value}
+            onChange={(e) => setField("value", e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSave()}
+            className="rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:border-blue-400 focus:outline-none min-w-[140px]"
+          />
+        )}
+      </td>
+      <td className="px-4 py-2">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-[10px] text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Save size={10} /> {saving ? "…" : "Save"}
+          </button>
+          <button
+            onClick={onCancel}
+            className="rounded border border-gray-200 px-2 py-1 text-[10px] text-gray-500 hover:bg-gray-50"
+          >
+            <X size={10} />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CostCenterDetailPage() {
@@ -61,6 +186,13 @@ export default function CostCenterDetailPage() {
   const [rules, setRules] = useState<CostCenterRule[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Name editing
+  const [editingName, setEditingName] = useState(false);
+  const [nameVal, setNameVal] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const [nameErr, setNameErr] = useState("");
+
+  // Add rule
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState<RuleForm>(emptyForm());
   const [saving, setSaving] = useState(false);
@@ -69,6 +201,7 @@ export default function CostCenterDetailPage() {
   const [glMappings, setGlMappings] = useState<GLMapping[]>([]);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,15 +218,17 @@ export default function CostCenterDetailPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Lazy-load GL mappings only when the gl_code field is selected in the form
+  // Lazy-load GL mappings when gl_code field is selected
   useEffect(() => {
-    if (adding && form.field === "gl_code" && glMappings.length === 0) {
+    const needGL = (adding && form.field === "gl_code") ||
+      (editingRuleId !== null && rules.find((r) => r.id === editingRuleId)?.field === "gl_code");
+    if (needGL && glMappings.length === 0) {
       fetch("/api/gl-mapping")
         .then((r) => r.json())
         .then(setGlMappings)
         .catch(console.error);
     }
-  }, [adding, form.field, glMappings.length]);
+  }, [adding, form.field, editingRuleId, rules, glMappings.length]);
 
   function setFormField<K extends keyof RuleForm>(key: K, val: RuleForm[K]) {
     setForm((prev) => {
@@ -105,6 +240,35 @@ export default function CostCenterDetailPage() {
       return next;
     });
   }
+
+  // ── Name edit ───────────────────────────────────────────────────────────────
+
+  function startEditName() {
+    setNameVal(cc?.name ?? "");
+    setNameErr("");
+    setEditingName(true);
+  }
+
+  async function saveName() {
+    if (!nameVal.trim()) { setNameErr("Name is required"); return; }
+    setSavingName(true);
+    setNameErr("");
+    try {
+      const res = await fetch(`/api/cost-centers/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nameVal.trim(), description: cc?.description }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setNameErr(json.error ?? "Failed to save"); return; }
+      setCC((prev) => prev ? { ...prev, name: json.name } : prev);
+      setEditingName(false);
+    } finally {
+      setSavingName(false);
+    }
+  }
+
+  // ── Add rule ────────────────────────────────────────────────────────────────
 
   async function handleAddRule() {
     if (!form.value.trim()) { setFormErr("Value is required"); return; }
@@ -126,6 +290,21 @@ export default function CostCenterDetailPage() {
     }
   }
 
+  // ── Edit rule ───────────────────────────────────────────────────────────────
+
+  async function handleEditRule(ruleId: string, data: RuleForm) {
+    const res = await fetch(`/api/cost-centers/${id}/rules/${ruleId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) return;
+    setEditingRuleId(null);
+    load();
+  }
+
+  // ── Move rule ───────────────────────────────────────────────────────────────
+
   async function handleMove(ruleId: string, direction: "up" | "down") {
     setMovingId(ruleId);
     try {
@@ -139,6 +318,8 @@ export default function CostCenterDetailPage() {
       setMovingId(null);
     }
   }
+
+  // ── Delete rule ─────────────────────────────────────────────────────────────
 
   async function handleDelete(ruleId: string) {
     if (!confirm("Delete this condition?")) return;
@@ -176,7 +357,46 @@ export default function CostCenterDetailPage() {
         >
           <ArrowLeft size={13} /> Back to Cost Centers
         </Link>
-        <h2 className="text-xl font-bold text-gray-900">{cc.name}</h2>
+
+        {/* Editable name */}
+        {editingName ? (
+          <div className="flex items-center gap-2">
+            <input
+              autoFocus
+              type="text"
+              value={nameVal}
+              onChange={(e) => setNameVal(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && saveName()}
+              className="rounded-lg border border-blue-400 px-3 py-1.5 text-xl font-bold text-gray-900 focus:outline-none"
+            />
+            <button
+              onClick={saveName}
+              disabled={savingName}
+              className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              <Save size={13} /> {savingName ? "…" : "Save"}
+            </button>
+            <button
+              onClick={() => setEditingName(false)}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-50"
+            >
+              <X size={13} />
+            </button>
+            {nameErr && <span className="text-xs text-red-600">{nameErr}</span>}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-bold text-gray-900">{cc.name}</h2>
+            <button
+              onClick={startEditName}
+              title="Edit name"
+              className="rounded p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50"
+            >
+              <Pencil size={13} />
+            </button>
+          </div>
+        )}
+
         {cc.description && <p className="text-sm text-gray-500">{cc.description}</p>}
       </div>
 
@@ -207,55 +427,73 @@ export default function CostCenterDetailPage() {
                 <th className="px-4 py-2 font-medium">Field</th>
                 <th className="px-4 py-2 font-medium">Operator</th>
                 <th className="px-4 py-2 font-medium">Value</th>
-                <th className="w-24 px-4 py-2" />
+                <th className="w-32 px-4 py-2" />
               </tr>
             </thead>
             <tbody>
-              {sorted.map((rule, i) => (
-                <tr key={rule.id} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="px-4 py-2.5 text-gray-400">{i + 1}</td>
-                  <td className="px-4 py-2.5">
-                    <ConnectorBadge connector={rule.logic_connector} />
-                  </td>
-                  <td className="px-4 py-2.5 font-medium text-gray-800">
-                    {fieldLabel(rule.field)}
-                  </td>
-                  <td className="px-4 py-2.5 text-gray-600">
-                    {opLabel(rule.field, rule.operator)}
-                  </td>
-                  <td className="max-w-[200px] truncate px-4 py-2.5 font-mono text-gray-700">
-                    {rule.value}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => handleMove(rule.id, "up")}
-                        disabled={i === 0 || movingId === rule.id}
-                        title="Move up"
-                        className="rounded p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-20"
-                      >
-                        <ChevronUp size={13} />
-                      </button>
-                      <button
-                        onClick={() => handleMove(rule.id, "down")}
-                        disabled={i === sorted.length - 1 || movingId === rule.id}
-                        title="Move down"
-                        className="rounded p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-20"
-                      >
-                        <ChevronDown size={13} />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(rule.id)}
-                        disabled={deletingId === rule.id}
-                        title="Delete"
-                        className="rounded p-0.5 text-gray-400 hover:text-red-600 disabled:opacity-40"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {sorted.map((rule, i) =>
+                editingRuleId === rule.id ? (
+                  <RuleEditRow
+                    key={rule.id}
+                    rule={rule}
+                    isFirst={i === 0}
+                    glMappings={glMappings}
+                    onSave={(data) => handleEditRule(rule.id, data)}
+                    onCancel={() => setEditingRuleId(null)}
+                  />
+                ) : (
+                  <tr key={rule.id} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="px-4 py-2.5 text-gray-400">{i + 1}</td>
+                    <td className="px-4 py-2.5">
+                      <ConnectorBadge connector={rule.logic_connector} />
+                    </td>
+                    <td className="px-4 py-2.5 font-medium text-gray-800">
+                      {fieldLabel(rule.field)}
+                    </td>
+                    <td className="px-4 py-2.5 text-gray-600">
+                      {opLabel(rule.field, rule.operator)}
+                    </td>
+                    <td className="max-w-[200px] truncate px-4 py-2.5 font-mono text-gray-700">
+                      {rule.value}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setEditingRuleId(rule.id)}
+                          title="Edit"
+                          className="rounded p-0.5 text-gray-400 hover:text-blue-600"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                        <button
+                          onClick={() => handleMove(rule.id, "up")}
+                          disabled={i === 0 || movingId === rule.id}
+                          title="Move up"
+                          className="rounded p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-20"
+                        >
+                          <ChevronUp size={13} />
+                        </button>
+                        <button
+                          onClick={() => handleMove(rule.id, "down")}
+                          disabled={i === sorted.length - 1 || movingId === rule.id}
+                          title="Move down"
+                          className="rounded p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-20"
+                        >
+                          <ChevronDown size={13} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(rule.id)}
+                          disabled={deletingId === rule.id}
+                          title="Delete"
+                          className="rounded p-0.5 text-gray-400 hover:text-red-600 disabled:opacity-40"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              )}
             </tbody>
           </table>
         )}
@@ -265,15 +503,13 @@ export default function CostCenterDetailPage() {
           <div className="border-t border-blue-100 bg-blue-50/40 px-4 py-4 space-y-3">
             <p className="text-xs font-semibold text-gray-700">New condition</p>
             <div className="flex flex-wrap items-end gap-3">
-              {/* Connector — hidden for the very first rule */}
+              {/* Connector — hidden for first rule */}
               {!isFirstRule && (
                 <div>
                   <label className="mb-1 block text-xs text-gray-500">Connector</label>
                   <select
                     value={form.logic_connector}
-                    onChange={(e) =>
-                      setFormField("logic_connector", e.target.value as "AND" | "OR")
-                    }
+                    onChange={(e) => setFormField("logic_connector", e.target.value as "AND" | "OR")}
                     className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs focus:border-blue-400 focus:outline-none"
                   >
                     <option value="AND">AND</option>
@@ -282,7 +518,6 @@ export default function CostCenterDetailPage() {
                 </div>
               )}
 
-              {/* Field */}
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Field</label>
                 <select
@@ -296,7 +531,6 @@ export default function CostCenterDetailPage() {
                 </select>
               </div>
 
-              {/* Operator */}
               <div>
                 <label className="mb-1 block text-xs text-gray-500">Operator</label>
                 <select
@@ -310,7 +544,6 @@ export default function CostCenterDetailPage() {
                 </select>
               </div>
 
-              {/* Value */}
               <div className="min-w-[180px]">
                 <label className="mb-1 block text-xs text-gray-500">Value</label>
                 {isGLCode ? (
@@ -339,7 +572,6 @@ export default function CostCenterDetailPage() {
                 )}
               </div>
 
-              {/* Buttons */}
               <div className="flex gap-2 pb-0.5">
                 <button
                   onClick={handleAddRule}
@@ -349,11 +581,7 @@ export default function CostCenterDetailPage() {
                   <Save size={12} /> {saving ? "Saving…" : "Add"}
                 </button>
                 <button
-                  onClick={() => {
-                    setAdding(false);
-                    setForm(emptyForm());
-                    setFormErr("");
-                  }}
+                  onClick={() => { setAdding(false); setForm(emptyForm()); setFormErr(""); }}
                   className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600 hover:bg-gray-50"
                 >
                   <X size={12} />
@@ -365,7 +593,7 @@ export default function CostCenterDetailPage() {
         )}
       </div>
 
-      {/* Evaluation preview — shown once there are 2+ conditions */}
+      {/* Evaluation preview */}
       {sorted.length >= 2 && (
         <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
           <p className="text-xs text-gray-500 leading-relaxed">
@@ -373,11 +601,7 @@ export default function CostCenterDetailPage() {
             {sorted.map((r, i) => (
               <span key={r.id}>
                 {i > 0 && (
-                  <span
-                    className={`mx-1.5 font-bold ${
-                      r.logic_connector === "AND" ? "text-blue-600" : "text-purple-600"
-                    }`}
-                  >
+                  <span className={`mx-1.5 font-bold ${r.logic_connector === "AND" ? "text-blue-600" : "text-purple-600"}`}>
                     {r.logic_connector}
                   </span>
                 )}
@@ -387,9 +611,7 @@ export default function CostCenterDetailPage() {
               </span>
             ))}
           </p>
-          <p className="mt-1 text-xs text-gray-400">
-            Evaluated strictly left to right — no operator precedence.
-          </p>
+          <p className="mt-1 text-xs text-gray-400">Evaluated strictly left to right — no operator precedence.</p>
         </div>
       )}
     </div>

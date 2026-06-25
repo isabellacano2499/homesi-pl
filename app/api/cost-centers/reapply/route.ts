@@ -9,28 +9,31 @@ const UPDATE_PARALLEL = 100;
 export async function POST() {
   const supabase = createServerClient();
 
-  // ── 1. Load cost centers and rules ────────────────────────────────────────
+  // ── 1. Load cost centers, rules, and resolved conflict snapshots ──────────
 
-  const [{ data: ccs, error: ccsErr }, { data: allRules, error: rulesErr }] =
-    await Promise.all([
-      supabase.from("cost_centers").select("*"),
-      supabase.from("cost_center_rules").select("*").order("sequence"),
-    ]);
+  const [
+    { data: ccs, error: ccsErr },
+    { data: allRules, error: rulesErr },
+    { data: resolvedSnapshots, error: snapErr },
+  ] = await Promise.all([
+    supabase.from("cost_centers").select("id,name,rules_last_modified_at"),
+    supabase.from("cost_center_rules").select("*").order("sequence"),
+    supabase.from("conflict_snapshots").select("*").eq("is_resolved", true),
+  ]);
 
-  if (ccsErr) {
-    console.error("[reapply] Failed to load cost centers:", ccsErr.message);
-    return NextResponse.json(
-      { error: `Failed to load cost centers: ${ccsErr.message}` },
-      { status: 500 }
-    );
-  }
-  if (rulesErr) {
-    console.error("[reapply] Failed to load rules:", rulesErr.message);
-    return NextResponse.json(
-      { error: `Failed to load rules: ${rulesErr.message}` },
-      { status: 500 }
-    );
-  }
+  if (ccsErr) return NextResponse.json({ error: `Failed to load cost centers: ${ccsErr.message}` }, { status: 500 });
+  if (rulesErr) return NextResponse.json({ error: `Failed to load rules: ${rulesErr.message}` }, { status: 500 });
+  if (snapErr) console.warn("[reapply] Could not load snapshots:", snapErr.message);
+
+  // Map: txId → resolved snapshot
+  const resolvedByTx = new Map<string, { conflicting_cc_ids: string[]; resolved_at: string | null }>(
+    (resolvedSnapshots ?? []).map((s) => [s.transaction_id, s])
+  );
+
+  // Map: ccId → rules_last_modified_at (as Date or null)
+  const ccModifiedAt = new Map<string, Date | null>(
+    (ccs ?? []).map((cc) => [cc.id, cc.rules_last_modified_at ? new Date(cc.rules_last_modified_at) : null])
+  );
 
   const rulesByCC = new Map<string, CostCenterRule[]>();
   (allRules ?? []).forEach((r: CostCenterRule) => {
@@ -41,29 +44,25 @@ export async function POST() {
 
   const costCenters: CostCenterWithRules[] = (ccs ?? []).map((cc) => ({
     ...cc,
+    description: null,
+    created_at: "",
+    updated_at: "",
     rules: rulesByCC.get(cc.id) ?? [],
   }));
 
-  console.log(
-    `[reapply] ${costCenters.length} cost center(s), ${(allRules ?? []).length} total rule(s)`
-  );
-  costCenters.forEach((cc) => {
-    console.log(`[reapply]   "${cc.name}": ${cc.rules.length} rule(s)`);
-    cc.rules.forEach((r) =>
-      console.log(
-        `[reapply]     #${r.sequence} ${r.logic_connector ?? "FIRST"} | field="${r.field}" ${r.operator} "${r.value}"`
-      )
-    );
-  });
-
-  // ── 2. Paginate through every transaction, evaluate, update ───────────────
+  // ── 2. Paginate through all transactions ──────────────────────────────────
 
   let offset = 0;
   let totalProcessed = 0;
+  let totalSkipped = 0;
   let totalAssigned = 0;
   let totalConflicts = 0;
   let totalUpdateErrors = 0;
   const firstUpdateError: string[] = [];
+
+  // Collect snapshot upserts and deletes for batch processing
+  const snapshotUpserts: { transaction_id: string; conflicting_cc_ids: string[] }[] = [];
+  const snapshotDeletes: string[] = [];
 
   while (true) {
     const { data: txs, error: fetchErr } = await supabase
@@ -74,44 +73,56 @@ export async function POST() {
       )
       .range(offset, offset + FETCH_BATCH - 1);
 
-    if (fetchErr) {
-      console.error("[reapply] Fetch error:", fetchErr.message);
-      return NextResponse.json({ error: fetchErr.message }, { status: 500 });
-    }
+    if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
     if (!txs || txs.length === 0) break;
 
-    // Log a sample of the first batch so we can see what fields look like
-    if (offset === 0) {
-      console.log("[reapply] Sample transaction:", JSON.stringify(txs[0]));
-    }
+    const toUpdate: { id: string; cost_center_id: string | null; cost_center_status: string; cost_center_conflicts: string[] | null }[] = [];
+    const toSkip: string[] = [];
 
-    // Evaluate each transaction against all cost centers
-    const updates = txs.map((tx) => {
+    for (const tx of txs) {
+      const txId = (tx as { id: string }).id;
+      const resolved = resolvedByTx.get(txId);
+
+      if (resolved) {
+        // Check if any CC in the original conflict had rules changed after resolution
+        const resolvedAt = resolved.resolved_at ? new Date(resolved.resolved_at) : null;
+        const anyChanged = resolvedAt
+          ? resolved.conflicting_cc_ids.some((ccId) => {
+              const modAt = ccModifiedAt.get(ccId);
+              return modAt != null && modAt > resolvedAt;
+            })
+          : true; // no resolvedAt means we can't trust it → re-evaluate
+
+        if (!anyChanged) {
+          toSkip.push(txId);
+          continue;
+        }
+      }
+
       const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters);
-      return {
-        id: (tx as unknown as { id: string }).id,
+      toUpdate.push({
+        id: txId,
         cost_center_id: r.cost_center_id,
         cost_center_status: r.cost_center_status,
-        cost_center_conflicts:
-          r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
-      };
-    });
+        cost_center_conflicts: r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
+      });
 
-    const batchAssigned = updates.filter((u) => u.cost_center_status === "assigned").length;
-    const batchConflicts = updates.filter((u) => u.cost_center_status === "conflict").length;
-    console.log(
-      `[reapply] offset=${offset} | ${txs.length} txns | ` +
-      `${batchAssigned} assigned, ${batchConflicts} conflict, ` +
-      `${txs.length - batchAssigned - batchConflicts} unassigned`
-    );
+      if (r.cost_center_status === "conflict") {
+        snapshotUpserts.push({ transaction_id: txId, conflicting_cc_ids: r.cost_center_conflicts });
+      } else {
+        // If tx was previously in conflict, clear its snapshot
+        if (resolvedByTx.has(txId)) snapshotDeletes.push(txId);
+      }
+    }
 
-    totalAssigned += batchAssigned;
-    totalConflicts += batchConflicts;
+    totalSkipped += toSkip.length;
+    totalAssigned += toUpdate.filter((u) => u.cost_center_status === "assigned").length;
+    totalConflicts += toUpdate.filter((u) => u.cost_center_status === "conflict").length;
 
-    // Update in parallel chunks — check every error explicitly
-    for (let i = 0; i < updates.length; i += UPDATE_PARALLEL) {
+    // Update transactions that need it
+    for (let i = 0; i < toUpdate.length; i += UPDATE_PARALLEL) {
       const results = await Promise.all(
-        updates.slice(i, i + UPDATE_PARALLEL).map((u) =>
+        toUpdate.slice(i, i + UPDATE_PARALLEL).map((u) =>
           supabase
             .from("pl_transactions")
             .update({
@@ -122,15 +133,10 @@ export async function POST() {
             .eq("id", u.id)
         )
       );
-
       for (const res of results) {
         if (res.error) {
           totalUpdateErrors++;
-          const msg = res.error.message;
-          if (firstUpdateError.length < 3) firstUpdateError.push(msg);
-          if (totalUpdateErrors === 1) {
-            console.error("[reapply] First UPDATE error:", msg);
-          }
+          if (firstUpdateError.length < 3) firstUpdateError.push(res.error.message);
         }
       }
     }
@@ -140,32 +146,53 @@ export async function POST() {
     offset += FETCH_BATCH;
   }
 
-  const totalUnassigned = totalProcessed - totalAssigned - totalConflicts;
-  console.log(
-    `[reapply] Done: ${totalProcessed} processed | ` +
-    `${totalAssigned} assigned, ${totalUnassigned} unassigned, ` +
-    `${totalConflicts} conflicts | ${totalUpdateErrors} update error(s)`
-  );
+  // ── 3. Batch-upsert conflict snapshots (pending conflicts) ────────────────
+
+  if (snapshotUpserts.length > 0) {
+    for (let i = 0; i < snapshotUpserts.length; i += 200) {
+      await supabase.from("conflict_snapshots").upsert(
+        snapshotUpserts.slice(i, i + 200).map((s) => ({
+          transaction_id: s.transaction_id,
+          conflicting_cc_ids: s.conflicting_cc_ids,
+          is_resolved: false,
+          resolved_cc_id: null,
+          resolved_at: null,
+          updated_at: new Date().toISOString(),
+        })),
+        { onConflict: "transaction_id" }
+      );
+    }
+  }
+
+  // Delete snapshots for txs that are no longer in conflict
+  if (snapshotDeletes.length > 0) {
+    for (let i = 0; i < snapshotDeletes.length; i += 200) {
+      await supabase
+        .from("conflict_snapshots")
+        .delete()
+        .in("transaction_id", snapshotDeletes.slice(i, i + 200));
+    }
+  }
 
   if (totalUpdateErrors > 0) {
     return NextResponse.json(
       {
-        error:
-          `${totalUpdateErrors} row update(s) failed — first error: "${firstUpdateError[0]}". ` +
-          `Check server console for details. ` +
-          `Make sure the SQL migration (ALTER TABLE pl_transactions ADD COLUMN cost_center_id...) has been run.`,
+        error: `${totalUpdateErrors} row update(s) failed — first error: "${firstUpdateError[0]}".`,
         processed: totalProcessed,
+        skipped: totalSkipped,
         assigned: totalAssigned,
-        unassigned: totalUnassigned,
         conflicts: totalConflicts,
+        unassigned: totalProcessed - totalSkipped - totalAssigned - totalConflicts,
         updateErrors: totalUpdateErrors,
       },
       { status: 500 }
     );
   }
 
+  const totalUnassigned = totalProcessed - totalSkipped - totalAssigned - totalConflicts;
   return NextResponse.json({
     processed: totalProcessed,
+    skipped: totalSkipped,
     assigned: totalAssigned,
     unassigned: totalUnassigned,
     conflicts: totalConflicts,

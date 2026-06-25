@@ -3,8 +3,15 @@ import { createServerClient } from "@/lib/supabase-server";
 
 type Ctx = { params: Promise<{ id: string; ruleId: string }> };
 
+async function bumpRulesModified(supabase: ReturnType<typeof import("@/lib/supabase-server").createServerClient>, ccId: string) {
+  await supabase
+    .from("cost_centers")
+    .update({ rules_last_modified_at: new Date().toISOString() })
+    .eq("id", ccId);
+}
+
 export async function PUT(req: NextRequest, { params }: Ctx) {
-  const { ruleId } = await params;
+  const { id, ruleId } = await params;
   const { logic_connector, field, operator, value } = await req.json();
   const supabase = createServerClient();
   const { data, error } = await supabase
@@ -14,14 +21,16 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  await bumpRulesModified(supabase, id);
   return NextResponse.json(data);
 }
 
 export async function DELETE(_req: NextRequest, { params }: Ctx) {
-  const { ruleId } = await params;
+  const { id, ruleId } = await params;
   const supabase = createServerClient();
   const { error } = await supabase.from("cost_center_rules").delete().eq("id", ruleId);
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  await bumpRulesModified(supabase, id);
   return new NextResponse(null, { status: 204 });
 }
 

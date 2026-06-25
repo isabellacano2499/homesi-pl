@@ -204,7 +204,7 @@ export default function CostCentersPage() {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
-                <th className="px-4 py-3 font-medium">Name</th>
+                <th className="px-4 py-3 font-medium">Cost Center Name</th>
                 <th className="px-4 py-3 font-medium">Description</th>
                 <th className="px-4 py-3 font-medium text-center">Rules</th>
                 <th className="px-4 py-3" />

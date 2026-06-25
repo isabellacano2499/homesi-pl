@@ -268,6 +268,61 @@ export interface CCReportResponse {
   transactions: PLReportTx[];
 }
 
+// ─── Conflict snapshots ────────────────────────────────────────────────────────
+
+export interface ConflictSnapshot {
+  id: string;
+  transaction_id: string;
+  conflicting_cc_ids: string[];
+  is_resolved: boolean;
+  resolved_cc_id: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConflictTx {
+  id: string;
+  gl_code: string | null;
+  gl_name: string | null;
+  month: string | null;
+  year: number | null;
+  branch: string | null;
+  check_description: string | null;
+  vendor: string | null;
+  debit: number;
+  credit: number;
+  movement: number | null;
+  conflicting_ccs: { id: string; name: string }[];
+}
+
+export interface ConflictGroup {
+  gl_code: string;
+  gl_name: string;
+  transactions: ConflictTx[];
+}
+
+export interface ResolvedConflictTx extends ConflictTx {
+  resolved_cc: { id: string; name: string } | null;
+  resolved_at: string | null;
+}
+
+export interface ResolvedConflictGroup {
+  gl_code: string;
+  gl_name: string;
+  transactions: ResolvedConflictTx[];
+}
+
+// ─── Vendors ──────────────────────────────────────────────────────────────────
+
+export interface VendorSummary {
+  vendor: string;
+  branches: string[];
+  months: string[];
+  gl_items: { gl_code: string; gl_name: string }[];
+  cost_centers: string[];
+}
+
 export interface TransactionTotals {
   debit: number;
   credit: number;

@@ -9,6 +9,7 @@ import {
   TrendingUp,
   Settings,
   Target,
+  Store,
   ChevronDown,
   type LucideIcon,
 } from "lucide-react";
@@ -24,6 +25,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Transaction Review", href: "/transactions", icon: Table2 },
   { label: "Cost Center Report", href: "/cost-center-report", icon: BarChart3 },
   { label: "P&L All", href: "/pl-all", icon: TrendingUp },
+  { label: "Vendors", href: "/vendors", icon: Store },
   {
     label: "Cost Centers",
     icon: Target,
