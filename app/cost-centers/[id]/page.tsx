@@ -188,6 +188,18 @@ function RuleEditRow({
   );
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function formatReevalMsg(j: { reevaluated?: number; reassigned?: number; unassigned?: number; conflicts?: number }): string {
+  const n = j.reevaluated ?? 0;
+  if (n === 0) return "";
+  return (
+    `${n} rule-assigned transaction${n !== 1 ? "s" : ""} re-evaluated: ` +
+    `${j.reassigned ?? 0} reassigned, ${j.unassigned ?? 0} unassigned, ` +
+    `${j.conflicts ?? 0} conflict${(j.conflicts ?? 0) !== 1 ? "s" : ""}.`
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CostCenterDetailPage() {
@@ -215,6 +227,7 @@ export default function CostCenterDetailPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteRuleErr, setDeleteRuleErr] = useState("");
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [reevalMsg, setReevalMsg] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -312,11 +325,10 @@ export default function CostCenterDetailPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      throw new Error(j.error ?? "Failed to save rule");
-    }
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error ?? "Failed to save rule");
     setEditingRuleId(null);
+    setReevalMsg(formatReevalMsg(j));
     load();
   }
 
@@ -347,17 +359,19 @@ export default function CostCenterDetailPage() {
   // ── Delete rule ─────────────────────────────────────────────────────────────
 
   async function handleDelete(ruleId: string) {
-    if (!confirm("Delete this condition?")) return;
+    if (!confirm("Delete this condition? Rule-assigned transactions for this cost center will be re-evaluated.")) return;
     setDeletingId(ruleId);
     setDeleteRuleErr("");
+    setReevalMsg("");
     try {
       const res = await fetch(`/api/cost-centers/${id}/rules/${ruleId}`, { method: "DELETE" });
+      const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
         setDeleteRuleErr(j.error ?? "Failed to delete condition");
-        return; // do NOT remove from UI
+        return;
       }
-      setRules((prev) => prev.filter((r) => r.id !== ruleId));
+      setReevalMsg(formatReevalMsg(j));
+      load(); // reload rules from server (sequence renumbering etc.)
     } catch (err) {
       setDeleteRuleErr(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -432,6 +446,12 @@ export default function CostCenterDetailPage() {
 
         {cc.description && <p className="text-sm text-gray-500">{cc.description}</p>}
       </div>
+
+      {reevalMsg && (
+        <p className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+          {reevalMsg}
+        </p>
+      )}
 
       {(moveErr || deleteRuleErr) && (
         <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

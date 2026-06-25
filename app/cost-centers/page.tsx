@@ -18,6 +18,7 @@ export default function CostCentersPage() {
   const [saveErr, setSaveErr] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteErr, setDeleteErr] = useState("");
+  const [deleteOk, setDeleteOk] = useState("");
   const [reapplying, setReapplying] = useState(false);
   const [reapplyMsg, setReapplyMsg] = useState("");
 
@@ -61,17 +62,27 @@ export default function CostCentersPage() {
   }
 
   async function handleDelete(id: string, name: string) {
-    if (!confirm(`Delete "${name}"? Its rules will also be deleted.`)) return;
+    if (!confirm(`Delete "${name}"? Its rules will be deleted and any rule-assigned transactions will be re-evaluated.`)) return;
     setDeletingId(id);
     setDeleteErr("");
+    setDeleteOk("");
     try {
       const res = await fetch(`/api/cost-centers/${id}`, { method: "DELETE" });
+      const j = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
         setDeleteErr(j.error ?? `Failed to delete "${name}".`);
-        return; // do NOT remove from UI — the delete didn't happen
+        return;
       }
       setRecords((p) => p.filter((r) => r.id !== id));
+      const { reevaluated = 0, reassigned = 0, unassigned = 0, conflicts = 0 } = j;
+      if (reevaluated > 0) {
+        setDeleteOk(
+          `"${name}" deleted. ${reevaluated} transaction${reevaluated !== 1 ? "s" : ""} re-evaluated: ` +
+          `${reassigned} reassigned, ${unassigned} unassigned, ${conflicts} conflict${conflicts !== 1 ? "s" : ""}.`
+        );
+      } else {
+        setDeleteOk(`"${name}" deleted.`);
+      }
     } catch (err) {
       setDeleteErr(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -139,6 +150,12 @@ export default function CostCentersPage() {
       {reapplyMsg && (
         <p className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-2 text-sm text-blue-700">
           {reapplyMsg}
+        </p>
+      )}
+
+      {deleteOk && (
+        <p className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+          {deleteOk}
         </p>
       )}
 

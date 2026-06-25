@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
+import {
+  getRuleAssignedTxIds,
+  loadAllCCsWithRules,
+  reevaluateRuleAssigned,
+} from "@/lib/reevaluate-rule-assigned";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -33,15 +38,19 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = createServerClient();
 
-  // Pre-flight: count records that reference this CC and can't be auto-deleted
+  // ── Pre-flight: block only on records that can't be auto-handled ──────────
+
   const [
-    { count: txCount },
+    { count: manualCount },
     { count: snapCount },
   ] = await Promise.all([
+    // Manual-assigned: user chose these explicitly, must reassign manually
     supabase
       .from("pl_transactions")
       .select("id", { count: "exact", head: true })
-      .eq("cost_center_id", id),
+      .eq("cost_center_id", id)
+      .eq("assignment_origin", "manual"),
+    // Resolved conflicts pointing to this CC: user chose these explicitly
     supabase
       .from("conflict_snapshots")
       .select("id", { count: "exact", head: true })
@@ -49,26 +58,40 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   ]);
 
   const blockers: string[] = [];
-  if ((txCount ?? 0) > 0)
-    blockers.push(`${txCount} transaction${txCount !== 1 ? "s" : ""} assigned to it`);
+  if ((manualCount ?? 0) > 0)
+    blockers.push(
+      `${manualCount} manually assigned transaction${manualCount !== 1 ? "s" : ""} — reassign them first`
+    );
   if ((snapCount ?? 0) > 0)
-    blockers.push(`${snapCount} resolved conflict${snapCount !== 1 ? "s" : ""} referencing it`);
+    blockers.push(
+      `${snapCount} resolved conflict${snapCount !== 1 ? "s" : ""} referencing it — reopen them first`
+    );
 
   if (blockers.length > 0) {
     return NextResponse.json(
       {
-        error: `Cannot delete: ${blockers.join(" and ")}. Reassign or reopen them first.`,
-        tx_count: txCount ?? 0,
+        error: `Cannot delete: ${blockers.join("; ")}.`,
+        manual_count: manualCount ?? 0,
         snap_count: snapCount ?? 0,
       },
       { status: 409 }
     );
   }
 
-  // Rules are owned by the CC — delete them first (cascade guard)
-  await supabase.from("cost_center_rules").delete().eq("cost_center_id", id);
+  // ── Collect rule-assigned tx IDs before deletion ──────────────────────────
 
+  const ruleAssignedIds = await getRuleAssignedTxIds(supabase, id);
+
+  // ── Delete the CC and its rules ───────────────────────────────────────────
+
+  await supabase.from("cost_center_rules").delete().eq("cost_center_id", id);
   const { error } = await supabase.from("cost_centers").delete().eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-  return new NextResponse(null, { status: 204 });
+
+  // ── Re-evaluate affected transactions against remaining rules ─────────────
+
+  const remaining = await loadAllCCsWithRules(supabase); // deleted CC is gone
+  const stats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, remaining);
+
+  return NextResponse.json({ deleted: true, ...stats });
 }
