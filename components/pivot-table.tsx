@@ -30,7 +30,7 @@ type TxLeaf = {
 };
 type CodeNode = { code: string; byMonth: Record<string,number>; total: number; txs: TxLeaf[] };
 type NameNode = { name: string; byMonth: Record<string,number>; total: number; codes: CodeNode[] };
-type Cat7Node = { cat7: string; order2: number; byMonth: Record<string,number>; total: number; names: NameNode[] };
+type Cat7Node = { cat7: string; order3: number; byMonth: Record<string,number>; total: number; names: NameNode[] };
 type Cat6Node = { cat6: string; byMonth: Record<string,number>; total: number; cat7s: Cat7Node[] };
 export type Cat2Node = { cat2: string; order1: number; byMonth: Record<string,number>; total: number; cat6s: Cat6Node[] };
 
@@ -41,7 +41,7 @@ function bm2rec(m: Map<string,number>): Record<string,number> {
 export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: string[] } {
   type WCode = { bm: Map<string,number>; total: number; txs: TxLeaf[] };
   type WName = { bm: Map<string,number>; total: number; codes: Map<string,WCode> };
-  type WCat7 = { order2: number; bm: Map<string,number>; total: number; names: Map<string,WName> };
+  type WCat7 = { order3: number; bm: Map<string,number>; total: number; names: Map<string,WName> };
   type WCat6 = { bm: Map<string,number>; total: number; cat7s: Map<string,WCat7> };
   type WCat2 = { order1: number; bm: Map<string,number>; total: number; cat6s: Map<string,WCat6> };
 
@@ -72,7 +72,7 @@ export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: stri
 
     // Cat7
     if (!wC6.cat7s.has(cat7))
-      wC6.cat7s.set(cat7, { order2: tx.order_2 ?? 9999, bm: new Map(), total: 0, names: new Map() });
+      wC6.cat7s.set(cat7, { order3: tx.order_3 ?? 9999, bm: new Map(), total: 0, names: new Map() });
     const wC7 = wC6.cat7s.get(cat7)!;
     wC7.total += mvmt; wC7.bm.set(month, (wC7.bm.get(month)??0) + mvmt);
 
@@ -97,14 +97,14 @@ export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: stri
     cat6s: [...wC2.cat6s.entries()].map(([cat6, wC6]) => ({
       cat6, byMonth: bm2rec(wC6.bm), total: wC6.total,
       cat7s: [...wC6.cat7s.entries()].map(([cat7, wC7]) => ({
-        cat7, order2: wC7.order2, byMonth: bm2rec(wC7.bm), total: wC7.total,
+        cat7, order3: wC7.order3, byMonth: bm2rec(wC7.bm), total: wC7.total,
         names: [...wC7.names.entries()].map(([name, wN]) => ({
           name, byMonth: bm2rec(wN.bm), total: wN.total,
           codes: [...wN.codes.entries()].map(([code, wKode]) => ({
             code, byMonth: bm2rec(wKode.bm), total: wKode.total, txs: wKode.txs,
           })).sort((a,b) => a.code.localeCompare(b.code)),
         })).sort((a,b) => a.name.localeCompare(b.name)),
-      })).sort((a,b) => a.order2 - b.order2),
+      })).sort((a,b) => a.order3 - b.order3),
     })).sort((a,b) => {
       // "(No Category 6)" always last
       if (a.cat6 === "(No Category 6)") return 1;
