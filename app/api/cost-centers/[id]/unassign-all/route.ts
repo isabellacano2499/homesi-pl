@@ -1,80 +1,134 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
+import { loadAllCCsWithRules, reevaluateRuleAssigned } from "@/lib/reevaluate-rule-assigned";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-/** Returns the number of transactions currently assigned to this cost center. */
+/**
+ * Returns the count of all transactions that "Unassign all" will touch:
+ *   direct_count  — transactions with cost_center_id = this CC
+ *   conflict_count — unresolved conflict_snapshots where this CC appears
+ *                    in conflicting_cc_ids (cost_center_id is null for these)
+ *
+ * Resolved conflicts (resolved_cc_id = this CC) are NOT included — those
+ * block the delete and must be reopened manually, consistent with DELETE policy.
+ */
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = createServerClient();
-  const { count } = await supabase
-    .from("pl_transactions")
-    .select("id", { count: "exact", head: true })
-    .eq("cost_center_id", id);
-  return NextResponse.json({ count: count ?? 0 });
+
+  const [{ count: directCount }, { count: conflictCount }] = await Promise.all([
+    supabase
+      .from("pl_transactions")
+      .select("id", { count: "exact", head: true })
+      .eq("cost_center_id", id),
+    supabase
+      .from("conflict_snapshots")
+      .select("transaction_id", { count: "exact", head: true })
+      .eq("is_resolved", false)
+      .contains("conflicting_cc_ids", [id]),
+  ]);
+
+  return NextResponse.json({
+    count: (directCount ?? 0) + (conflictCount ?? 0),
+    direct_count: directCount ?? 0,
+    conflict_count: conflictCount ?? 0,
+  });
 }
 
 /**
- * Resets ALL transactions assigned to this cost center to their original
- * never-evaluated state:
- *   cost_center_id       → null
- *   assignment_origin    → null
- *   cost_center_status   → "unassigned"
- *   cost_center_conflicts → null
+ * Two-part cleanup:
  *
- * Also deletes any conflict_snapshots that belong to those transactions,
- * preventing ghost conflicts from accumulating.
+ * Part A — Direct assignments (cost_center_id = this CC):
+ *   Hard-reset to never-evaluated state: cost_center_id/assignment_origin/
+ *   cost_center_status/cost_center_conflicts all → null/"unassigned"/null.
+ *   Deletes their conflict_snapshots (shouldn't exist for assigned txs, but
+ *   cleans up any stale ones).
  *
- * This is intentionally a hard reset with no re-evaluation — use it when
- * you need to fully detach a cost center from its transactions before
- * deleting it, or to manually reset assignment state.
+ * Part B — Unresolved conflicts involving this CC (cost_center_id is null):
+ *   Re-evaluates each transaction against the current ruleset *excluding*
+ *   this cost center. If the conflict was a 2-way tie and the other CC's
+ *   rules still match, the tx gets cleanly assigned. If 3+ CCs were
+ *   involved, the tx may still conflict among the remaining ones.
+ *   reevaluateRuleAssigned handles updating pl_transactions and
+ *   conflict_snapshots (upsert/delete as needed).
+ *
+ * Resolved conflicts (resolved_cc_id = this CC) are NOT touched here —
+ * they must be reopened manually.
  */
 export async function POST(_req: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = createServerClient();
 
-  // ── Step 1: Collect all tx IDs that will be affected ─────────────────────
-  // We need the IDs before the UPDATE so we can clean up conflict_snapshots.
-  const txIds: string[] = [];
-  let offset = 0;
-  while (true) {
-    const { data } = await supabase
+  // ── Part A: collect direct-assignment tx IDs ──────────────────────────────
+  const directTxIds: string[] = [];
+  {
+    let offset = 0;
+    while (true) {
+      const { data } = await supabase
+        .from("pl_transactions")
+        .select("id")
+        .eq("cost_center_id", id)
+        .range(offset, offset + 999);
+      if (!data || data.length === 0) break;
+      directTxIds.push(...(data as { id: string }[]).map((r) => r.id));
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+  }
+
+  // ── Part B: collect conflict tx IDs ──────────────────────────────────────
+  const conflictTxIds: string[] = [];
+  {
+    let offset = 0;
+    while (true) {
+      const { data } = await supabase
+        .from("conflict_snapshots")
+        .select("transaction_id")
+        .eq("is_resolved", false)
+        .contains("conflicting_cc_ids", [id])
+        .range(offset, offset + 999);
+      if (!data || data.length === 0) break;
+      conflictTxIds.push(...(data as { transaction_id: string }[]).map((r) => r.transaction_id));
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+  }
+
+  // ── Execute Part A reset ──────────────────────────────────────────────────
+  if (directTxIds.length > 0) {
+    const { error } = await supabase
       .from("pl_transactions")
-      .select("id")
-      .eq("cost_center_id", id)
-      .range(offset, offset + 999);
-    if (!data || data.length === 0) break;
-    txIds.push(...(data as { id: string }[]).map((r) => r.id));
-    if (data.length < 1000) break;
-    offset += 1000;
+      .update({
+        cost_center_id: null,
+        assignment_origin: null,
+        cost_center_status: "unassigned",
+        cost_center_conflicts: null,
+      })
+      .eq("cost_center_id", id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    for (let i = 0; i < directTxIds.length; i += 500) {
+      await supabase
+        .from("conflict_snapshots")
+        .delete()
+        .in("transaction_id", directTxIds.slice(i, i + 500));
+    }
   }
 
-  if (txIds.length === 0) {
-    return NextResponse.json({ unassigned: 0 });
+  // ── Execute Part B re-evaluation without this CC ──────────────────────────
+  let reevalStats = { reevaluated: 0, reassigned: 0, unassigned: 0, conflicts: 0 };
+  if (conflictTxIds.length > 0) {
+    const allCCs = await loadAllCCsWithRules(supabase);
+    const ccsWithoutThis = allCCs.filter((cc) => cc.id !== id);
+    reevalStats = await reevaluateRuleAssigned(supabase, conflictTxIds, ccsWithoutThis);
   }
 
-  // ── Step 2: Reset all transactions in one UPDATE ──────────────────────────
-  const { error: updateErr } = await supabase
-    .from("pl_transactions")
-    .update({
-      cost_center_id: null,
-      assignment_origin: null,
-      cost_center_status: "unassigned",
-      cost_center_conflicts: null,
-    })
-    .eq("cost_center_id", id);
-
-  if (updateErr) {
-    return NextResponse.json({ error: updateErr.message }, { status: 500 });
-  }
-
-  // ── Step 3: Delete conflict_snapshots for those transactions ──────────────
-  for (let i = 0; i < txIds.length; i += 500) {
-    await supabase
-      .from("conflict_snapshots")
-      .delete()
-      .in("transaction_id", txIds.slice(i, i + 500));
-  }
-
-  return NextResponse.json({ unassigned: txIds.length });
+  return NextResponse.json({
+    unassigned: directTxIds.length,
+    conflict_reevaluated: reevalStats.reevaluated,
+    conflict_reassigned: reevalStats.reassigned,
+    conflict_unassigned: reevalStats.unassigned,
+    conflict_still_conflicting: reevalStats.conflicts,
+  });
 }

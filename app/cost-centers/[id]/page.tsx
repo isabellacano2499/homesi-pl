@@ -389,20 +389,38 @@ export default function CostCenterDetailPage() {
   async function handleUnassignAll() {
     setUnassignErr("");
     setUnassignOk("");
+
+    // Fetch counts so the confirm dialog shows the real impact
     const countRes = await fetch(`/api/cost-centers/${id}/unassign-all`);
-    const { count = 0 } = await countRes.json().catch(() => ({}));
+    const {
+      count = 0,
+      direct_count = 0,
+      conflict_count = 0,
+    } = await countRes.json().catch(() => ({}));
+
     if (count === 0) {
-      setUnassignOk("No transactions are currently assigned to this cost center.");
+      setUnassignOk("No transactions are currently assigned to or in conflict with this cost center.");
       return;
     }
+
+    const parts: string[] = [];
+    if (direct_count > 0)
+      parts.push(`${direct_count} directly assigned transaction${direct_count !== 1 ? "s" : ""} will be fully reset`);
+    if (conflict_count > 0)
+      parts.push(
+        `${conflict_count} unresolved conflict${conflict_count !== 1 ? "s" : ""} involving this cost center ` +
+        `will be re-evaluated without it`
+      );
+
     if (
       !confirm(
-        `This will reset ${count} transaction${count !== 1 ? "s" : ""} to their original unassigned state ` +
-        `(clears cost_center_id, assignment_origin, cost_center_status, and conflict snapshots). ` +
-        `This cannot be undone. Continue?`
+        `This will affect ${count} transaction${count !== 1 ? "s" : ""} total:\n` +
+        parts.map((p) => `• ${p}`).join("\n") +
+        `\n\nThis cannot be undone. Continue?`
       )
     )
       return;
+
     setUnassigning(true);
     try {
       const res = await fetch(`/api/cost-centers/${id}/unassign-all`, { method: "POST" });
@@ -411,11 +429,21 @@ export default function CostCenterDetailPage() {
         setUnassignErr(j.error ?? "Failed to unassign transactions");
         return;
       }
-      const n = j.unassigned ?? 0;
-      setUnassignOk(
-        `${n} transaction${n !== 1 ? "s" : ""} reset to original unassigned state. ` +
-        `This cost center can now be deleted.`
-      );
+
+      const lines: string[] = [];
+      if ((j.unassigned ?? 0) > 0)
+        lines.push(`${j.unassigned} directly assigned transaction${j.unassigned !== 1 ? "s" : ""} reset to unassigned.`);
+      if ((j.conflict_reevaluated ?? 0) > 0) {
+        lines.push(
+          `${j.conflict_reevaluated} conflict transaction${j.conflict_reevaluated !== 1 ? "s" : ""} re-evaluated: ` +
+          `${j.conflict_reassigned ?? 0} resolved, ${j.conflict_unassigned ?? 0} unassigned, ` +
+          `${j.conflict_still_conflicting ?? 0} still conflicting.`
+        );
+      }
+      if (lines.length === 0)
+        lines.push("No transactions were affected.");
+
+      setUnassignOk(lines.join(" ") + " This cost center can now be deleted.");
     } catch (err) {
       setUnassignErr(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
