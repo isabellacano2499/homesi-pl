@@ -264,10 +264,10 @@ export default function TransactionsPage() {
       )}
 
       {/* Table */}
-      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="overflow-auto rounded-xl" style={{ maxHeight: "calc(100vh - 320px)" }}>
           <table className="w-full text-xs">
-            <thead>
+            <thead className="sticky top-0 z-20 bg-gray-50">
               <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
                 <TH label="Month">
                   <ColumnFilter label="Month" type="categorical"

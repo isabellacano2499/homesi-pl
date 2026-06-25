@@ -10,10 +10,10 @@ const SELECT =
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const cc     = searchParams.get("cc");     // UUID | "unassigned" | "conflict"
-  const year   = searchParams.get("year");
-  const branch = searchParams.get("branch");
-  const source = searchParams.get("source"); // 'original' | 'addback' | null = all
+  const cc      = searchParams.get("cc");     // UUID | "unassigned" | "conflict"
+  const years   = searchParams.getAll("year");
+  const branches = searchParams.getAll("branch");
+  const sources  = searchParams.getAll("source");
 
   if (!cc) return NextResponse.json({ error: "cc param required" }, { status: 400 });
 
@@ -33,9 +33,9 @@ export async function GET(req: NextRequest) {
       q = q.eq("cost_center_id", cc);
     }
 
-    if (year)   q = q.eq("year", parseInt(year, 10));
-    if (branch) q = q.eq("branch", branch);
-    if (source) q = q.eq("source", source);
+    if (years.length > 0)    q = q.in("year", years.map(y => parseInt(y, 10)));
+    if (branches.length > 0) q = q.in("branch", branches);
+    if (sources.length > 0)  q = q.in("source", sources);
 
     const { data, error } = await q;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

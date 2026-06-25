@@ -10,9 +10,9 @@ const SELECT =
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const year   = searchParams.get("year");
-  const branch = searchParams.get("branch");
-  const source = searchParams.get("source"); // 'original' | 'addback' | null = all
+  const years   = searchParams.getAll("year");
+  const branches = searchParams.getAll("branch");
+  const sources  = searchParams.getAll("source");
 
   const supabase = createServerClient();
   const all: PLReportTx[] = [];
@@ -21,9 +21,9 @@ export async function GET(req: NextRequest) {
   while (true) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q: any = supabase.from("pl_transactions").select(SELECT).range(offset, offset + 999);
-    if (year)   q = q.eq("year", parseInt(year, 10));
-    if (branch) q = q.eq("branch", branch);
-    if (source) q = q.eq("source", source);
+    if (years.length > 0)    q = q.in("year", years.map(y => parseInt(y, 10)));
+    if (branches.length > 0) q = q.in("branch", branches);
+    if (sources.length > 0)  q = q.in("source", sources);
 
     const { data, error } = await q;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

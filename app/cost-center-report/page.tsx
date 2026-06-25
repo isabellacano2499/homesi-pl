@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PivotTable } from "@/components/pivot-table";
+import { ReportFilter } from "@/components/report-filter";
 import type { CostCenter, PLReportTx, FilterOptionsResponse } from "@/types";
+
+const MONTH_ORDER = [
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December",
+];
 
 // ─── CC option type (real CC | sentinel) ─────────────────────────────────────
 
@@ -20,13 +26,9 @@ function optionLabel(o: CCOption) {
 // ─── CC Selector ──────────────────────────────────────────────────────────────
 
 function CCSelector({
-  options,
-  value,
-  onChange,
+  options, value, onChange,
 }: {
-  options: CCOption[];
-  value: string;
-  onChange: (v: string) => void;
+  options: CCOption[]; value: string; onChange: (v: string) => void;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -62,14 +64,20 @@ export default function CostCenterReportPage() {
   const [opts, setOpts] = useState<FilterOptionsResponse | null>(null);
 
   const [selectedCC, setSelectedCC] = useState("");
-  const [year, setYear]     = useState("");
-  const [branch, setBranch] = useState("");
-  const [source, setSource] = useState(""); // "" = all | "original" | "addback"
 
-  const [txs, setTxs]     = useState<PLReportTx[]>([]);
+  // Server-side filters
+  const [years,    setYears]    = useState<string[]>([]);
+  const [branches, setBranches] = useState<string[]>([]);
+  const [sources,  setSources]  = useState<string[]>([]);
+
+  // Client-side filters
+  const [glCodes, setGlCodes] = useState<string[]>([]);
+  const [months,  setMonths]  = useState<string[]>([]);
+
+  const [rawTxs,  setRawTxs]  = useState<PLReportTx[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError]   = useState("");
-  const [loaded, setLoaded] = useState(false);
+  const [error,   setError]   = useState("");
+  const [loaded,  setLoaded]  = useState(false);
 
   // Load CC list + filter options on mount
   useEffect(() => {
@@ -79,28 +87,28 @@ export default function CostCenterReportPage() {
     ]).then(([ccs, filterOpts]: [CostCenter[], FilterOptionsResponse]) => {
       setCostCenters(ccs);
       setOpts(filterOpts);
-      // Default: first real CC if any, else sentinel
       if (ccs.length > 0) setSelectedCC(ccs[0].id);
       else setSelectedCC("unassigned");
-      // Default year = latest available
       if (filterOpts.year.length > 0)
-        setYear(filterOpts.year[filterOpts.year.length - 1]);
+        setYears([filterOpts.year[filterOpts.year.length - 1]]);
     }).catch(console.error);
   }, []);
 
-  async function load(cc = selectedCC, yr = year, br = branch) {
+  async function load(cc = selectedCC) {
     if (!cc) return;
     setLoading(true);
     setError("");
     try {
       const p = new URLSearchParams({ cc });
-      if (yr) p.set("year", yr);
-      if (br) p.set("branch", br);
-      if (source) p.set("source", source);
+      years.forEach(y => p.append("year", y));
+      branches.forEach(b => p.append("branch", b));
+      sources.forEach(s => p.append("source", s));
       const res = await fetch(`/api/cost-center-report?${p}`);
       if (!res.ok) { const j = await res.json(); setError(j.error ?? "Error"); return; }
-      setTxs(await res.json());
+      setRawTxs(await res.json());
       setLoaded(true);
+      setGlCodes([]);
+      setMonths([]);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -108,13 +116,30 @@ export default function CostCenterReportPage() {
     }
   }
 
-  // Reload when filters change after first load
+  // Reload when CC changes after first load
   useEffect(() => {
-    if (loaded && selectedCC) load();
+    if (loaded && selectedCC) load(selectedCC);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCC, year, branch, source]);
+  }, [selectedCC]);
 
-  // Build CC options: sentinels first, then real CCs alphabetically
+  // Derive client-side filter options from loaded data
+  const glCodeOptions = useMemo(
+    () => [...new Set(rawTxs.map(t => t.gl_code).filter(Boolean) as string[])].sort(),
+    [rawTxs]
+  );
+  const monthOptions = useMemo(
+    () => MONTH_ORDER.filter(m => rawTxs.some(t => t.month === m)),
+    [rawTxs]
+  );
+
+  // Apply client-side filters
+  const txs = useMemo(() => {
+    let out = rawTxs;
+    if (glCodes.length > 0) out = out.filter(t => t.gl_code && glCodes.includes(t.gl_code));
+    if (months.length  > 0) out = out.filter(t => t.month  && months.includes(t.month));
+    return out;
+  }, [rawTxs, glCodes, months]);
+
   const ccOptions: CCOption[] = [
     { kind: "sentinel", value: "unassigned", label: "Unassigned" },
     { kind: "sentinel", value: "conflict",   label: "Conflict" },
@@ -127,43 +152,31 @@ export default function CostCenterReportPage() {
       : selectedCC;
 
   return (
-    <div className="space-y-3">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-gray-900">Cost Center Report</h2>
-          <p className="text-sm text-gray-500">
-            {loaded
-              ? `${txs.length.toLocaleString()} transactions · ${selectedLabel}`
-              : "Select a cost center and click Load"}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={year}
-            onChange={e => setYear(e.target.value)}
-            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-blue-400 focus:outline-none"
-          >
-            <option value="">All years</option>
-            {(opts?.year ?? []).map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-          <select
-            value={branch}
-            onChange={e => setBranch(e.target.value)}
-            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-blue-400 focus:outline-none"
-          >
-            <option value="">All branches</option>
-            {(opts?.branch ?? []).map(b => <option key={b} value={b}>{b}</option>)}
-          </select>
-          <select
-            value={source}
-            onChange={e => setSource(e.target.value)}
-            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-blue-400 focus:outline-none"
-          >
-            <option value="">All sources</option>
-            <option value="original">Original only</option>
-            <option value="addback">Addback only</option>
-          </select>
+    <div className="flex flex-col gap-3">
+      {/* ── Sticky filter bar ───────────────────────────────────────────── */}
+      <div className="sticky top-0 z-30 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Filters</span>
+
+          <ReportFilter
+            label="Year"
+            options={(opts?.year ?? []).map(String)}
+            selected={years}
+            onChange={setYears}
+          />
+          <ReportFilter
+            label="Branch"
+            options={opts?.branch ?? []}
+            selected={branches}
+            onChange={setBranches}
+          />
+          <ReportFilter
+            label="Source"
+            options={["original", "addback"]}
+            selected={sources}
+            onChange={setSources}
+          />
+
           <button
             onClick={() => load()}
             disabled={!selectedCC || loading}
@@ -171,7 +184,37 @@ export default function CostCenterReportPage() {
           >
             {loading ? "Loading…" : "Load"}
           </button>
+
+          {loaded && (
+            <>
+              <span className="text-gray-300">|</span>
+              <ReportFilter
+                label="GL Code"
+                options={glCodeOptions}
+                selected={glCodes}
+                onChange={setGlCodes}
+              />
+              <ReportFilter
+                label="Month"
+                options={monthOptions}
+                selected={months}
+                onChange={setMonths}
+              />
+            </>
+          )}
+
+          <span className="ml-auto text-xs text-gray-400">
+            {loaded ? `${txs.length.toLocaleString()} rows · ${selectedLabel}` : ""}
+          </span>
         </div>
+      </div>
+
+      {/* ── Page title ──────────────────────────────────────────────────── */}
+      <div>
+        <h2 className="text-xl font-bold text-gray-900">Cost Center Report</h2>
+        <p className="text-sm text-gray-500">
+          Pivot by Category 2 → Category 7 → GL Name → GL Code
+        </p>
       </div>
 
       {/* CC Selector pills */}

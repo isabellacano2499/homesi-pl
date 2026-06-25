@@ -1,10 +1,31 @@
 "use client";
 
+// ─── Pivot Table — Report Standard ────────────────────────────────────────────
+// Visual and UX conventions for all financial pivot reports in this app:
+//
+//  Visual hierarchy (most → least prominent):
+//    1. Total Income row  — dark navy bg (#1e3a5f), white text, extrabold
+//    2. Category 2 rows   — blue-50 bg, bold text
+//    3. Category 7 rows   — gray-50 bg, semibold text
+//    4. GL Name rows      — white bg, normal weight
+//    5. GL Code rows      — white bg, monospace, slightly lighter
+//    6. Transaction rows  — white bg, small/light text
+//
+//  Sticky behavior:
+//    • Table wrapper has overflow-auto + max-height → its own scroll container
+//    • <thead> is sticky top-0 within the table scroll container
+//    • Total Income row cells are sticky top-[30px] (below thead)
+//    • Filter bar in parent pages uses sticky top-0 in <main> scroll context
+//
+//  Filter standard:
+//    • All report filters use ReportFilter (multi-select checkboxes)
+//    • GL Code and Month filters are client-side (no API reload)
+
 import { useMemo, useState } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import type { PLReportTx } from "@/types";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Month order ──────────────────────────────────────────────────────────────
 
 const MONTH_ORDER = [
   "January","February","March","April","May","June",
@@ -95,25 +116,32 @@ function fmtM(n: number | undefined): string {
   if (!n) return "";
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
-function mvCls(n: number) { return n > 0 ? "text-green-700" : n < 0 ? "text-red-700" : "text-gray-300"; }
-
-// ─── Cell helpers ─────────────────────────────────────────────────────────────
-
-const numCell = "px-2 py-0.5 text-right tabular-nums font-mono text-[11px] whitespace-nowrap";
-const hdrCell = "px-2 py-1 text-right text-[10px] font-semibold text-gray-500 whitespace-nowrap bg-gray-50";
-
-function MCell({ v }: { v: number | undefined }) {
-  const n = v ?? 0;
-  return <td className={`${numCell} ${mvCls(n)}`}>{fmtM(n)}</td>;
+// Color for numbers on light/white background
+function mvCls(n: number | undefined) {
+  const v = n ?? 0;
+  return v > 0 ? "text-green-700" : v < 0 ? "text-red-600" : "text-gray-300";
+}
+// Color for numbers on dark navy (Total Income row)
+function mvClsLight(n: number | undefined) {
+  const v = n ?? 0;
+  return v > 0 ? "text-emerald-300" : v < 0 ? "text-red-300" : "text-white/30";
 }
 
-// ─── PivotTable component ─────────────────────────────────────────────────────
+const numCell = "px-2 py-0.5 text-right tabular-nums font-mono text-[11px] whitespace-nowrap";
+
+function MCell({ v, bold }: { v: number | undefined; bold?: boolean }) {
+  return <td className={`${numCell} ${bold ? "font-bold" : ""} ${mvCls(v)}`}>{fmtM(v)}</td>;
+}
+
+// ─── PivotTable ───────────────────────────────────────────────────────────────
 
 interface PivotTableProps {
   txs: PLReportTx[];
   loading?: boolean;
   emptyMessage?: string;
 }
+
+const TOTAL_BG = "#1e3a5f"; // dark navy for Total Income row
 
 export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTableProps) {
   const { cat2s, months } = useMemo(() => buildPivot(txs), [txs]);
@@ -122,8 +150,6 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
   function toggle(key: string) {
     setExp(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
   }
-
-  const colCount = months.length + 2; // label + months + total
 
   if (loading) {
     return (
@@ -146,14 +172,31 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
 
   const rows: React.ReactNode[] = [];
 
-  // ── Grand total row ──
+  // ── Grand total row — dark navy, sticky below thead (top: 30px ≈ thead height) ──
+  const gtBase: React.CSSProperties = {
+    position: "sticky",
+    top: "30px",
+    zIndex: 14,
+    backgroundColor: TOTAL_BG,
+  };
+
   rows.push(
-    <tr key="__grand__" className="border-b-2 border-gray-300 bg-[#0f1b2d]/5">
-      <td className="sticky left-0 z-10 bg-[#0f1b2d]/5 px-3 py-1 text-[11px] font-bold text-gray-900 whitespace-nowrap">
-        TOTAL
+    <tr key="__grand__" className="border-b border-white/10">
+      {/* Corner cell: sticky both left and top */}
+      <td style={{ ...gtBase, left: 0, zIndex: 20 }}
+          className="px-3 py-2 text-[11px] font-extrabold text-white whitespace-nowrap">
+        Total Income
       </td>
-      {months.map(m => <MCell key={m} v={grandByMonth[m]} />)}
-      <td className={`${numCell} font-bold ${mvCls(grandTotal)}`}>{fmtM(grandTotal)}</td>
+      {months.map(m => (
+        <td key={m} style={gtBase}
+            className={`${numCell} font-extrabold text-[12px] ${mvClsLight(grandByMonth[m])}`}>
+          {fmtM(grandByMonth[m])}
+        </td>
+      ))}
+      <td style={{ ...gtBase, borderLeft: "1px solid rgba(255,255,255,0.15)" }}
+          className={`${numCell} font-extrabold text-[12px] ${mvClsLight(grandTotal)}`}>
+        {fmtM(grandTotal)}
+      </td>
     </tr>
   );
 
@@ -161,17 +204,18 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
     const k2 = `c2:${c2.cat2}`;
     const open2 = exp.has(k2);
 
-    // ── Cat2 row ──
+    // ── Category 2 — blue wash, bold ──────────────────────────────────────────
     rows.push(
-      <tr key={k2} className="border-b border-gray-200 bg-gray-100 hover:bg-gray-200/70 cursor-pointer"
+      <tr key={k2}
+          className="border-b border-blue-100 bg-blue-50 hover:bg-blue-100 cursor-pointer"
           onClick={() => toggle(k2)}>
-        <td className="sticky left-0 z-10 bg-gray-100 px-2 py-1 text-[11px] font-bold text-gray-800 whitespace-nowrap">
+        <td className="sticky left-0 z-10 bg-blue-50 px-2 py-1 text-[11px] font-bold text-blue-900 whitespace-nowrap">
           <span className="inline-flex items-center gap-1">
             {open2 ? <ChevronDown size={11}/> : <ChevronRight size={11}/>}
             {c2.cat2}
           </span>
         </td>
-        {months.map(m => <MCell key={m} v={c2.byMonth[m]} />)}
+        {months.map(m => <MCell key={m} v={c2.byMonth[m]} bold />)}
         <td className={`${numCell} font-bold ${mvCls(c2.total)}`}>{fmtM(c2.total)}</td>
       </tr>
     );
@@ -182,9 +226,10 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
       const k7 = `c7:${c2.cat2}|${c7.cat7}`;
       const open7 = exp.has(k7);
 
-      // ── Cat7 row ──
+      // ── Category 7 — light gray, semibold ─────────────────────────────────
       rows.push(
-        <tr key={k7} className="border-b border-gray-100 bg-gray-50 hover:bg-blue-50/30 cursor-pointer"
+        <tr key={k7}
+            className="border-b border-gray-100 bg-gray-50 hover:bg-gray-100 cursor-pointer"
             onClick={() => toggle(k7)}>
           <td className="sticky left-0 z-10 bg-gray-50 pl-6 pr-2 py-0.5 text-[11px] font-semibold text-gray-700 whitespace-nowrap">
             <span className="inline-flex items-center gap-1">
@@ -203,9 +248,10 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
         const kn = `gn:${c2.cat2}|${c7.cat7}|${nm.name}`;
         const openN = exp.has(kn);
 
-        // ── GL Name row ──
+        // ── GL Name — white, normal weight ────────────────────────────────────
         rows.push(
-          <tr key={kn} className="border-b border-gray-50 hover:bg-blue-50/20 cursor-pointer"
+          <tr key={kn}
+              className="border-b border-gray-50 bg-white hover:bg-gray-50 cursor-pointer"
               onClick={() => toggle(kn)}>
             <td className="sticky left-0 z-10 bg-white pl-10 pr-2 py-0.5 text-[11px] text-gray-700 whitespace-nowrap">
               <span className="inline-flex items-center gap-1">
@@ -224,11 +270,12 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
           const kk = `gc:${c2.cat2}|${c7.cat7}|${nm.name}|${kode.code}`;
           const openK = exp.has(kk);
 
-          // ── GL Code row ──
+          // ── GL Code — white, monospace, lighter ───────────────────────────
           rows.push(
-            <tr key={kk} className="border-b border-gray-50 hover:bg-blue-50/30 cursor-pointer"
+            <tr key={kk}
+                className="border-b border-gray-50 bg-white hover:bg-blue-50/30 cursor-pointer"
                 onClick={() => toggle(kk)}>
-              <td className="sticky left-0 z-10 bg-white pl-14 pr-2 py-0.5 text-[11px] font-mono text-gray-600 whitespace-nowrap">
+              <td className="sticky left-0 z-10 bg-white pl-14 pr-2 py-0.5 text-[11px] font-mono text-gray-500 whitespace-nowrap">
                 <span className="inline-flex items-center gap-1">
                   {openK ? <ChevronDown size={10}/> : <ChevronRight size={10}/>}
                   {kode.code}
@@ -241,13 +288,11 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
 
           if (!openK) continue;
 
-          // ── Individual transaction rows in the same pivot matrix format ──
-          // Each transaction occupies one row: description in the label column,
-          // movement in its own month column only, total = that same movement.
+          // ── Transaction rows — same matrix, smallest/lightest level ──────────
           for (const t of kode.txs) {
             rows.push(
-              <tr key={t.id} className="border-b border-gray-50 hover:bg-blue-50/10">
-                <td className="sticky left-0 z-10 bg-white pl-16 pr-2 py-0.5 text-[10px] text-gray-500 max-w-[260px] truncate whitespace-nowrap">
+              <tr key={t.id} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
+                <td className="sticky left-0 z-10 bg-white pl-16 pr-2 py-0.5 text-[10px] text-gray-400 max-w-[260px] truncate whitespace-nowrap">
                   {t.desc ?? "—"}
                 </td>
                 {months.map(m => {
@@ -268,17 +313,25 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+    // This div is the scroll container for the table.
+    // overflow-auto + max-height enables internal scrolling.
+    // sticky thead and total row stick within THIS container.
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-auto"
+         style={{ maxHeight: "calc(100vh - 160px)" }}>
       <table className="w-full border-collapse">
-        <thead>
+        <thead className="sticky top-0 z-20 bg-gray-50">
           <tr className="border-b border-gray-200">
-            <th className="sticky left-0 z-20 bg-gray-50 px-3 py-1 text-left text-[10px] font-semibold text-gray-500 whitespace-nowrap">
+            <th className="sticky left-0 z-30 bg-gray-50 px-3 py-1.5 text-left text-[10px] font-semibold text-gray-500 whitespace-nowrap">
               Category
             </th>
             {months.map(m => (
-              <th key={m} className={hdrCell}>{m.slice(0,3)}</th>
+              <th key={m} className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 whitespace-nowrap bg-gray-50">
+                {m.slice(0,3)}
+              </th>
             ))}
-            <th className={`${hdrCell} border-l border-gray-200`}>Total</th>
+            <th className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 whitespace-nowrap bg-gray-50 border-l border-gray-200">
+              Total
+            </th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
