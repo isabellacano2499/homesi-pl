@@ -258,8 +258,20 @@ export default function CostCentersPage() {
             </thead>
             <tbody>
               {filtered.map((cc) => (
-                <tr key={cc.id} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">{cc.name}</td>
+                <tr
+                  key={cc.id}
+                  className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer"
+                  onClick={() => window.location.href = `/cost-centers/${cc.id}`}
+                >
+                  <td className="px-4 py-3">
+                    <Link
+                      href={`/cost-centers/${cc.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-medium text-blue-700 hover:underline"
+                    >
+                      {cc.name}
+                    </Link>
+                  </td>
                   <td className="max-w-[300px] truncate px-4 py-3 text-gray-500">
                     {cc.description ?? <span className="text-gray-300">—</span>}
                   </td>
@@ -268,12 +280,13 @@ export default function CostCentersPage() {
                     <div className="flex items-center justify-end gap-3">
                       <Link
                         href={`/cost-centers/${cc.id}`}
+                        onClick={(e) => e.stopPropagation()}
                         className="flex items-center gap-1 text-blue-600 hover:underline"
                       >
                         Manage Rules <ChevronRight size={12} />
                       </Link>
                       <button
-                        onClick={() => handleDelete(cc.id, cc.name)}
+                        onClick={(e) => { e.stopPropagation(); handleDelete(cc.id, cc.name); }}
                         disabled={deletingId === cc.id}
                         className="text-gray-400 hover:text-red-600 disabled:opacity-40"
                       >
