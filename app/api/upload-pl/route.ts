@@ -1,0 +1,144 @@
+import { NextRequest, NextResponse } from "next/server";
+import { normalizePL } from "@/lib/normalize-pl";
+import { enrichTransactions } from "@/lib/enrich-transactions";
+import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
+import { createServerClient } from "@/lib/supabase-server";
+import { INSERT_CHUNK_SIZE } from "@/lib/constants";
+import type { ApiError, UploadPLResponse, PLTransaction, CostCenterWithRules, CostCenterRule } from "@/types";
+
+function apiError(message: string, status = 500): NextResponse<ApiError> {
+  return NextResponse.json({ error: message }, { status });
+}
+
+export async function POST(req: NextRequest) {
+  const supabase = createServerClient();
+  let uploadId: string | null = null;
+
+  try {
+    // ── 1. Parse multipart form ────────────────────────────────────────────
+    const formData = await req.formData();
+    const file = formData.get("file") as File | null;
+    if (!file) return apiError("No file provided", 400);
+
+    // ── 2. Create upload record (so errors can be attached to it) ─────────
+    const { data: uploadRecord, error: insertErr } = await supabase
+      .from("pl_uploads")
+      .insert({ file_name: file.name, status: "processing" })
+      .select("id")
+      .single();
+
+    if (insertErr || !uploadRecord) {
+      return apiError("Failed to create upload record");
+    }
+    // uploadRecord.id is always a UUID string; cast needed because Supabase
+    // types don't distinguish non-null columns from nullable ones here.
+    const id = uploadRecord.id as string;
+    uploadId = id;
+
+    // ── 3. Normalize the Excel (pure function, no DB) ─────────────────────
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const { rows, warnings } = normalizePL(buffer);
+
+    if (rows.length === 0) {
+      await supabase
+        .from("pl_uploads")
+        .update({ status: "error", error_message: "No data rows found after normalization" })
+        .eq("id", id);
+      return apiError("No data rows found after normalization", 422);
+    }
+
+    // ── 4. Fetch lookup tables in parallel ────────────────────────────────
+    const [{ data: glMappings }, { data: branches }] = await Promise.all([
+      supabase.from("gl_mapping").select("*"),
+      supabase.from("branches").select("*"),
+    ]);
+
+    // ── 5. Enrich rows with category / region data (pure function) ────────
+    const { transactions, uncategorizedCount, unknownBranchCount } =
+      enrichTransactions(rows, glMappings ?? [], branches ?? [], id);
+
+    // ── 6. Batch-insert in chunks to stay within payload limits ───────────
+    for (let i = 0; i < transactions.length; i += INSERT_CHUNK_SIZE) {
+      const chunk = transactions.slice(i, i + INSERT_CHUNK_SIZE);
+      const { error: chunkErr } = await supabase
+        .from("pl_transactions")
+        .insert(chunk);
+      if (chunkErr) throw new Error(`Insert error (chunk ${i}): ${chunkErr.message}`);
+    }
+
+    // ── 7. Apply cost center rules to the newly inserted transactions ─────
+    const [{ data: ccs }, { data: ccRules }] = await Promise.all([
+      supabase.from("cost_centers").select("*"),
+      supabase.from("cost_center_rules").select("*").order("sequence"),
+    ]);
+    if (ccs && ccs.length > 0) {
+      const rulesByCC = new Map<string, CostCenterRule[]>();
+      (ccRules ?? []).forEach((r: CostCenterRule) => {
+        const arr = rulesByCC.get(r.cost_center_id) ?? [];
+        arr.push(r);
+        rulesByCC.set(r.cost_center_id, arr);
+      });
+      const costCenters: CostCenterWithRules[] = ccs.map((cc) => ({
+        ...cc,
+        rules: rulesByCC.get(cc.id) ?? [],
+      }));
+      const { data: newTxs } = await supabase
+        .from("pl_transactions")
+        .select(
+          "id,gl_code,gl_name,branch,vendor,check_description," +
+          "ref_numb,category_5,category_6,doc_type,month,year,debit,credit,movement"
+        )
+        .eq("upload_id", id);
+      if (newTxs && newTxs.length > 0) {
+        const ccUpdates = newTxs.map((tx) => {
+          const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters);
+          return {
+            id: (tx as unknown as { id: string }).id,
+            cost_center_id: r.cost_center_id,
+            cost_center_status: r.cost_center_status,
+            cost_center_conflicts: r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
+          };
+        });
+        for (let i = 0; i < ccUpdates.length; i += INSERT_CHUNK_SIZE) {
+          await Promise.all(
+            ccUpdates.slice(i, i + INSERT_CHUNK_SIZE).map((u) =>
+              supabase.from("pl_transactions")
+                .update({
+                  cost_center_id: u.cost_center_id,
+                  cost_center_status: u.cost_center_status,
+                  cost_center_conflicts: u.cost_center_conflicts,
+                })
+                .eq("id", u.id)
+            )
+          );
+        }
+      }
+    }
+
+    // ── 8. Mark upload as completed ───────────────────────────────────────
+    await supabase
+      .from("pl_uploads")
+      .update({ status: "completed", row_count: rows.length })
+      .eq("id", id);
+
+    const response: UploadPLResponse = {
+      uploadId: id,
+      rowCount: rows.length,
+      uncategorizedCount,
+      unknownBranchCount,
+      parseWarnings: warnings.length,
+    };
+    return NextResponse.json(response);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[upload-pl]", message);
+
+    if (uploadId) {
+      await createServerClient()
+        .from("pl_uploads")
+        .update({ status: "error", error_message: message })
+        .eq("id", uploadId);
+    }
+    return apiError(message);
+  }
+}
