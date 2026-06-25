@@ -1,25 +1,14 @@
 "use client";
 
-// ─── Pivot Table — Report Standard ────────────────────────────────────────────
-// Visual and UX conventions for all financial pivot reports in this app:
-//
-//  Visual hierarchy (most → least prominent):
-//    1. Total Income row  — dark navy bg (#1e3a5f), white text, extrabold
-//    2. Category 2 rows   — blue-50 bg, bold text
-//    3. Category 7 rows   — gray-50 bg, semibold text
-//    4. GL Name rows      — white bg, normal weight
-//    5. GL Code rows      — white bg, monospace, slightly lighter
-//    6. Transaction rows  — white bg, small/light text
-//
-//  Sticky behavior:
-//    • Table wrapper has overflow-auto + max-height → its own scroll container
-//    • <thead> is sticky top-0 within the table scroll container
-//    • Total Income row cells are sticky top-[30px] (below thead)
-//    • Filter bar in parent pages uses sticky top-0 in <main> scroll context
-//
-//  Filter standard:
-//    • All report filters use ReportFilter (multi-select checkboxes)
-//    • GL Code and Month filters are client-side (no API reload)
+// ─── Pivot Table — P&L by GL ───────────────────────────────────────────────────
+// Hierarchy (top → bottom):
+//   Total Income  (navy, sticky)
+//   Category 2    (blue-50, order_1)
+//     Category 6  (indigo-50, alphabetical; "(No Category 6)" last)
+//       Category 7  (gray-50, order_2)
+//         GL Name   (white, alphabetical)
+//           GL Code (white mono, alphabetical)
+//             Transactions (leaf, no aggregation)
 
 import { useMemo, useState } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
@@ -42,7 +31,8 @@ type TxLeaf = {
 type CodeNode = { code: string; byMonth: Record<string,number>; total: number; txs: TxLeaf[] };
 type NameNode = { name: string; byMonth: Record<string,number>; total: number; codes: CodeNode[] };
 type Cat7Node = { cat7: string; order2: number; byMonth: Record<string,number>; total: number; names: NameNode[] };
-export type Cat2Node = { cat2: string; order1: number; byMonth: Record<string,number>; total: number; cat7s: Cat7Node[] };
+type Cat6Node = { cat6: string; byMonth: Record<string,number>; total: number; cat7s: Cat7Node[] };
+export type Cat2Node = { cat2: string; order1: number; byMonth: Record<string,number>; total: number; cat6s: Cat6Node[] };
 
 function bm2rec(m: Map<string,number>): Record<string,number> {
   return Object.fromEntries(m);
@@ -52,13 +42,15 @@ export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: stri
   type WCode = { bm: Map<string,number>; total: number; txs: TxLeaf[] };
   type WName = { bm: Map<string,number>; total: number; codes: Map<string,WCode> };
   type WCat7 = { order2: number; bm: Map<string,number>; total: number; names: Map<string,WName> };
-  type WCat2 = { order1: number; bm: Map<string,number>; total: number; cat7s: Map<string,WCat7> };
+  type WCat6 = { bm: Map<string,number>; total: number; cat7s: Map<string,WCat7> };
+  type WCat2 = { order1: number; bm: Map<string,number>; total: number; cat6s: Map<string,WCat6> };
 
   const cat2Map = new Map<string,WCat2>();
   const monthSet = new Set<string>();
 
   for (const tx of txs) {
     const cat2  = tx.category_2  ?? "Uncategorized";
+    const cat6  = tx.category_6  ?? "(No Category 6)";
     const cat7  = tx.category_7  ?? "(No Category 7)";
     const name  = tx.gl_name     ?? "(No GL Name)";
     const code  = tx.gl_code     ?? "(No GL Code)";
@@ -66,21 +58,31 @@ export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: stri
     const mvmt  = tx.movement    ?? 0;
     if (tx.month) monthSet.add(tx.month);
 
+    // Cat2
     if (!cat2Map.has(cat2))
-      cat2Map.set(cat2, { order1: tx.order_1 ?? 9999, bm: new Map(), total: 0, cat7s: new Map() });
+      cat2Map.set(cat2, { order1: tx.order_1 ?? 9999, bm: new Map(), total: 0, cat6s: new Map() });
     const wC2 = cat2Map.get(cat2)!;
     wC2.total += mvmt; wC2.bm.set(month, (wC2.bm.get(month)??0) + mvmt);
 
-    if (!wC2.cat7s.has(cat7))
-      wC2.cat7s.set(cat7, { order2: tx.order_2 ?? 9999, bm: new Map(), total: 0, names: new Map() });
-    const wC7 = wC2.cat7s.get(cat7)!;
+    // Cat6
+    if (!wC2.cat6s.has(cat6))
+      wC2.cat6s.set(cat6, { bm: new Map(), total: 0, cat7s: new Map() });
+    const wC6 = wC2.cat6s.get(cat6)!;
+    wC6.total += mvmt; wC6.bm.set(month, (wC6.bm.get(month)??0) + mvmt);
+
+    // Cat7
+    if (!wC6.cat7s.has(cat7))
+      wC6.cat7s.set(cat7, { order2: tx.order_2 ?? 9999, bm: new Map(), total: 0, names: new Map() });
+    const wC7 = wC6.cat7s.get(cat7)!;
     wC7.total += mvmt; wC7.bm.set(month, (wC7.bm.get(month)??0) + mvmt);
 
+    // GL Name
     if (!wC7.names.has(name))
       wC7.names.set(name, { bm: new Map(), total: 0, codes: new Map() });
     const wN = wC7.names.get(name)!;
     wN.total += mvmt; wN.bm.set(month, (wN.bm.get(month)??0) + mvmt);
 
+    // GL Code
     if (!wN.codes.has(code))
       wN.codes.set(code, { bm: new Map(), total: 0, txs: [] });
     const wKode = wN.codes.get(code)!;
@@ -90,17 +92,25 @@ export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: stri
 
   const months = MONTH_ORDER.filter(m => monthSet.has(m));
 
-  const cat2s: Cat2Node[] = [...cat2Map.entries()].map(([cat2, w]) => ({
-    cat2, order1: w.order1, byMonth: bm2rec(w.bm), total: w.total,
-    cat7s: [...w.cat7s.entries()].map(([cat7, wc7]) => ({
-      cat7, order2: wc7.order2, byMonth: bm2rec(wc7.bm), total: wc7.total,
-      names: [...wc7.names.entries()].map(([name, wn]) => ({
-        name, byMonth: bm2rec(wn.bm), total: wn.total,
-        codes: [...wn.codes.entries()].map(([code, wk]) => ({
-          code, byMonth: bm2rec(wk.bm), total: wk.total, txs: wk.txs,
-        })).sort((a,b) => a.code.localeCompare(b.code)),
-      })).sort((a,b) => a.name.localeCompare(b.name)),
-    })).sort((a,b) => a.order2 - b.order2),
+  const cat2s: Cat2Node[] = [...cat2Map.entries()].map(([cat2, wC2]) => ({
+    cat2, order1: wC2.order1, byMonth: bm2rec(wC2.bm), total: wC2.total,
+    cat6s: [...wC2.cat6s.entries()].map(([cat6, wC6]) => ({
+      cat6, byMonth: bm2rec(wC6.bm), total: wC6.total,
+      cat7s: [...wC6.cat7s.entries()].map(([cat7, wC7]) => ({
+        cat7, order2: wC7.order2, byMonth: bm2rec(wC7.bm), total: wC7.total,
+        names: [...wC7.names.entries()].map(([name, wN]) => ({
+          name, byMonth: bm2rec(wN.bm), total: wN.total,
+          codes: [...wN.codes.entries()].map(([code, wKode]) => ({
+            code, byMonth: bm2rec(wKode.bm), total: wKode.total, txs: wKode.txs,
+          })).sort((a,b) => a.code.localeCompare(b.code)),
+        })).sort((a,b) => a.name.localeCompare(b.name)),
+      })).sort((a,b) => a.order2 - b.order2),
+    })).sort((a,b) => {
+      // "(No Category 6)" always last
+      if (a.cat6 === "(No Category 6)") return 1;
+      if (b.cat6 === "(No Category 6)") return -1;
+      return a.cat6.localeCompare(b.cat6);
+    }),
   })).sort((a,b) => {
     if (a.cat2 === "Uncategorized") return 1;
     if (b.cat2 === "Uncategorized") return -1;
@@ -116,12 +126,10 @@ function fmtM(n: number | undefined): string {
   if (!n) return "";
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
-// Color for numbers on light/white background
 function mvCls(n: number | undefined) {
   const v = n ?? 0;
   return v > 0 ? "text-green-700" : v < 0 ? "text-red-600" : "text-gray-300";
 }
-// Color for numbers on dark navy (Total Income row)
 function mvClsLight(n: number | undefined) {
   const v = n ?? 0;
   return v > 0 ? "text-emerald-300" : v < 0 ? "text-red-300" : "text-white/30";
@@ -141,7 +149,7 @@ interface PivotTableProps {
   emptyMessage?: string;
 }
 
-const TOTAL_BG = "#1e3a5f"; // dark navy for Total Income row
+const TOTAL_BG = "#1e3a5f";
 
 export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTableProps) {
   const { cat2s, months } = useMemo(() => buildPivot(txs), [txs]);
@@ -163,7 +171,7 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
     return <p className="py-8 text-center text-xs text-gray-400">{emptyMessage}</p>;
   }
 
-  // Grand total
+  // Grand total — computed from cat2s (same transactions, just rearranged)
   const grandTotal = cat2s.reduce((s, c) => s + c.total, 0);
   const grandByMonth: Record<string,number> = {};
   for (const c of cat2s)
@@ -172,17 +180,13 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
 
   const rows: React.ReactNode[] = [];
 
-  // ── Grand total row — dark navy, sticky below thead (top: 30px ≈ thead height) ──
   const gtBase: React.CSSProperties = {
-    position: "sticky",
-    top: "30px",
-    zIndex: 14,
-    backgroundColor: TOTAL_BG,
+    position: "sticky", top: "30px", zIndex: 14, backgroundColor: TOTAL_BG,
   };
 
+  // ── Grand total row (sticky below thead) ──────────────────────────────────
   rows.push(
     <tr key="__grand__" className="border-b border-white/10">
-      {/* Corner cell: sticky both left and top */}
       <td style={{ ...gtBase, left: 0, zIndex: 20 }}
           className="px-3 py-2 text-[11px] font-extrabold text-white whitespace-nowrap">
         Total Income
@@ -204,7 +208,7 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
     const k2 = `c2:${c2.cat2}`;
     const open2 = exp.has(k2);
 
-    // ── Category 2 — blue wash, bold ──────────────────────────────────────────
+    // ── Category 2 — blue wash, bold ─────────────────────────────────────────
     rows.push(
       <tr key={k2}
           className="border-b border-blue-100 bg-blue-50 hover:bg-blue-100 cursor-pointer"
@@ -222,90 +226,113 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
 
     if (!open2) continue;
 
-    for (const c7 of c2.cat7s) {
-      const k7 = `c7:${c2.cat2}|${c7.cat7}`;
-      const open7 = exp.has(k7);
+    for (const c6 of c2.cat6s) {
+      const k6 = `c6:${c2.cat2}|${c6.cat6}`;
+      const open6 = exp.has(k6);
 
-      // ── Category 7 — light gray, semibold ─────────────────────────────────
+      // ── Category 6 — indigo wash, semibold ───────────────────────────────
       rows.push(
-        <tr key={k7}
-            className="border-b border-gray-100 bg-gray-50 hover:bg-gray-100 cursor-pointer"
-            onClick={() => toggle(k7)}>
-          <td className="sticky left-0 z-10 bg-gray-50 pl-6 pr-2 py-0.5 text-[11px] font-semibold text-gray-700 whitespace-nowrap">
+        <tr key={k6}
+            className="border-b border-indigo-100 bg-indigo-50 hover:bg-indigo-100 cursor-pointer"
+            onClick={() => toggle(k6)}>
+          <td className="sticky left-0 z-10 bg-indigo-50 pl-6 pr-2 py-0.5 text-[11px] font-semibold text-indigo-800 whitespace-nowrap">
             <span className="inline-flex items-center gap-1">
-              {open7 ? <ChevronDown size={10}/> : <ChevronRight size={10}/>}
-              {c7.cat7}
+              {open6 ? <ChevronDown size={10}/> : <ChevronRight size={10}/>}
+              {c6.cat6}
             </span>
           </td>
-          {months.map(m => <MCell key={m} v={c7.byMonth[m]} />)}
-          <td className={`${numCell} font-semibold ${mvCls(c7.total)}`}>{fmtM(c7.total)}</td>
+          {months.map(m => <MCell key={m} v={c6.byMonth[m]} />)}
+          <td className={`${numCell} font-semibold ${mvCls(c6.total)}`}>{fmtM(c6.total)}</td>
         </tr>
       );
 
-      if (!open7) continue;
+      if (!open6) continue;
 
-      for (const nm of c7.names) {
-        const kn = `gn:${c2.cat2}|${c7.cat7}|${nm.name}`;
-        const openN = exp.has(kn);
+      for (const c7 of c6.cat7s) {
+        const k7 = `c7:${c2.cat2}|${c6.cat6}|${c7.cat7}`;
+        const open7 = exp.has(k7);
 
-        // ── GL Name — white, normal weight ────────────────────────────────────
+        // ── Category 7 — gray wash, semibold ─────────────────────────────
         rows.push(
-          <tr key={kn}
-              className="border-b border-gray-50 bg-white hover:bg-gray-50 cursor-pointer"
-              onClick={() => toggle(kn)}>
-            <td className="sticky left-0 z-10 bg-white pl-10 pr-2 py-0.5 text-[11px] text-gray-700 whitespace-nowrap">
+          <tr key={k7}
+              className="border-b border-gray-100 bg-gray-50 hover:bg-gray-100 cursor-pointer"
+              onClick={() => toggle(k7)}>
+            <td className="sticky left-0 z-10 bg-gray-50 pl-10 pr-2 py-0.5 text-[11px] font-semibold text-gray-700 whitespace-nowrap">
               <span className="inline-flex items-center gap-1">
-                {openN ? <ChevronDown size={10}/> : <ChevronRight size={10}/>}
-                {nm.name}
+                {open7 ? <ChevronDown size={10}/> : <ChevronRight size={10}/>}
+                {c7.cat7}
               </span>
             </td>
-            {months.map(m => <MCell key={m} v={nm.byMonth[m]} />)}
-            <td className={`${numCell} ${mvCls(nm.total)}`}>{fmtM(nm.total)}</td>
+            {months.map(m => <MCell key={m} v={c7.byMonth[m]} />)}
+            <td className={`${numCell} font-semibold ${mvCls(c7.total)}`}>{fmtM(c7.total)}</td>
           </tr>
         );
 
-        if (!openN) continue;
+        if (!open7) continue;
 
-        for (const kode of nm.codes) {
-          const kk = `gc:${c2.cat2}|${c7.cat7}|${nm.name}|${kode.code}`;
-          const openK = exp.has(kk);
+        for (const nm of c7.names) {
+          const kn = `gn:${c2.cat2}|${c6.cat6}|${c7.cat7}|${nm.name}`;
+          const openN = exp.has(kn);
 
-          // ── GL Code — white, monospace, lighter ───────────────────────────
+          // ── GL Name — white, normal ───────────────────────────────────
           rows.push(
-            <tr key={kk}
-                className="border-b border-gray-50 bg-white hover:bg-blue-50/30 cursor-pointer"
-                onClick={() => toggle(kk)}>
-              <td className="sticky left-0 z-10 bg-white pl-14 pr-2 py-0.5 text-[11px] font-mono text-gray-500 whitespace-nowrap">
+            <tr key={kn}
+                className="border-b border-gray-50 bg-white hover:bg-gray-50 cursor-pointer"
+                onClick={() => toggle(kn)}>
+              <td className="sticky left-0 z-10 bg-white pl-14 pr-2 py-0.5 text-[11px] text-gray-700 whitespace-nowrap">
                 <span className="inline-flex items-center gap-1">
-                  {openK ? <ChevronDown size={10}/> : <ChevronRight size={10}/>}
-                  {kode.code}
+                  {openN ? <ChevronDown size={10}/> : <ChevronRight size={10}/>}
+                  {nm.name}
                 </span>
               </td>
-              {months.map(m => <MCell key={m} v={kode.byMonth[m]} />)}
-              <td className={`${numCell} ${mvCls(kode.total)}`}>{fmtM(kode.total)}</td>
+              {months.map(m => <MCell key={m} v={nm.byMonth[m]} />)}
+              <td className={`${numCell} ${mvCls(nm.total)}`}>{fmtM(nm.total)}</td>
             </tr>
           );
 
-          if (!openK) continue;
+          if (!openN) continue;
 
-          // ── Transaction rows — same matrix, smallest/lightest level ──────────
-          for (const t of kode.txs) {
+          for (const kode of nm.codes) {
+            const kk = `gc:${c2.cat2}|${c6.cat6}|${c7.cat7}|${nm.name}|${kode.code}`;
+            const openK = exp.has(kk);
+
+            // ── GL Code — white, mono ────────────────────────────────────
             rows.push(
-              <tr key={t.id} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
-                <td className="sticky left-0 z-10 bg-white pl-16 pr-2 py-0.5 text-[10px] text-gray-400 max-w-[260px] truncate whitespace-nowrap">
-                  {t.desc ?? "—"}
+              <tr key={kk}
+                  className="border-b border-gray-50 bg-white hover:bg-blue-50/30 cursor-pointer"
+                  onClick={() => toggle(kk)}>
+                <td className="sticky left-0 z-10 bg-white pl-[72px] pr-2 py-0.5 text-[11px] font-mono text-gray-500 whitespace-nowrap">
+                  <span className="inline-flex items-center gap-1">
+                    {openK ? <ChevronDown size={10}/> : <ChevronRight size={10}/>}
+                    {kode.code}
+                  </span>
                 </td>
-                {months.map(m => {
-                  const match = m === t.month;
-                  return (
-                    <td key={m} className={`${numCell} text-[10px] ${match ? mvCls(t.mvmt) : ""}`}>
-                      {match ? fmtM(t.mvmt) : ""}
-                    </td>
-                  );
-                })}
-                <td className={`${numCell} text-[10px] ${mvCls(t.mvmt)}`}>{fmtM(t.mvmt)}</td>
+                {months.map(m => <MCell key={m} v={kode.byMonth[m]} />)}
+                <td className={`${numCell} ${mvCls(kode.total)}`}>{fmtM(kode.total)}</td>
               </tr>
             );
+
+            if (!openK) continue;
+
+            // ── Transaction rows — leaf ──────────────────────────────────
+            for (const t of kode.txs) {
+              rows.push(
+                <tr key={t.id} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
+                  <td className="sticky left-0 z-10 bg-white pl-20 pr-2 py-0.5 text-[10px] text-gray-400 max-w-[260px] truncate whitespace-nowrap">
+                    {t.desc ?? "—"}
+                  </td>
+                  {months.map(m => {
+                    const match = m === t.month;
+                    return (
+                      <td key={m} className={`${numCell} text-[10px] ${match ? mvCls(t.mvmt) : ""}`}>
+                        {match ? fmtM(t.mvmt) : ""}
+                      </td>
+                    );
+                  })}
+                  <td className={`${numCell} text-[10px] ${mvCls(t.mvmt)}`}>{fmtM(t.mvmt)}</td>
+                </tr>
+              );
+            }
           }
         }
       }
@@ -313,16 +340,13 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
   }
 
   return (
-    // This div is the scroll container for the table.
-    // overflow-auto + max-height enables internal scrolling.
-    // sticky thead and total row stick within THIS container.
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-auto"
          style={{ maxHeight: "calc(100vh - 160px)" }}>
       <table className="w-full border-collapse">
         <thead className="sticky top-0 z-20 bg-gray-50">
           <tr className="border-b border-gray-200">
             <th className="sticky left-0 z-30 bg-gray-50 px-3 py-1.5 text-left text-[10px] font-semibold text-gray-500 whitespace-nowrap">
-              Category
+              Cat 2 / Cat 6 / Cat 7 / GL
             </th>
             {months.map(m => (
               <th key={m} className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 whitespace-nowrap bg-gray-50">
