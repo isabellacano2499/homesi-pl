@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
       movement: tx.movement,
       conflicting_ccs: (tx.cost_center_conflicts ?? []).map((id: string) => ({
         id,
-        name: ccMap.get(id) ?? id,
+        name: ccMap.get(id) ?? "(deleted Cost Center)",
       })),
     });
   }

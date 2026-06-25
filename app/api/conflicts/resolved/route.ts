@@ -55,10 +55,10 @@ export async function GET(req: NextRequest) {
       cost_center_id: tx.cost_center_id,
       conflicting_ccs: (snap.conflicting_cc_ids ?? []).map((id: string) => ({
         id,
-        name: ccMap.get(id) ?? id,
+        name: ccMap.get(id) ?? "(deleted Cost Center)",
       })),
       resolved_cc: snap.resolved_cc_id
-        ? { id: snap.resolved_cc_id, name: ccMap.get(snap.resolved_cc_id) ?? snap.resolved_cc_id }
+        ? { id: snap.resolved_cc_id, name: ccMap.get(snap.resolved_cc_id) ?? "(deleted Cost Center)" }
         : null,
       resolved_at: snap.resolved_at,
     });

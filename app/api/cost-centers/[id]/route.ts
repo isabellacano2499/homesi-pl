@@ -39,27 +39,21 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const supabase = createServerClient();
 
   // ── Pre-flight: classify ALL transactions pointing to this CC ─────────────
-  // Three parallel counts to characterize what we're dealing with.
 
   const [
     { count: manualCount },
     { count: snapCount },
     { count: nullOriginCount },
   ] = await Promise.all([
-    // (1) Manual: user chose these explicitly — must block
     supabase
       .from("pl_transactions")
       .select("id", { count: "exact", head: true })
       .eq("cost_center_id", id)
       .eq("assignment_origin", "manual"),
-
-    // (2) Resolved conflicts snapshot: user resolved explicitly — must block
     supabase
       .from("conflict_snapshots")
       .select("id", { count: "exact", head: true })
       .eq("resolved_cc_id", id),
-
-    // (3) NULL-origin: legacy rows assigned before the column existed — will re-evaluate
     supabase
       .from("pl_transactions")
       .select("id", { count: "exact", head: true })
@@ -89,21 +83,37 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
     );
   }
 
-  // ── Collect all re-evaluable tx IDs before deletion ───────────────────────
-  // This now includes: 'rule', NULL (legacy), 'conflict_resolved' edge-cases, etc.
-  // Anything that isn't explicitly 'manual'.
+  // ── Collect all IDs that need re-evaluation BEFORE deletion ───────────────
 
-  const idsToReeval = await getRuleAssignedTxIds(supabase, id);
+  // Set A: rule/null-origin direct assignments (cost_center_id = this CC)
+  const ruleAssignedIds = await getRuleAssignedTxIds(supabase, id);
 
-  // ── Delete rules then the CC ──────────────────────────────────────────────
+  // Set B: unresolved conflict transactions referencing this CC in their
+  //        conflict array (cost_center_id = null for these)
+  const conflictTxIds: string[] = [];
+  {
+    let offset = 0;
+    while (true) {
+      const { data } = await supabase
+        .from("conflict_snapshots")
+        .select("transaction_id")
+        .eq("is_resolved", false)
+        .contains("conflicting_cc_ids", [id])
+        .range(offset, offset + 999);
+      if (!data || data.length === 0) break;
+      conflictTxIds.push(...(data as { transaction_id: string }[]).map((r) => r.transaction_id));
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+  }
+
+  // ── Delete rules then CC ──────────────────────────────────────────────────
 
   await supabase.from("cost_center_rules").delete().eq("cost_center_id", id);
 
   const { error } = await supabase.from("cost_centers").delete().eq("id", id);
 
   if (error) {
-    // Safety net: catch FK violation in case any transactions slipped through
-    // the pre-flight (e.g. a race condition or a data inconsistency in the DB).
     const isForeignKey =
       (error as { code?: string }).code === "23503" ||
       error.message.toLowerCase().includes("foreign key") ||
@@ -114,10 +124,8 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
         {
           error:
             "Cannot delete: some transactions still reference this Cost Center " +
-            "despite the pre-flight check. This usually means there are transactions " +
-            "with an unexpected status in the database. Please open a Supabase SQL " +
-            "editor and run: SELECT assignment_origin, COUNT(*) FROM pl_transactions " +
-            `WHERE cost_center_id = '${id}' GROUP BY assignment_origin`,
+            "despite the pre-flight check. Use 'Unassign all' on the detail page " +
+            "to clear them first, then retry the delete.",
         },
         { status: 409 }
       );
@@ -125,14 +133,30 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  // ── Re-evaluate against remaining rules ───────────────────────────────────
+  // ── Load remaining CCs once (post-deletion — excludes the deleted CC) ─────
 
   const remaining = await loadAllCCsWithRules(supabase);
-  const stats = await reevaluateRuleAssigned(supabase, idsToReeval, remaining);
+
+  // ── Re-evaluate Set A (rule/null-origin direct) ───────────────────────────
+  const directStats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, remaining);
+
+  // ── Re-evaluate Set B (conflict transactions) ─────────────────────────────
+  // `remaining` already excludes the deleted CC, so transactions that were
+  // tied between this CC and one other will resolve cleanly to the other.
+  const conflictStats = await reevaluateRuleAssigned(supabase, conflictTxIds, remaining);
 
   return NextResponse.json({
     deleted: true,
-    null_origin_count: nullOriginCount ?? 0, // how many were legacy/unknown-origin
-    ...stats,
+    null_origin_count: nullOriginCount ?? 0,
+    // Set A stats
+    reevaluated: directStats.reevaluated,
+    reassigned: directStats.reassigned,
+    unassigned: directStats.unassigned,
+    conflicts: directStats.conflicts,
+    // Set B stats
+    conflict_reevaluated: conflictStats.reevaluated,
+    conflict_reassigned: conflictStats.reassigned,
+    conflict_unassigned: conflictStats.unassigned,
+    conflict_still_conflicting: conflictStats.conflicts,
   });
 }

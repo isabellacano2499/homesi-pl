@@ -77,15 +77,20 @@ export default function CostCentersPage() {
         return;
       }
       setRecords((p) => p.filter((r) => r.id !== id));
-      const { reevaluated = 0, reassigned = 0, unassigned = 0, conflicts = 0 } = j;
-      if (reevaluated > 0) {
-        setDeleteOk(
-          `"${name}" deleted. ${reevaluated} transaction${reevaluated !== 1 ? "s" : ""} re-evaluated: ` +
-          `${reassigned} reassigned, ${unassigned} unassigned, ${conflicts} conflict${conflicts !== 1 ? "s" : ""}.`
+      const parts: string[] = [];
+      if ((j.reevaluated ?? 0) > 0)
+        parts.push(
+          `${j.reevaluated} direct transaction${j.reevaluated !== 1 ? "s" : ""} re-evaluated ` +
+          `(${j.reassigned ?? 0} reassigned, ${j.unassigned ?? 0} unassigned, ${j.conflicts ?? 0} conflicts)`
         );
-      } else {
-        setDeleteOk(`"${name}" deleted.`);
-      }
+      if ((j.conflict_reevaluated ?? 0) > 0)
+        parts.push(
+          `${j.conflict_reevaluated} conflict transaction${j.conflict_reevaluated !== 1 ? "s" : ""} re-evaluated ` +
+          `(${j.conflict_reassigned ?? 0} resolved, ${j.conflict_unassigned ?? 0} unassigned, ${j.conflict_still_conflicting ?? 0} still conflicting)`
+        );
+      setDeleteOk(
+        `"${name}" deleted.${parts.length > 0 ? " " + parts.join("; ") + "." : ""}`
+      );
     } catch (err) {
       setDeleteErr(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
