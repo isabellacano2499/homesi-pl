@@ -243,21 +243,9 @@ export default function TransactionsPage() {
         onScroll={onScroll}
       >
         <table className="w-full text-xs table-fixed border-collapse">
-          <colgroup>
-            <col style={{ width: "100px" }} /> {/* Cost Center */}
-            <col style={{ width: "68px" }} />  {/* Month */}
-            <col style={{ width: "44px" }} />  {/* Year */}
-            <col style={{ width: "62px" }} />  {/* GL Code */}
-            <col style={{ width: "120px" }} /> {/* GL Name */}
-            <col style={{ width: "55px" }} />  {/* Branch */}
-            <col />                             {/* Description — flexible */}
-            <col style={{ width: "110px" }} /> {/* Vendor */}
-            <col style={{ width: "65px" }} />  {/* Ref Numb */}
-            <col style={{ width: "88px" }} />  {/* Debit */}
-            <col style={{ width: "88px" }} />  {/* Credit */}
-            <col style={{ width: "88px" }} />  {/* Movement */}
-            <col style={{ width: "62px" }} />  {/* Source */}
-          </colgroup>
+          <colgroup>{["100px","68px","44px","62px","120px","55px",undefined,"110px","65px","88px","88px","88px","62px"].map((w, i) => (
+            <col key={i} style={w ? { width: w } : undefined} />
+          ))}</colgroup>
           <thead className="sticky top-0 z-20 bg-gray-50">
             <tr className="border-b border-gray-200 text-gray-500">
               <TH label="Cost Center">
