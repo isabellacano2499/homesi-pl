@@ -3,6 +3,24 @@ import { createServerClient } from "@/lib/supabase-server";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import type { PLTransaction, CostCenterWithRules, CostCenterRule } from "@/types";
 
+type TxRow = {
+  id: string;
+  gl_code: string | null;
+  gl_name: string | null;
+  branch: string | null;
+  vendor: string | null;
+  check_description: string | null;
+  ref_numb: string | null;
+  category_5: string | null;
+  category_6: string | null;
+  doc_type: string | null;
+  month: string | null;
+  year: number | null;
+  debit: number;
+  credit: number;
+  movement: number | null;
+};
+
 const FETCH_BATCH = 1000;
 const UPDATE_PARALLEL = 100;
 
@@ -76,11 +94,13 @@ export async function POST() {
     if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
     if (!txs || txs.length === 0) break;
 
+    const rows = txs as unknown as TxRow[];
+
     const toUpdate: { id: string; cost_center_id: string | null; cost_center_status: string; cost_center_conflicts: string[] | null }[] = [];
     const toSkip: string[] = [];
 
-    for (const tx of txs) {
-      const txId = (tx as { id: string }).id;
+    for (const tx of rows) {
+      const txId = tx.id;
       const resolved = resolvedByTx.get(txId);
 
       if (resolved) {
@@ -99,7 +119,7 @@ export async function POST() {
         }
       }
 
-      const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters);
+      const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters);  // tx shape matches PLTransaction fields used by the engine
       toUpdate.push({
         id: txId,
         cost_center_id: r.cost_center_id,
@@ -141,8 +161,8 @@ export async function POST() {
       }
     }
 
-    totalProcessed += txs.length;
-    if (txs.length < FETCH_BATCH) break;
+    totalProcessed += rows.length;
+    if (rows.length < FETCH_BATCH) break;
     offset += FETCH_BATCH;
   }
 
