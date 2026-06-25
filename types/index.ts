@@ -258,6 +258,42 @@ export interface PLReportTx {
   category_7: string | null;
   order_1: number | null;
   order_2: number | null;
+  // Optional CC fields — present when the CC view is requested
+  cost_center_id?: string | null;
+  cost_center_status?: string | null;
+  cost_centers?: { name: string } | null;
+}
+
+/** PLReportTx with guaranteed CC fields — used by the "P&L by Cost Center" pivot */
+export interface PLReportTxCC extends PLReportTx {
+  cost_center_id: string | null;
+  cost_center_status: string | null;
+  cost_centers: { name: string } | null;
+}
+
+// ─── Cost Center Assignment module ────────────────────────────────────────────
+
+export interface AssignmentTx {
+  id: string;
+  gl_code: string | null;
+  gl_name: string | null;
+  month: string | null;
+  year: number | null;
+  branch: string | null;
+  check_description: string | null;
+  vendor: string | null;
+  debit: number;
+  credit: number;
+  movement: number | null;
+  cost_center_id: string | null;
+  cost_center_name: string | null;
+  assignment_origin: string | null;
+}
+
+export interface AssignmentGroup {
+  gl_code: string;
+  gl_name: string;
+  transactions: AssignmentTx[];
 }
 
 /** @deprecated use PLReportTx */

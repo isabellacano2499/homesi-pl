@@ -14,33 +14,18 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServerClient();
-  const now = new Date().toISOString();
 
-  const { error: txErr } = await supabase
+  const { error } = await supabase
     .from("pl_transactions")
     .update({
       cost_center_id,
       cost_center_status: "assigned",
       cost_center_conflicts: null,
-      assignment_origin: "conflict_resolved",
+      assignment_origin: "manual",
     })
     .in("id", transaction_ids);
 
-  if (txErr) return NextResponse.json({ error: txErr.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const { error: snapErr } = await supabase.from("conflict_snapshots").upsert(
-    transaction_ids.map((txId) => ({
-      transaction_id: txId,
-      conflicting_cc_ids: [],
-      is_resolved: true,
-      resolved_cc_id: cost_center_id,
-      resolved_at: now,
-      updated_at: now,
-    })),
-    { onConflict: "transaction_id", ignoreDuplicates: false }
-  );
-
-  if (snapErr) return NextResponse.json({ error: snapErr.message }, { status: 500 });
-
-  return NextResponse.json({ resolved: transaction_ids.length });
+  return NextResponse.json({ assigned: transaction_ids.length });
 }

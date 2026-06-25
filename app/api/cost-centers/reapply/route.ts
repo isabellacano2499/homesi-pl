@@ -19,6 +19,7 @@ type TxRow = {
   debit: number;
   credit: number;
   movement: number | null;
+  assignment_origin: string | null;
 };
 
 const FETCH_BATCH = 1000;
@@ -27,7 +28,7 @@ const UPDATE_PARALLEL = 100;
 export async function POST() {
   const supabase = createServerClient();
 
-  // ── 1. Load cost centers, rules, and resolved conflict snapshots ──────────
+  // ── 1. Load cost centers, rules, resolved snapshots ───────────────────────
 
   const [
     { data: ccs, error: ccsErr },
@@ -43,12 +44,10 @@ export async function POST() {
   if (rulesErr) return NextResponse.json({ error: `Failed to load rules: ${rulesErr.message}` }, { status: 500 });
   if (snapErr) console.warn("[reapply] Could not load snapshots:", snapErr.message);
 
-  // Map: txId → resolved snapshot
   const resolvedByTx = new Map<string, { conflicting_cc_ids: string[]; resolved_at: string | null }>(
     (resolvedSnapshots ?? []).map((s) => [s.transaction_id, s])
   );
 
-  // Map: ccId → rules_last_modified_at (as Date or null)
   const ccModifiedAt = new Map<string, Date | null>(
     (ccs ?? []).map((cc) => [cc.id, cc.rules_last_modified_at ? new Date(cc.rules_last_modified_at) : null])
   );
@@ -68,7 +67,7 @@ export async function POST() {
     rules: rulesByCC.get(cc.id) ?? [],
   }));
 
-  // ── 2. Paginate through all transactions ──────────────────────────────────
+  // ── 2. Paginate and evaluate ──────────────────────────────────────────────
 
   let offset = 0;
   let totalProcessed = 0;
@@ -77,69 +76,74 @@ export async function POST() {
   let totalConflicts = 0;
   let totalUpdateErrors = 0;
   const firstUpdateError: string[] = [];
-
-  // Collect snapshot upserts and deletes for batch processing
   const snapshotUpserts: { transaction_id: string; conflicting_cc_ids: string[] }[] = [];
   const snapshotDeletes: string[] = [];
 
   while (true) {
-    const { data: txs, error: fetchErr } = await supabase
+    const { data, error: fetchErr } = await supabase
       .from("pl_transactions")
       .select(
         "id,gl_code,gl_name,branch,vendor,check_description," +
-        "ref_numb,category_5,category_6,doc_type,month,year,debit,credit,movement"
+        "ref_numb,category_5,category_6,doc_type,month,year,debit,credit,movement,assignment_origin"
       )
       .range(offset, offset + FETCH_BATCH - 1);
 
     if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
-    if (!txs || txs.length === 0) break;
+    if (!data || data.length === 0) break;
 
-    const rows = txs as unknown as TxRow[];
+    const rows = data as unknown as TxRow[];
 
-    const toUpdate: { id: string; cost_center_id: string | null; cost_center_status: string; cost_center_conflicts: string[] | null }[] = [];
-    const toSkip: string[] = [];
+    const toUpdate: {
+      id: string;
+      cost_center_id: string | null;
+      cost_center_status: string;
+      cost_center_conflicts: string[] | null;
+      assignment_origin: string | null;
+    }[] = [];
 
     for (const tx of rows) {
-      const txId = tx.id;
-      const resolved = resolvedByTx.get(txId);
+      // Manual assignments are permanent — never re-evaluate
+      if (tx.assignment_origin === "manual") {
+        totalSkipped++;
+        continue;
+      }
 
-      if (resolved) {
-        // Check if any CC in the original conflict had rules changed after resolution
+      // Resolved conflicts: skip if no CC rules changed since resolution
+      const resolved = resolvedByTx.get(tx.id);
+      if (resolved && tx.assignment_origin === "conflict_resolved") {
         const resolvedAt = resolved.resolved_at ? new Date(resolved.resolved_at) : null;
         const anyChanged = resolvedAt
           ? resolved.conflicting_cc_ids.some((ccId) => {
               const modAt = ccModifiedAt.get(ccId);
               return modAt != null && modAt > resolvedAt;
             })
-          : true; // no resolvedAt means we can't trust it → re-evaluate
+          : true;
 
         if (!anyChanged) {
-          toSkip.push(txId);
+          totalSkipped++;
           continue;
         }
       }
 
-      const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters);  // tx shape matches PLTransaction fields used by the engine
+      const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters);
       toUpdate.push({
-        id: txId,
+        id: tx.id,
         cost_center_id: r.cost_center_id,
         cost_center_status: r.cost_center_status,
         cost_center_conflicts: r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
+        assignment_origin: r.cost_center_status === "assigned" ? "rule" : null,
       });
 
       if (r.cost_center_status === "conflict") {
-        snapshotUpserts.push({ transaction_id: txId, conflicting_cc_ids: r.cost_center_conflicts });
-      } else {
-        // If tx was previously in conflict, clear its snapshot
-        if (resolvedByTx.has(txId)) snapshotDeletes.push(txId);
+        snapshotUpserts.push({ transaction_id: tx.id, conflicting_cc_ids: r.cost_center_conflicts });
+      } else if (resolved) {
+        snapshotDeletes.push(tx.id);
       }
     }
 
-    totalSkipped += toSkip.length;
     totalAssigned += toUpdate.filter((u) => u.cost_center_status === "assigned").length;
     totalConflicts += toUpdate.filter((u) => u.cost_center_status === "conflict").length;
 
-    // Update transactions that need it
     for (let i = 0; i < toUpdate.length; i += UPDATE_PARALLEL) {
       const results = await Promise.all(
         toUpdate.slice(i, i + UPDATE_PARALLEL).map((u) =>
@@ -149,6 +153,7 @@ export async function POST() {
               cost_center_id: u.cost_center_id,
               cost_center_status: u.cost_center_status,
               cost_center_conflicts: u.cost_center_conflicts,
+              assignment_origin: u.assignment_origin,
             })
             .eq("id", u.id)
         )
@@ -166,7 +171,7 @@ export async function POST() {
     offset += FETCH_BATCH;
   }
 
-  // ── 3. Batch-upsert conflict snapshots (pending conflicts) ────────────────
+  // ── 3. Sync conflict snapshots ─────────────────────────────────────────────
 
   if (snapshotUpserts.length > 0) {
     for (let i = 0; i < snapshotUpserts.length; i += 200) {
@@ -184,13 +189,9 @@ export async function POST() {
     }
   }
 
-  // Delete snapshots for txs that are no longer in conflict
   if (snapshotDeletes.length > 0) {
     for (let i = 0; i < snapshotDeletes.length; i += 200) {
-      await supabase
-        .from("conflict_snapshots")
-        .delete()
-        .in("transaction_id", snapshotDeletes.slice(i, i + 200));
+      await supabase.from("conflict_snapshots").delete().in("transaction_id", snapshotDeletes.slice(i, i + 200));
     }
   }
 
@@ -198,10 +199,8 @@ export async function POST() {
     return NextResponse.json(
       {
         error: `${totalUpdateErrors} row update(s) failed — first error: "${firstUpdateError[0]}".`,
-        processed: totalProcessed,
-        skipped: totalSkipped,
-        assigned: totalAssigned,
-        conflicts: totalConflicts,
+        processed: totalProcessed, skipped: totalSkipped,
+        assigned: totalAssigned, conflicts: totalConflicts,
         unassigned: totalProcessed - totalSkipped - totalAssigned - totalConflicts,
         updateErrors: totalUpdateErrors,
       },
@@ -209,12 +208,11 @@ export async function POST() {
     );
   }
 
-  const totalUnassigned = totalProcessed - totalSkipped - totalAssigned - totalConflicts;
   return NextResponse.json({
     processed: totalProcessed,
     skipped: totalSkipped,
     assigned: totalAssigned,
-    unassigned: totalUnassigned,
+    unassigned: totalProcessed - totalSkipped - totalAssigned - totalConflicts,
     conflicts: totalConflicts,
   });
 }

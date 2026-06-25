@@ -11,7 +11,6 @@ export async function POST(req: NextRequest) {
 
   const supabase = createServerClient();
 
-  // Get the snapshot to restore the conflicting CC IDs
   const { data: snap, error: snapErr } = await supabase
     .from("conflict_snapshots")
     .select("conflicting_cc_ids")
@@ -22,19 +21,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Conflict snapshot not found" }, { status: 404 });
   }
 
-  // Restore transaction to conflict state
   const { error: txErr } = await supabase
     .from("pl_transactions")
     .update({
       cost_center_id: null,
       cost_center_status: "conflict",
       cost_center_conflicts: snap.conflicting_cc_ids,
+      assignment_origin: null,
     })
     .eq("id", transaction_id);
 
   if (txErr) return NextResponse.json({ error: txErr.message }, { status: 500 });
 
-  // Mark snapshot as not resolved
   const { error: updateErr } = await supabase
     .from("conflict_snapshots")
     .update({

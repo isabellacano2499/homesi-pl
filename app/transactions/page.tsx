@@ -6,7 +6,7 @@ import { Pagination } from "@/components/pagination";
 import { ColumnFilter } from "@/components/column-filter";
 import type { PLTransaction, PLUpload, TransactionsResponse, FilterOptionsResponse } from "@/types";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 100;
 
 // ─── Filter state ─────────────────────────────────────────────────────────────
 
@@ -17,8 +17,6 @@ type FilterState = {
   gl_name: string[];
   branch: string[];
   vendor: string[];
-  category_5: string[];
-  category_6: string[];
   ref_numb: string[];
   cost_center: string[]; // CC names + "Unassigned" / "Conflict"
   source: string[];      // "Original" | "Addback"
@@ -30,7 +28,7 @@ type FilterState = {
 
 const emptyFilters = (): FilterState => ({
   month: [], year: [], gl_code: [], gl_name: [], branch: [], vendor: [],
-  category_5: [], category_6: [], ref_numb: [], cost_center: [], source: [],
+  ref_numb: [], cost_center: [], source: [],
   description: "",
   debit_min: "", debit_max: "", credit_min: "", credit_max: "",
   movement_min: "", movement_max: "",
@@ -52,8 +50,6 @@ function buildParams(
   f.gl_name.forEach((v) => p.append("gl_name", v));
   f.branch.forEach((v) => p.append("branch", v));
   f.vendor.forEach((v) => p.append("vendor", v));
-  f.category_5.forEach((v) => p.append("category_5", v));
-  f.category_6.forEach((v) => p.append("category_6", v));
   f.ref_numb.forEach((v) => p.append("ref_numb", v));
   if (f.description) p.set("description", f.description);
   if (f.debit_min) p.set("debit_min", f.debit_min);
@@ -65,11 +61,9 @@ function buildParams(
 
   // Translate CC display values → API params
   for (const val of f.cost_center) {
-    if (val === "Unassigned") {
-      p.append("cc_status", "unassigned");
-    } else if (val === "Conflict") {
-      p.append("cc_status", "conflict");
-    } else {
+    if (val === "Unassigned") p.append("cc_status", "unassigned");
+    else if (val === "Conflict") p.append("cc_status", "conflict");
+    else {
       const cc = ccList.find((c) => c.name === val);
       if (cc) p.append("cost_center_id", cc.id);
     }
@@ -139,6 +133,7 @@ function CCCell({ tx }: { tx: PLTransaction }) {
 
 export default function TransactionsPage() {
   const [uploads, setUploads] = useState<PLUpload[]>([]);
+  // Default: empty string = "All uploads"
   const [selectedUpload, setSelectedUpload] = useState("");
   const [filterOpts, setFilterOpts] = useState<FilterOptionsResponse>({
     month: [], year: [], gl_code: [], gl_name: [],
@@ -154,21 +149,18 @@ export default function TransactionsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Load upload list once
+  // Load upload list — default stays "All uploads" (empty string)
   useEffect(() => {
     fetch("/api/uploads")
       .then((r) => r.json())
       .then((data: PLUpload[]) => {
         const completed = data.filter((u) => u.status === "completed");
         setUploads(completed);
-        if (completed.length > 0) setSelectedUpload(completed[0].id);
       })
       .catch(console.error);
   }, []);
 
-  // Refresh distinct column values + cost center list whenever the selected upload changes.
-  // Uses /api/transactions/filter-options which paginates through the full dataset —
-  // fixing the bug where the old /values endpoint returned only ~1000 rows per column.
+  // Refresh filter options whenever selected upload changes
   useEffect(() => {
     const params = selectedUpload ? `?uploadId=${selectedUpload}` : "";
     fetch(`/api/transactions/filter-options${params}`)
@@ -178,8 +170,7 @@ export default function TransactionsPage() {
   }, [selectedUpload]);
 
   const fetchTransactions = useCallback(async () => {
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     try {
       const params = buildParams(selectedUpload, filters, page, filterOpts.costCenters);
       const res = await fetch(`/api/transactions?${params}`);
@@ -269,6 +260,12 @@ export default function TransactionsPage() {
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-20 bg-gray-50">
               <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
+                {/* Cost Center first */}
+                <TH label="Cost Center">
+                  <ColumnFilter label="Cost Center" type="categorical"
+                    options={ccFilterOptions} selected={filters.cost_center}
+                    onChange={(v) => setFilter("cost_center", v)} />
+                </TH>
                 <TH label="Month">
                   <ColumnFilter label="Month" type="categorical"
                     options={filterOpts.month} selected={filters.month}
@@ -324,21 +321,6 @@ export default function TransactionsPage() {
                     min={filters.movement_min} max={filters.movement_max}
                     onChange={(min, max) => { setFilter("movement_min", min); setFilter("movement_max", max); }} />
                 </TH>
-                <TH label="Category 5">
-                  <ColumnFilter label="Category 5" type="categorical"
-                    options={filterOpts.category_5} selected={filters.category_5}
-                    onChange={(v) => setFilter("category_5", v)} />
-                </TH>
-                <TH label="Category 6">
-                  <ColumnFilter label="Category 6" type="categorical"
-                    options={filterOpts.category_6} selected={filters.category_6}
-                    onChange={(v) => setFilter("category_6", v)} />
-                </TH>
-                <TH label="Cost Center">
-                  <ColumnFilter label="Cost Center" type="categorical"
-                    options={ccFilterOptions} selected={filters.cost_center}
-                    onChange={(v) => setFilter("cost_center", v)} />
-                </TH>
                 <TH label="Source">
                   <ColumnFilter label="Source" type="categorical"
                     options={["Original", "Addback"]} selected={filters.source}
@@ -349,13 +331,13 @@ export default function TransactionsPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={15} className="py-10 text-center text-gray-400">
+                  <td colSpan={13} className="py-10 text-center text-gray-400">
                     <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={15} className="py-10 text-center text-gray-400">
+                  <td colSpan={13} className="py-10 text-center text-gray-400">
                     No transactions found with the current filters.
                   </td>
                 </tr>
@@ -368,6 +350,9 @@ export default function TransactionsPage() {
                       !tx.category_1 ? "bg-amber-50/40" : "",
                     ].join(" ")}
                   >
+                    <td className="px-3 py-2.5">
+                      <CCCell tx={tx} />
+                    </td>
                     <td className="px-3 py-2.5 text-gray-700">{tx.month ?? "—"}</td>
                     <td className="px-3 py-2.5 text-gray-700">{tx.year ?? "—"}</td>
                     <td className="px-3 py-2.5 font-mono text-gray-800">{tx.gl_code ?? "—"}</td>
@@ -380,17 +365,6 @@ export default function TransactionsPage() {
                     <td className="px-3 py-2.5 text-right font-mono text-green-600">{fmt(tx.credit)}</td>
                     <td className={`px-3 py-2.5 text-right font-mono ${(tx.movement ?? 0) >= 0 ? "text-green-700" : "text-red-700"}`}>
                       {fmt(tx.movement)}
-                    </td>
-                    <td className="max-w-[120px] truncate px-3 py-2.5 text-gray-600">{tx.category_5 ?? "—"}</td>
-                    <td className="max-w-[120px] truncate px-3 py-2.5 text-gray-600">
-                      {tx.category_6 ?? (
-                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 text-xs">
-                          No cat.
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <CCCell tx={tx} />
                     </td>
                     <td className="px-3 py-2.5">
                       {tx.source === "addback" ? (

@@ -10,60 +10,12 @@ const MONTH_ORDER = [
   "July","August","September","October","November","December",
 ];
 
-// ─── CC option type (real CC | sentinel) ─────────────────────────────────────
-
-type CCOption =
-  | { kind: "sentinel"; value: "unassigned" | "conflict"; label: string }
-  | { kind: "cc"; cc: CostCenter };
-
-function optionValue(o: CCOption) {
-  return o.kind === "sentinel" ? o.value : o.cc.id;
-}
-function optionLabel(o: CCOption) {
-  return o.kind === "sentinel" ? o.label : o.cc.name;
-}
-
-// ─── CC Selector ──────────────────────────────────────────────────────────────
-
-function CCSelector({
-  options, value, onChange,
-}: {
-  options: CCOption[]; value: string; onChange: (v: string) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {options.map(opt => {
-        const v = optionValue(opt);
-        const active = value === v;
-        const isSentinel = opt.kind === "sentinel";
-        return (
-          <button
-            key={v}
-            onClick={() => onChange(v)}
-            className={[
-              "rounded-full border px-3 py-0.5 text-xs font-medium transition-colors",
-              active
-                ? isSentinel
-                  ? "border-amber-400 bg-amber-100 text-amber-800"
-                  : "border-blue-500 bg-blue-600 text-white"
-                : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50",
-            ].join(" ")}
-          >
-            {optionLabel(opt)}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
 export default function CostCenterReportPage() {
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [opts, setOpts] = useState<FilterOptionsResponse | null>(null);
 
-  const [selectedCC, setSelectedCC] = useState("");
+  // Multi-select CC filter: stores display names ("Unassigned", "Conflict", CC name)
+  const [selectedCCs, setSelectedCCs] = useState<string[]>([]);
 
   // Server-side filters
   const [years,    setYears]    = useState<string[]>([]);
@@ -87,19 +39,26 @@ export default function CostCenterReportPage() {
     ]).then(([ccs, filterOpts]: [CostCenter[], FilterOptionsResponse]) => {
       setCostCenters(ccs);
       setOpts(filterOpts);
-      if (ccs.length > 0) setSelectedCC(ccs[0].id);
-      else setSelectedCC("unassigned");
+      // Default: first CC name, or "Unassigned" if none
+      setSelectedCCs(ccs.length > 0 ? [ccs[0].name] : ["Unassigned"]);
       if (filterOpts.year.length > 0)
         setYears([filterOpts.year[filterOpts.year.length - 1]]);
     }).catch(console.error);
   }, []);
 
-  async function load(cc = selectedCC) {
-    if (!cc) return;
-    setLoading(true);
-    setError("");
+  // Map display name → API param (UUID or sentinel)
+  function displayToApiParam(name: string): string {
+    if (name === "Unassigned") return "unassigned";
+    if (name === "Conflict") return "conflict";
+    return costCenters.find(cc => cc.name === name)?.id ?? name;
+  }
+
+  async function load() {
+    if (selectedCCs.length === 0) return;
+    setLoading(true); setError("");
     try {
-      const p = new URLSearchParams({ cc });
+      const p = new URLSearchParams();
+      selectedCCs.forEach(name => p.append("cc", displayToApiParam(name)));
       years.forEach(y => p.append("year", y));
       branches.forEach(b => p.append("branch", b));
       sources.forEach(s => p.append("source", s));
@@ -107,20 +66,13 @@ export default function CostCenterReportPage() {
       if (!res.ok) { const j = await res.json(); setError(j.error ?? "Error"); return; }
       setRawTxs(await res.json());
       setLoaded(true);
-      setGlCodes([]);
-      setMonths([]);
+      setGlCodes([]); setMonths([]);
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
   }
-
-  // Reload when CC changes after first load
-  useEffect(() => {
-    if (loaded && selectedCC) load(selectedCC);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCC]);
 
   // Derive client-side filter options from loaded data
   const glCodeOptions = useMemo(
@@ -140,16 +92,8 @@ export default function CostCenterReportPage() {
     return out;
   }, [rawTxs, glCodes, months]);
 
-  const ccOptions: CCOption[] = [
-    { kind: "sentinel", value: "unassigned", label: "Unassigned" },
-    { kind: "sentinel", value: "conflict",   label: "Conflict" },
-    ...costCenters.map(cc => ({ kind: "cc" as const, cc })),
-  ];
-
-  const selectedLabel =
-    ccOptions.find(o => optionValue(o) === selectedCC)
-      ? optionLabel(ccOptions.find(o => optionValue(o) === selectedCC)!)
-      : selectedCC;
+  // CC options for ReportFilter
+  const ccOptions = ["Unassigned", "Conflict", ...costCenters.map(cc => cc.name)];
 
   return (
     <div className="flex flex-col gap-3">
@@ -158,6 +102,12 @@ export default function CostCenterReportPage() {
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Filters</span>
 
+          <ReportFilter
+            label="Cost Center"
+            options={ccOptions}
+            selected={selectedCCs}
+            onChange={setSelectedCCs}
+          />
           <ReportFilter
             label="Year"
             options={(opts?.year ?? []).map(String)}
@@ -178,8 +128,8 @@ export default function CostCenterReportPage() {
           />
 
           <button
-            onClick={() => load()}
-            disabled={!selectedCC || loading}
+            onClick={load}
+            disabled={selectedCCs.length === 0 || loading}
             className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40"
           >
             {loading ? "Loading…" : "Load"}
@@ -204,7 +154,7 @@ export default function CostCenterReportPage() {
           )}
 
           <span className="ml-auto text-xs text-gray-400">
-            {loaded ? `${txs.length.toLocaleString()} rows · ${selectedLabel}` : ""}
+            {loaded ? `${txs.length.toLocaleString()} rows` : ""}
           </span>
         </div>
       </div>
@@ -212,15 +162,7 @@ export default function CostCenterReportPage() {
       {/* ── Page title ──────────────────────────────────────────────────── */}
       <div>
         <h2 className="text-xl font-bold text-gray-900">Cost Center Report</h2>
-        <p className="text-sm text-gray-500">
-          Pivot by Category 2 → Category 7 → GL Name → GL Code
-        </p>
-      </div>
-
-      {/* CC Selector pills */}
-      <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Cost Center</p>
-        <CCSelector options={ccOptions} value={selectedCC} onChange={setSelectedCC} />
+        <p className="text-sm text-gray-500">Pivot by Category 2 → Category 7 → GL Name → GL Code</p>
       </div>
 
       {error && (

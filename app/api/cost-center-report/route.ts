@@ -10,12 +10,12 @@ const SELECT =
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const cc      = searchParams.get("cc");     // UUID | "unassigned" | "conflict"
-  const years   = searchParams.getAll("year");
+  const ccs      = searchParams.getAll("cc");   // UUIDs | "unassigned" | "conflict"
+  const years    = searchParams.getAll("year");
   const branches = searchParams.getAll("branch");
   const sources  = searchParams.getAll("source");
 
-  if (!cc) return NextResponse.json({ error: "cc param required" }, { status: 400 });
+  if (ccs.length === 0) return NextResponse.json({ error: "At least one cc param required" }, { status: 400 });
 
   const supabase = createServerClient();
   const all: PLReportTx[] = [];
@@ -25,15 +25,15 @@ export async function GET(req: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q: any = supabase.from("pl_transactions").select(SELECT).range(offset, offset + 999);
 
-    if (cc === "unassigned") {
-      q = q.eq("cost_center_status", "unassigned");
-    } else if (cc === "conflict") {
-      q = q.eq("cost_center_status", "conflict");
-    } else {
-      q = q.eq("cost_center_id", cc);
-    }
+    // Build CC filter — may combine UUIDs with status sentinels via OR
+    const ccIds = ccs.filter((c) => c !== "unassigned" && c !== "conflict");
+    const orParts: string[] = [];
+    if (ccIds.length > 0)             orParts.push(`cost_center_id.in.(${ccIds.join(",")})`);
+    if (ccs.includes("unassigned"))   orParts.push("cost_center_status.eq.unassigned");
+    if (ccs.includes("conflict"))     orParts.push("cost_center_status.eq.conflict");
+    if (orParts.length > 0)           q = q.or(orParts.join(","));
 
-    if (years.length > 0)    q = q.in("year", years.map(y => parseInt(y, 10)));
+    if (years.length > 0)    q = q.in("year", years.map((y) => parseInt(y, 10)));
     if (branches.length > 0) q = q.in("branch", branches);
     if (sources.length > 0)  q = q.in("source", sources);
 

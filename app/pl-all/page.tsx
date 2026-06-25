@@ -2,16 +2,20 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { PivotTable } from "@/components/pivot-table";
+import { PivotTableByCC } from "@/components/pivot-table-cc";
 import { ReportFilter } from "@/components/report-filter";
-import type { PLReportTx, FilterOptionsResponse } from "@/types";
+import type { PLReportTx, PLReportTxCC, FilterOptionsResponse } from "@/types";
 
 const MONTH_ORDER = [
   "January","February","March","April","May","June",
   "July","August","September","October","November","December",
 ];
 
+type ViewMode = "gl" | "cc";
+
 export default function PLAllPage() {
   const [opts, setOpts] = useState<FilterOptionsResponse | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("gl");
 
   // Server-side filters (trigger API reload via Load button)
   const [years,    setYears]    = useState<string[]>([]);
@@ -33,15 +37,13 @@ export default function PLAllPage() {
       .then(r => r.json())
       .then((v: FilterOptionsResponse) => {
         setOpts(v);
-        // Default to latest year
         if (v.year.length > 0) setYears([v.year[v.year.length - 1]]);
       })
       .catch(console.error);
   }, []);
 
   async function load() {
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     try {
       const p = new URLSearchParams();
       years.forEach(y => p.append("year", y));
@@ -51,9 +53,7 @@ export default function PLAllPage() {
       if (!res.ok) { const j = await res.json(); setError(j.error ?? "Error"); return; }
       setRawTxs(await res.json());
       setLoaded(true);
-      // Reset client-side filters when reloading
-      setGlCodes([]);
-      setMonths([]);
+      setGlCodes([]); setMonths([]);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -61,7 +61,6 @@ export default function PLAllPage() {
     }
   }
 
-  // Derive available GL Code / Month options from loaded data
   const glCodeOptions = useMemo(
     () => [...new Set(rawTxs.map(t => t.gl_code).filter(Boolean) as string[])].sort(),
     [rawTxs]
@@ -71,7 +70,6 @@ export default function PLAllPage() {
     [rawTxs]
   );
 
-  // Apply client-side filters
   const txs = useMemo(() => {
     let out = rawTxs;
     if (glCodes.length > 0) out = out.filter(t => t.gl_code && glCodes.includes(t.gl_code));
@@ -113,7 +111,6 @@ export default function PLAllPage() {
             {loading ? "Loading…" : "Load"}
           </button>
 
-          {/* Divider */}
           {loaded && (
             <>
               <span className="text-gray-300">|</span>
@@ -132,9 +129,31 @@ export default function PLAllPage() {
             </>
           )}
 
-          <span className="ml-auto text-xs text-gray-400">
-            {loaded ? `${txs.length.toLocaleString()} rows` : ""}
-          </span>
+          {/* View toggle */}
+          <div className="ml-auto flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-0.5">
+            <button
+              onClick={() => setViewMode("gl")}
+              className={[
+                "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                viewMode === "gl"
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "text-gray-500 hover:text-gray-700",
+              ].join(" ")}
+            >
+              P&amp;L by GL
+            </button>
+            <button
+              onClick={() => setViewMode("cc")}
+              className={[
+                "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                viewMode === "cc"
+                  ? "bg-blue-600 text-white shadow-sm"
+                  : "text-gray-500 hover:text-gray-700",
+              ].join(" ")}
+            >
+              P&amp;L by Cost Center
+            </button>
+          </div>
         </div>
       </div>
 
@@ -142,7 +161,9 @@ export default function PLAllPage() {
       <div>
         <h2 className="text-xl font-bold text-gray-900">P&amp;L All</h2>
         <p className="text-sm text-gray-500">
-          Pivot by Category 2 → Category 7 → GL Name → GL Code
+          {viewMode === "gl"
+            ? "Pivot by Category 2 → Category 7 → GL Name → GL Code"
+            : "Pivot by Cost Center → GL Name → Transaction"}
         </p>
       </div>
 
@@ -156,9 +177,17 @@ export default function PLAllPage() {
         </p>
       )}
 
-      {(loaded || loading) && (
+      {(loaded || loading) && viewMode === "gl" && (
         <PivotTable
           txs={txs}
+          loading={loading}
+          emptyMessage="No transactions found for the selected filters."
+        />
+      )}
+
+      {(loaded || loading) && viewMode === "cc" && (
+        <PivotTableByCC
+          txs={txs as PLReportTxCC[]}
           loading={loading}
           emptyMessage="No transactions found for the selected filters."
         />

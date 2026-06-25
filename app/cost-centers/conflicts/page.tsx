@@ -1,95 +1,103 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
-import type { CostCenter, ConflictGroup, ResolvedConflictGroup } from "@/types";
+import {
+  AlertTriangle, CheckCircle, ChevronDown, ChevronRight,
+  RotateCcw, UserCheck, Layers, ClipboardList,
+} from "lucide-react";
+import type { CostCenter, ConflictGroup, ResolvedConflictGroup, AssignmentGroup, AssignmentTx } from "@/types";
 
 function fmt(n: number | null | undefined) {
   if (n == null) return "—";
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
-
 function mvCls(n: number | null | undefined) {
   const v = n ?? 0;
   return v > 0 ? "text-green-700" : v < 0 ? "text-red-600" : "text-gray-400";
 }
 
-// ─── Pending tab ──────────────────────────────────────────────────────────────
+// ─── Shared: assign multiple txs to a CC ─────────────────────────────────────
 
-function PendingTab({ costCenters }: { costCenters: CostCenter[] }) {
-  const [groups, setGroups] = useState<ConflictGroup[]>([]);
+async function apiAssign(transactionIds: string[], costCenterId: string): Promise<string | null> {
+  const res = await fetch("/api/cost-center-assignment/assign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transaction_ids: transactionIds, cost_center_id: costCenterId }),
+  });
+  if (!res.ok) { const j = await res.json(); return j.error ?? "Unknown error"; }
+  return null;
+}
+
+// ─── Unassigned Tab ───────────────────────────────────────────────────────────
+
+function UnassignedTab({ costCenters }: { costCenters: CostCenter[] }) {
+  return <AssignTab costCenters={costCenters} endpoint="/api/cost-center-assignment/unassigned" mode="assign" />;
+}
+
+// ─── Assigned by Rule Tab ─────────────────────────────────────────────────────
+
+function AssignedByRuleTab({ costCenters }: { costCenters: CostCenter[] }) {
+  return <AssignTab costCenters={costCenters} endpoint="/api/cost-center-assignment/assigned-by-rule" mode="override" />;
+}
+
+// ─── Shared AssignTab ─────────────────────────────────────────────────────────
+
+function AssignTab({
+  costCenters,
+  endpoint,
+  mode,
+}: {
+  costCenters: CostCenter[];
+  endpoint: string;
+  mode: "assign" | "override";
+}) {
+  const [groups, setGroups] = useState<AssignmentGroup[]>([]);
   const [loading, setLoading] = useState(true);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-
-  // Per-row CC assignment
-  const [rowAssign, setRowAssign] = useState<Record<string, string>>({});
-  // Checkbox selection
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [rowCc, setRowCc] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // Bulk CC selection
   const [bulkCcId, setBulkCcId] = useState("");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setMsg("");
+    setLoading(true); setMsg("");
     try {
-      const res = await fetch("/api/conflicts");
+      const res = await fetch(endpoint);
       if (res.ok) setGroups(await res.json());
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    } finally { setLoading(false); }
+  }, [endpoint]);
 
   useEffect(() => { load(); }, [load]);
 
   const totalCount = groups.reduce((s, g) => s + g.transactions.length, 0);
 
   function toggleGroup(key: string) {
-    setCollapsedGroups((prev) => {
-      const s = new Set(prev);
-      s.has(key) ? s.delete(key) : s.add(key);
-      return s;
-    });
+    setCollapsed((prev) => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
   }
-
   function toggleRow(id: string) {
-    setSelected((prev) => {
-      const s = new Set(prev);
-      s.has(id) ? s.delete(id) : s.add(id);
-      return s;
-    });
+    setSelected((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
   }
-
-  function toggleGroupRows(group: ConflictGroup) {
+  function toggleGroupRows(group: AssignmentGroup) {
     const ids = group.transactions.map((t) => t.id);
-    const allSelected = ids.every((id) => selected.has(id));
+    const allSel = ids.every((id) => selected.has(id));
     setSelected((prev) => {
       const s = new Set(prev);
-      if (allSelected) ids.forEach((id) => s.delete(id));
+      if (allSel) ids.forEach((id) => s.delete(id));
       else ids.forEach((id) => s.add(id));
       return s;
     });
   }
 
-  async function resolveRows(txIds: string[], ccId: string) {
-    if (!ccId) return;
-    setSaving(true);
-    setMsg("");
+  async function assign(txIds: string[], ccId: string) {
+    if (!ccId || !txIds.length) return;
+    setSaving(true); setMsg("");
     try {
-      const res = await fetch("/api/conflicts/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transaction_ids: txIds, cost_center_id: ccId }),
-      });
-      if (!res.ok) { const j = await res.json(); setMsg(`Error: ${j.error}`); return; }
-      setSelected(new Set());
-      setBulkCcId("");
-      setRowAssign({});
+      const err = await apiAssign(txIds, ccId);
+      if (err) { setMsg(`Error: ${err}`); return; }
+      setSelected(new Set()); setBulkCcId(""); setRowCc({});
       load();
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   }
 
   if (loading) return (
@@ -101,17 +109,22 @@ function PendingTab({ costCenters }: { costCenters: CostCenter[] }) {
   if (totalCount === 0) return (
     <div className="rounded-xl border border-green-100 bg-green-50 px-6 py-8 text-center">
       <CheckCircle size={20} className="mx-auto mb-2 text-green-500" />
-      <p className="text-sm font-medium text-green-700">No pending conflicts — all transactions are resolved.</p>
+      <p className="text-sm font-medium text-green-700">
+        {mode === "assign" ? "No unassigned transactions." : "No rule-assigned transactions."}
+      </p>
     </div>
   );
+
+  const actionLabel = mode === "assign" ? "Assign" : "Override";
+  const bgBanner = mode === "assign" ? "border-gray-200 bg-gray-50" : "border-blue-100 bg-blue-50";
+  const textBanner = mode === "assign" ? "text-gray-600" : "text-blue-700";
 
   return (
     <div className="space-y-4">
       {/* Bulk action bar */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
-        <AlertTriangle size={14} className="shrink-0 text-amber-500" />
-        <span className="text-xs text-amber-700 font-medium">
-          {totalCount} pending conflict{totalCount !== 1 ? "s" : ""}
+      <div className={`flex flex-wrap items-center gap-3 rounded-xl border ${bgBanner} px-4 py-3`}>
+        <span className={`text-xs font-medium ${textBanner}`}>
+          {totalCount} transaction{totalCount !== 1 ? "s" : ""}
           {selected.size > 0 && ` · ${selected.size} selected`}
         </span>
         {selected.size > 0 && (
@@ -119,18 +132,286 @@ function PendingTab({ costCenters }: { costCenters: CostCenter[] }) {
             <select
               value={bulkCcId}
               onChange={(e) => setBulkCcId(e.target.value)}
-              className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
             >
-              <option value="">Assign to…</option>
-              {costCenters.map((cc) => (
-                <option key={cc.id} value={cc.id}>{cc.name}</option>
-              ))}
+              <option value="">{actionLabel} to…</option>
+              {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
             </select>
             <button
-              onClick={() => resolveRows([...selected], bulkCcId)}
+              onClick={() => assign([...selected], bulkCcId)}
               disabled={!bulkCcId || saving}
               className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40"
             >
+              {saving ? "Saving…" : `${actionLabel} ${selected.size}`}
+            </button>
+          </>
+        )}
+      </div>
+
+      {msg && <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">{msg}</p>}
+
+      {groups.map((group) => {
+        const key = group.gl_code;
+        const isCollapsed = collapsed.has(key);
+        const groupIds = group.transactions.map((t) => t.id);
+        const groupAllSel = groupIds.every((id) => selected.has(id));
+
+        return (
+          <div key={key} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div
+              className="flex cursor-pointer items-center gap-3 border-b border-gray-100 bg-gray-50 px-4 py-2.5 hover:bg-gray-100"
+              onClick={() => toggleGroup(key)}
+            >
+              <input
+                type="checkbox" checked={groupAllSel}
+                onChange={() => toggleGroupRows(group)}
+                onClick={(e) => e.stopPropagation()}
+                className="h-3.5 w-3.5 accent-blue-600 rounded"
+              />
+              {isCollapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
+              <span className="text-xs font-semibold font-mono text-gray-800">{group.gl_code}</span>
+              <span className="text-xs text-gray-500">{group.gl_name}</span>
+              <span className="ml-auto text-xs text-gray-400">{group.transactions.length} tx</span>
+            </div>
+
+            {!isCollapsed && (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50/50 text-left text-gray-400">
+                    <th className="w-8 px-4 py-2" />
+                    <th className="px-3 py-2 font-medium">Month</th>
+                    <th className="px-3 py-2 font-medium">Branch</th>
+                    <th className="px-3 py-2 font-medium">Description</th>
+                    <th className="px-3 py-2 font-medium">Vendor</th>
+                    <th className="px-3 py-2 text-right font-medium">Movement</th>
+                    {mode === "override" && <th className="px-3 py-2 font-medium">Current CC</th>}
+                    <th className="px-3 py-2 font-medium">{actionLabel} to</th>
+                    <th className="w-20 px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.transactions.map((tx: AssignmentTx) => (
+                    <tr key={tx.id} className={`border-b border-gray-50 hover:bg-blue-50/20 ${selected.has(tx.id) ? "bg-blue-50/40" : ""}`}>
+                      <td className="px-4 py-2">
+                        <input
+                          type="checkbox" checked={selected.has(tx.id)}
+                          onChange={() => toggleRow(tx.id)}
+                          className="h-3.5 w-3.5 accent-blue-600 rounded"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-gray-700">{tx.month ?? "—"}</td>
+                      <td className="px-3 py-2 text-gray-700">{tx.branch ?? "—"}</td>
+                      <td className="max-w-[160px] truncate px-3 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
+                      <td className="max-w-[120px] truncate px-3 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
+                      <td className={`px-3 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
+                      {mode === "override" && (
+                        <td className="px-3 py-2">
+                          {tx.cost_center_name
+                            ? <span className="rounded bg-blue-100 px-1.5 py-0.5 text-blue-800 text-[10px] font-medium">{tx.cost_center_name}</span>
+                            : <span className="text-gray-400">—</span>}
+                        </td>
+                      )}
+                      <td className="px-3 py-2">
+                        <select
+                          value={rowCc[tx.id] ?? ""}
+                          onChange={(e) => setRowCc((prev) => ({ ...prev, [tx.id]: e.target.value }))}
+                          className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+                        >
+                          <option value="">Choose…</option>
+                          {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <button
+                          onClick={() => assign([tx.id], rowCc[tx.id] ?? "")}
+                          disabled={!rowCc[tx.id] || saving}
+                          className="rounded-lg bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-30"
+                        >
+                          {actionLabel}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Manual Assigned Tab ──────────────────────────────────────────────────────
+
+function ManualTab() {
+  const [groups, setGroups] = useState<AssignmentGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    fetch("/api/cost-center-assignment/manual")
+      .then((r) => r.json())
+      .then(setGroups)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const totalCount = groups.reduce((s, g) => s + g.transactions.length, 0);
+
+  function toggleGroup(key: string) {
+    setCollapsed((prev) => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
+  }
+
+  if (loading) return (
+    <div className="py-10 text-center text-gray-400">
+      <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
+    </div>
+  );
+
+  if (totalCount === 0) return (
+    <p className="py-10 text-center text-sm text-gray-400">No manually assigned transactions yet.</p>
+  );
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-gray-400">{totalCount} manually assigned transaction{totalCount !== 1 ? "s" : ""} — permanent, never re-evaluated by reapply.</p>
+
+      {groups.map((group) => {
+        const key = group.gl_code;
+        const isCollapsed = collapsed.has(key);
+        return (
+          <div key={key} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div
+              className="flex cursor-pointer items-center gap-3 border-b border-gray-100 bg-gray-50 px-4 py-2.5 hover:bg-gray-100"
+              onClick={() => toggleGroup(key)}
+            >
+              {isCollapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
+              <span className="text-xs font-semibold font-mono text-gray-800">{group.gl_code}</span>
+              <span className="text-xs text-gray-500">{group.gl_name}</span>
+              <span className="ml-auto text-xs text-gray-400">{group.transactions.length} tx</span>
+            </div>
+
+            {!isCollapsed && (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50/50 text-left text-gray-400">
+                    <th className="px-4 py-2 font-medium">Month</th>
+                    <th className="px-4 py-2 font-medium">Branch</th>
+                    <th className="px-4 py-2 font-medium">Description</th>
+                    <th className="px-4 py-2 font-medium">Vendor</th>
+                    <th className="px-4 py-2 text-right font-medium">Movement</th>
+                    <th className="px-4 py-2 font-medium">Assigned to</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.transactions.map((tx: AssignmentTx) => (
+                    <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="px-4 py-2 text-gray-700">{tx.month ?? "—"}</td>
+                      <td className="px-4 py-2 text-gray-700">{tx.branch ?? "—"}</td>
+                      <td className="max-w-[200px] truncate px-4 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
+                      <td className="max-w-[140px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
+                      <td className={`px-4 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
+                      <td className="px-4 py-2">
+                        {tx.cost_center_name
+                          ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800 text-[10px] font-medium">{tx.cost_center_name}</span>
+                          : <span className="text-gray-400">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Conflict (Pending) Tab ───────────────────────────────────────────────────
+
+function ConflictTab({ costCenters }: { costCenters: CostCenter[] }) {
+  const [groups, setGroups] = useState<ConflictGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [rowAssign, setRowAssign] = useState<Record<string, string>>({});
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkCcId, setBulkCcId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true); setMsg("");
+    try {
+      const res = await fetch("/api/conflicts");
+      if (res.ok) setGroups(await res.json());
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const totalCount = groups.reduce((s, g) => s + g.transactions.length, 0);
+
+  function toggleGroup(key: string) {
+    setCollapsedGroups((prev) => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
+  }
+  function toggleRow(id: string) {
+    setSelected((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+  function toggleGroupRows(group: ConflictGroup) {
+    const ids = group.transactions.map((t) => t.id);
+    const allSel = ids.every((id) => selected.has(id));
+    setSelected((prev) => {
+      const s = new Set(prev);
+      if (allSel) ids.forEach((id) => s.delete(id));
+      else ids.forEach((id) => s.add(id));
+      return s;
+    });
+  }
+
+  async function resolveRows(txIds: string[], ccId: string) {
+    if (!ccId) return;
+    setSaving(true); setMsg("");
+    try {
+      const res = await fetch("/api/conflicts/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_ids: txIds, cost_center_id: ccId }),
+      });
+      if (!res.ok) { const j = await res.json(); setMsg(`Error: ${j.error}`); return; }
+      setSelected(new Set()); setBulkCcId(""); setRowAssign({}); load();
+    } finally { setSaving(false); }
+  }
+
+  if (loading) return (
+    <div className="py-10 text-center text-gray-400">
+      <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
+    </div>
+  );
+  if (totalCount === 0) return (
+    <div className="rounded-xl border border-green-100 bg-green-50 px-6 py-8 text-center">
+      <CheckCircle size={20} className="mx-auto mb-2 text-green-500" />
+      <p className="text-sm font-medium text-green-700">No pending conflicts.</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
+        <AlertTriangle size={14} className="shrink-0 text-amber-500" />
+        <span className="text-xs text-amber-700 font-medium">
+          {totalCount} conflict{totalCount !== 1 ? "s" : ""}{selected.size > 0 && ` · ${selected.size} selected`}
+        </span>
+        {selected.size > 0 && (
+          <>
+            <select value={bulkCcId} onChange={(e) => setBulkCcId(e.target.value)}
+              className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs text-gray-700 focus:border-blue-400 focus:outline-none">
+              <option value="">Assign to…</option>
+              {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
+            </select>
+            <button onClick={() => resolveRows([...selected], bulkCcId)} disabled={!bulkCcId || saving}
+              className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40">
               {saving ? "Saving…" : `Assign ${selected.size}`}
             </button>
           </>
@@ -141,33 +422,21 @@ function PendingTab({ costCenters }: { costCenters: CostCenter[] }) {
 
       {groups.map((group) => {
         const key = group.gl_code;
-        const collapsed = collapsedGroups.has(key);
+        const isCollapsed = collapsedGroups.has(key);
         const groupIds = group.transactions.map((t) => t.id);
-        const groupAllSelected = groupIds.every((id) => selected.has(id));
-
+        const groupAllSel = groupIds.every((id) => selected.has(id));
         return (
           <div key={key} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-            {/* Group header */}
-            <div
-              className="flex cursor-pointer items-center gap-3 border-b border-gray-100 bg-gray-50 px-4 py-2.5 hover:bg-gray-100"
-              onClick={() => toggleGroup(key)}
-            >
-              <input
-                type="checkbox"
-                checked={groupAllSelected}
-                onChange={() => toggleGroupRows(group)}
-                onClick={(e) => e.stopPropagation()}
-                className="h-3.5 w-3.5 accent-blue-600 rounded"
-              />
-              {collapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
+            <div className="flex cursor-pointer items-center gap-3 border-b border-gray-100 bg-gray-50 px-4 py-2.5 hover:bg-gray-100"
+              onClick={() => toggleGroup(key)}>
+              <input type="checkbox" checked={groupAllSel} onChange={() => toggleGroupRows(group)}
+                onClick={(e) => e.stopPropagation()} className="h-3.5 w-3.5 accent-blue-600 rounded" />
+              {isCollapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
               <span className="text-xs font-semibold font-mono text-gray-800">{group.gl_code}</span>
               <span className="text-xs text-gray-500">{group.gl_name}</span>
-              <span className="ml-auto text-xs text-amber-600 font-medium">
-                {group.transactions.length} conflict{group.transactions.length !== 1 ? "s" : ""}
-              </span>
+              <span className="ml-auto text-xs text-amber-600 font-medium">{group.transactions.length} conflict{group.transactions.length !== 1 ? "s" : ""}</span>
             </div>
-
-            {!collapsed && (
+            {!isCollapsed && (
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50/50 text-left text-gray-400">
@@ -176,8 +445,6 @@ function PendingTab({ costCenters }: { costCenters: CostCenter[] }) {
                     <th className="px-3 py-2 font-medium">Branch</th>
                     <th className="px-3 py-2 font-medium">Description</th>
                     <th className="px-3 py-2 font-medium">Vendor</th>
-                    <th className="px-3 py-2 text-right font-medium">Debit</th>
-                    <th className="px-3 py-2 text-right font-medium">Credit</th>
                     <th className="px-3 py-2 text-right font-medium">Movement</th>
                     <th className="px-3 py-2 font-medium">Conflicting CCs</th>
                     <th className="px-3 py-2 font-medium">Assign to</th>
@@ -188,47 +455,32 @@ function PendingTab({ costCenters }: { costCenters: CostCenter[] }) {
                   {group.transactions.map((tx) => (
                     <tr key={tx.id} className={`border-b border-gray-50 hover:bg-amber-50/30 ${selected.has(tx.id) ? "bg-blue-50/40" : ""}`}>
                       <td className="px-4 py-2">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(tx.id)}
-                          onChange={() => toggleRow(tx.id)}
-                          className="h-3.5 w-3.5 accent-blue-600 rounded"
-                        />
+                        <input type="checkbox" checked={selected.has(tx.id)} onChange={() => toggleRow(tx.id)}
+                          className="h-3.5 w-3.5 accent-blue-600 rounded" />
                       </td>
                       <td className="px-3 py-2 text-gray-700">{tx.month ?? "—"}</td>
                       <td className="px-3 py-2 text-gray-700">{tx.branch ?? "—"}</td>
                       <td className="max-w-[160px] truncate px-3 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
                       <td className="max-w-[120px] truncate px-3 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
-                      <td className="px-3 py-2 text-right font-mono text-red-600">{fmt(tx.debit)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-green-600">{fmt(tx.credit)}</td>
                       <td className={`px-3 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
                       <td className="px-3 py-2">
                         <span className="inline-flex flex-wrap gap-1">
                           {tx.conflicting_ccs.map((cc) => (
-                            <span key={cc.id} className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 font-medium">
-                              {cc.name}
-                            </span>
+                            <span key={cc.id} className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 font-medium">{cc.name}</span>
                           ))}
                         </span>
                       </td>
                       <td className="px-3 py-2">
-                        <select
-                          value={rowAssign[tx.id] ?? ""}
-                          onChange={(e) => setRowAssign((prev) => ({ ...prev, [tx.id]: e.target.value }))}
-                          className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
-                        >
+                        <select value={rowAssign[tx.id] ?? ""} onChange={(e) => setRowAssign((prev) => ({ ...prev, [tx.id]: e.target.value }))}
+                          className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none">
                           <option value="">Choose…</option>
-                          {costCenters.map((cc) => (
-                            <option key={cc.id} value={cc.id}>{cc.name}</option>
-                          ))}
+                          {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
                         </select>
                       </td>
                       <td className="px-3 py-2">
-                        <button
-                          onClick={() => resolveRows([tx.id], rowAssign[tx.id] ?? "")}
+                        <button onClick={() => resolveRows([tx.id], rowAssign[tx.id] ?? "")}
                           disabled={!rowAssign[tx.id] || saving}
-                          className="rounded-lg bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-30"
-                        >
+                          className="rounded-lg bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-30">
                           Assign
                         </button>
                       </td>
@@ -244,9 +496,9 @@ function PendingTab({ costCenters }: { costCenters: CostCenter[] }) {
   );
 }
 
-// ─── Resolved tab ─────────────────────────────────────────────────────────────
+// ─── Conflict Resolved Tab ────────────────────────────────────────────────────
 
-function ResolvedTab() {
+function ConflictResolvedTab() {
   const [groups, setGroups] = useState<ResolvedConflictGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -254,29 +506,21 @@ function ResolvedTab() {
   const [msg, setMsg] = useState("");
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setMsg("");
+    setLoading(true); setMsg("");
     try {
       const res = await fetch("/api/conflicts/resolved");
       if (res.ok) setGroups(await res.json());
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
   function toggleGroup(key: string) {
-    setCollapsedGroups((prev) => {
-      const s = new Set(prev);
-      s.has(key) ? s.delete(key) : s.add(key);
-      return s;
-    });
+    setCollapsedGroups((prev) => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
   }
 
   async function handleReopen(txId: string) {
-    setReopening(txId);
-    setMsg("");
+    setReopening(txId); setMsg("");
     try {
       const res = await fetch("/api/conflicts/reopen", {
         method: "POST",
@@ -285,9 +529,7 @@ function ResolvedTab() {
       });
       if (!res.ok) { const j = await res.json(); setMsg(`Error: ${j.error}`); return; }
       load();
-    } finally {
-      setReopening(null);
-    }
+    } finally { setReopening(null); }
   }
 
   const totalCount = groups.reduce((s, g) => s + g.transactions.length, 0);
@@ -297,7 +539,6 @@ function ResolvedTab() {
       <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
     </div>
   );
-
   if (totalCount === 0) return (
     <p className="py-10 text-center text-sm text-gray-400">No resolved conflicts yet.</p>
   );
@@ -305,25 +546,20 @@ function ResolvedTab() {
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-400">{totalCount} resolved conflict{totalCount !== 1 ? "s" : ""}</p>
-
       {msg && <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">{msg}</p>}
-
       {groups.map((group) => {
         const key = group.gl_code;
-        const collapsed = collapsedGroups.has(key);
+        const isCollapsed = collapsedGroups.has(key);
         return (
           <div key={key} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-            <div
-              className="flex cursor-pointer items-center gap-3 border-b border-gray-100 bg-gray-50 px-4 py-2.5 hover:bg-gray-100"
-              onClick={() => toggleGroup(key)}
-            >
-              {collapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
+            <div className="flex cursor-pointer items-center gap-3 border-b border-gray-100 bg-gray-50 px-4 py-2.5 hover:bg-gray-100"
+              onClick={() => toggleGroup(key)}>
+              {isCollapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
               <span className="text-xs font-semibold font-mono text-gray-800">{group.gl_code}</span>
               <span className="text-xs text-gray-500">{group.gl_name}</span>
               <span className="ml-auto text-xs text-gray-400">{group.transactions.length} resolved</span>
             </div>
-
-            {!collapsed && (
+            {!isCollapsed && (
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50/50 text-left text-gray-400">
@@ -349,29 +585,21 @@ function ResolvedTab() {
                       <td className="px-4 py-2">
                         <span className="inline-flex flex-wrap gap-1">
                           {tx.conflicting_ccs.map((cc) => (
-                            <span key={cc.id} className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 text-[10px]">
-                              {cc.name}
-                            </span>
+                            <span key={cc.id} className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 text-[10px]">{cc.name}</span>
                           ))}
                         </span>
                       </td>
                       <td className="px-4 py-2">
-                        {tx.resolved_cc ? (
-                          <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800 font-medium">
-                            {tx.resolved_cc.name}
-                          </span>
-                        ) : "—"}
+                        {tx.resolved_cc
+                          ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800 font-medium">{tx.resolved_cc.name}</span>
+                          : "—"}
                       </td>
                       <td className="px-4 py-2 text-gray-400">
                         {tx.resolved_at ? new Date(tx.resolved_at).toLocaleDateString() : "—"}
                       </td>
                       <td className="px-4 py-2">
-                        <button
-                          onClick={() => handleReopen(tx.id)}
-                          disabled={reopening === tx.id}
-                          title="Reopen conflict"
-                          className="flex items-center gap-1 rounded px-2 py-1 text-[10px] text-gray-500 hover:text-amber-700 hover:bg-amber-50 disabled:opacity-40"
-                        >
+                        <button onClick={() => handleReopen(tx.id)} disabled={reopening === tx.id} title="Reopen conflict"
+                          className="flex items-center gap-1 rounded px-2 py-1 text-[10px] text-gray-500 hover:text-amber-700 hover:bg-amber-50 disabled:opacity-40">
                           <RotateCcw size={11} /> Reopen
                         </button>
                       </td>
@@ -389,8 +617,18 @@ function ResolvedTab() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ConflictsPage() {
-  const [tab, setTab] = useState<"pending" | "resolved">("pending");
+type Tab = "unassigned" | "assigned-by-rule" | "manual" | "conflict" | "conflict-resolved";
+
+const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
+  { id: "unassigned",        label: "Unassigned",        icon: AlertTriangle },
+  { id: "assigned-by-rule",  label: "Assigned by Rule",  icon: Layers },
+  { id: "manual",            label: "Manual Assigned",   icon: UserCheck },
+  { id: "conflict",          label: "Conflict",          icon: AlertTriangle },
+  { id: "conflict-resolved", label: "Conflict Resolved", icon: ClipboardList },
+];
+
+export default function CCAssignmentPage() {
+  const [tab, setTab] = useState<Tab>("unassigned");
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
 
   useEffect(() => {
@@ -403,33 +641,37 @@ export default function ConflictsPage() {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-xl font-bold text-gray-900">Conflicts</h2>
-        <p className="text-sm text-gray-500">Transactions that matched two or more Cost Centers simultaneously.</p>
+        <h2 className="text-xl font-bold text-gray-900">Cost Center Assignment</h2>
+        <p className="text-sm text-gray-500">Assign, override, and resolve cost center conflicts.</p>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 w-fit">
-        {(["pending", "resolved"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={[
-              "rounded-lg px-4 py-1.5 text-sm font-medium transition-colors",
-              tab === t
-                ? "bg-white text-gray-900 shadow-sm"
-                : "text-gray-500 hover:text-gray-700",
-            ].join(" ")}
-          >
-            {t === "pending" ? "Pending" : "Resolved"}
-          </button>
-        ))}
+      <div className="flex gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 w-fit flex-wrap">
+        {TABS.map((t) => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={[
+                "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                tab === t.id
+                  ? "bg-white text-gray-900 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700",
+              ].join(" ")}
+            >
+              <Icon size={13} />
+              {t.label}
+            </button>
+          );
+        })}
       </div>
 
-      {tab === "pending" ? (
-        <PendingTab costCenters={costCenters} />
-      ) : (
-        <ResolvedTab />
-      )}
+      {tab === "unassigned"        && <UnassignedTab costCenters={costCenters} />}
+      {tab === "assigned-by-rule"  && <AssignedByRuleTab costCenters={costCenters} />}
+      {tab === "manual"            && <ManualTab />}
+      {tab === "conflict"          && <ConflictTab costCenters={costCenters} />}
+      {tab === "conflict-resolved" && <ConflictResolvedTab />}
     </div>
   );
 }

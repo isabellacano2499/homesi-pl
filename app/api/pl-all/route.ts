@@ -6,11 +6,12 @@ export const dynamic = "force-dynamic";
 
 const SELECT =
   "id,month,branch,check_description,vendor,ref_numb,debit,credit,movement," +
-  "gl_code,gl_name,category_2,category_7,order_1,order_2";
+  "gl_code,gl_name,category_2,category_7,order_1,order_2," +
+  "cost_center_id,cost_center_status,cost_centers(name)";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const years   = searchParams.getAll("year");
+  const years    = searchParams.getAll("year");
   const branches = searchParams.getAll("branch");
   const sources  = searchParams.getAll("source");
 
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest) {
   while (true) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q: any = supabase.from("pl_transactions").select(SELECT).range(offset, offset + 999);
-    if (years.length > 0)    q = q.in("year", years.map(y => parseInt(y, 10)));
+    if (years.length > 0)    q = q.in("year", years.map((y) => parseInt(y, 10)));
     if (branches.length > 0) q = q.in("branch", branches);
     if (sources.length > 0)  q = q.in("source", sources);
 

@@ -4,24 +4,13 @@ import type { VendorSummary } from "@/types";
 
 export const dynamic = "force-dynamic";
 
-const TOO_MANY = 2000;
+const MONTH_ORDER = [
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December",
+];
 
 export async function GET() {
   const supabase = createServerClient();
-
-  // Count distinct vendors first
-  const { count } = await supabase
-    .from("pl_transactions")
-    .select("vendor", { count: "exact", head: true })
-    .not("vendor", "is", null)
-    .neq("vendor", "");
-
-  if ((count ?? 0) > TOO_MANY) {
-    return NextResponse.json(
-      { tooMany: true, count, message: `${count} unique vendors found — over the ${TOO_MANY} limit. Contact the developer to optimize this view.` },
-      { status: 200 }
-    );
-  }
 
   // Fetch all relevant fields in pages
   const all: {
@@ -53,35 +42,37 @@ export async function GET() {
   const { data: ccs } = await supabase.from("cost_centers").select("id,name");
   const ccMap = new Map<string, string>((ccs ?? []).map((c) => [c.id, c.name]));
 
-  // Aggregate by vendor
   type Acc = {
     branches: Set<string>;
     months: Set<string>;
-    gl_keys: Set<string>;
     gl_items: Map<string, { gl_code: string; gl_name: string }>;
     cc_labels: Set<string>;
   };
+
+  // Normalize vendor key: trim + collapse internal spaces for dedup
   const byVendor = new Map<string, Acc>();
+  const displayName = new Map<string, string>(); // normalized key → first seen display name
 
   for (const row of all) {
     if (!row.vendor) continue;
-    if (!byVendor.has(row.vendor)) {
-      byVendor.set(row.vendor, {
+    const key = row.vendor.trim().replace(/\s+/g, " ").toLowerCase();
+    if (!key) continue;
+
+    if (!byVendor.has(key)) {
+      byVendor.set(key, {
         branches: new Set(),
         months: new Set(),
-        gl_keys: new Set(),
         gl_items: new Map(),
         cc_labels: new Set(),
       });
+      displayName.set(key, row.vendor.trim());
     }
-    const acc = byVendor.get(row.vendor)!;
-    if (row.branch) acc.branches.add(row.branch);
+
+    const acc = byVendor.get(key)!;
+    if (row.branch) acc.branches.add(row.branch.trim());
     if (row.month) acc.months.add(row.month);
     if (row.gl_code) {
-      const glKey = row.gl_code;
-      if (!acc.gl_items.has(glKey)) {
-        acc.gl_items.set(glKey, { gl_code: row.gl_code, gl_name: row.gl_name ?? "" });
-      }
+      acc.gl_items.set(row.gl_code, { gl_code: row.gl_code, gl_name: row.gl_name ?? "" });
     }
     if (row.cost_center_status === "unassigned") {
       acc.cc_labels.add("Unassigned");
@@ -89,23 +80,20 @@ export async function GET() {
       acc.cc_labels.add("Conflict");
     } else if (row.cost_center_id) {
       acc.cc_labels.add(ccMap.get(row.cost_center_id) ?? row.cost_center_id);
+    } else {
+      acc.cc_labels.add("Unassigned");
     }
   }
 
-  const MONTH_ORDER = [
-    "January","February","March","April","May","June",
-    "July","August","September","October","November","December",
-  ];
-
   const result: VendorSummary[] = [...byVendor.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([vendor, acc]) => ({
-      vendor,
+    .map(([key, acc]) => ({
+      vendor: displayName.get(key) ?? key,
       branches: [...acc.branches].sort(),
       months: MONTH_ORDER.filter((m) => acc.months.has(m)),
       gl_items: [...acc.gl_items.values()].sort((a, b) => a.gl_code.localeCompare(b.gl_code)),
       cost_centers: [...acc.cc_labels].sort(),
-    }));
+    }))
+    .sort((a, b) => a.vendor.localeCompare(b.vendor));
 
   return NextResponse.json(result);
 }
