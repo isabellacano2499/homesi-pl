@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowLeft, Plus, Trash2, ChevronUp, ChevronDown, Save, X, Pencil,
+  ArrowLeft, Plus, Trash2, ChevronUp, ChevronDown, Save, X, Pencil, Unlink,
 } from "lucide-react";
 import {
   CC_FIELDS, TEXT_OPERATORS, NUMERIC_OPERATORS,
@@ -229,6 +229,11 @@ export default function CostCenterDetailPage() {
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [reevalMsg, setReevalMsg] = useState("");
 
+  // Unassign all
+  const [unassigning, setUnassigning] = useState(false);
+  const [unassignErr, setUnassignErr] = useState("");
+  const [unassignOk, setUnassignOk] = useState("");
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -376,6 +381,45 @@ export default function CostCenterDetailPage() {
       setDeleteRuleErr(`Network error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  // ── Unassign all ────────────────────────────────────────────────────────────
+
+  async function handleUnassignAll() {
+    setUnassignErr("");
+    setUnassignOk("");
+    const countRes = await fetch(`/api/cost-centers/${id}/unassign-all`);
+    const { count = 0 } = await countRes.json().catch(() => ({}));
+    if (count === 0) {
+      setUnassignOk("No transactions are currently assigned to this cost center.");
+      return;
+    }
+    if (
+      !confirm(
+        `This will reset ${count} transaction${count !== 1 ? "s" : ""} to their original unassigned state ` +
+        `(clears cost_center_id, assignment_origin, cost_center_status, and conflict snapshots). ` +
+        `This cannot be undone. Continue?`
+      )
+    )
+      return;
+    setUnassigning(true);
+    try {
+      const res = await fetch(`/api/cost-centers/${id}/unassign-all`, { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setUnassignErr(j.error ?? "Failed to unassign transactions");
+        return;
+      }
+      const n = j.unassigned ?? 0;
+      setUnassignOk(
+        `${n} transaction${n !== 1 ? "s" : ""} reset to original unassigned state. ` +
+        `This cost center can now be deleted.`
+      );
+    } catch (err) {
+      setUnassignErr(`Network error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setUnassigning(false);
     }
   }
 
@@ -673,6 +717,39 @@ export default function CostCenterDetailPage() {
           <p className="mt-1 text-xs text-gray-400">Evaluated strictly left to right — no operator precedence.</p>
         </div>
       )}
+
+      {/* Danger zone */}
+      <div className="rounded-xl border border-amber-200 bg-amber-50/30 p-4 space-y-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-amber-700">Danger Zone</h3>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-gray-800">Unassign all transactions</p>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Reset every transaction assigned to this cost center back to its original never-evaluated
+              state — clears cost_center_id, assignment_origin, cost_center_status, and related conflict
+              snapshots. Use this before deleting a cost center that still has assigned transactions.
+            </p>
+          </div>
+          <button
+            onClick={handleUnassignAll}
+            disabled={unassigning}
+            className="flex-shrink-0 flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+          >
+            <Unlink size={12} />
+            {unassigning ? "Unassigning…" : "Unassign all"}
+          </button>
+        </div>
+        {unassignOk && (
+          <p className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">
+            {unassignOk}
+          </p>
+        )}
+        {unassignErr && (
+          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            {unassignErr}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

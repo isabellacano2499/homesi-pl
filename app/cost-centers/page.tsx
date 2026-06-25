@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { Plus, Search, Trash2, RefreshCw, ChevronRight } from "lucide-react";
+import { Plus, Search, Trash2, RefreshCw, ChevronRight, Unlink } from "lucide-react";
 import type { CostCenter } from "@/types";
 
 type CCWithCount = CostCenter & { rule_count: number };
@@ -18,6 +18,7 @@ export default function CostCentersPage() {
   const [saveErr, setSaveErr] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteErr, setDeleteErr] = useState("");
+  const [deleteErrId, setDeleteErrId] = useState<string | null>(null);
   const [deleteOk, setDeleteOk] = useState("");
   const [reapplying, setReapplying] = useState(false);
   const [reapplyMsg, setReapplyMsg] = useState("");
@@ -65,12 +66,14 @@ export default function CostCentersPage() {
     if (!confirm(`Delete "${name}"? Its rules will be deleted and any rule-assigned transactions will be re-evaluated.`)) return;
     setDeletingId(id);
     setDeleteErr("");
+    setDeleteErrId(null);
     setDeleteOk("");
     try {
       const res = await fetch(`/api/cost-centers/${id}`, { method: "DELETE" });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         setDeleteErr(j.error ?? `Failed to delete "${name}".`);
+        setDeleteErrId(id);
         return;
       }
       setRecords((p) => p.filter((r) => r.id !== id));
@@ -160,9 +163,20 @@ export default function CostCentersPage() {
       )}
 
       {deleteErr && (
-        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {deleteErr}
-        </p>
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 space-y-1">
+          <p>{deleteErr}</p>
+          {deleteErrId && (
+            <p className="text-xs">
+              <Link
+                href={`/cost-centers/${deleteErrId}`}
+                className="inline-flex items-center gap-1 font-medium underline hover:text-red-900"
+              >
+                <Unlink size={11} /> Open cost center detail → Unassign all transactions
+              </Link>
+              {" "}to clear them before deleting.
+            </p>
+          )}
+        </div>
       )}
 
       {/* Add form */}
