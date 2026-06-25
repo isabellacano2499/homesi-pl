@@ -7,14 +7,21 @@ import type { PLReportTxCC } from "@/types";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type TxLeaf = { id: string; month: string; desc: string | null; mvmt: number };
-type GLNameNode = { gl_name: string; byMonth: Record<string, number>; total: number; txs: TxLeaf[] };
+type GLNameNode  = { gl_name: string; byMonth: Record<string, number>; total: number; txs: TxLeaf[] };
 type CCNode = {
-  cc_key: string;   // UUID | "unassigned" | "conflict"
+  cc_key: string;
   cc_name: string;
-  order: number;    // for sorting: 0=named, 1=unassigned, 2=conflict
+  order: number;   // 0=named CC, 1=Unassigned, 2=Conflict
   byMonth: Record<string, number>;
   total: number;
   gl_names: GLNameNode[];
+};
+type Cat6Node = {
+  cat6_key: string;
+  cat6_name: string;
+  byMonth: Record<string, number>;
+  total: number;
+  cc_nodes: CCNode[];
 };
 
 const MONTH_ORDER = [
@@ -24,26 +31,24 @@ const MONTH_ORDER = [
 
 const TOTAL_BG = "#1e3a5f";
 
-// ─── Build pivot ──────────────────────────────────────────────────────────────
+// ─── Build pivot (4-level) ────────────────────────────────────────────────────
 
-export function buildPivotByCC(txs: PLReportTxCC[]): { ccNodes: CCNode[]; months: string[] } {
-  type WAcc = { bm: Map<string, number>; total: number };
-  type WGL  = WAcc & { txs: TxLeaf[] };
-  type WCC  = WAcc & { gl_names: Map<string, WGL> };
+export function buildPivotByCC(txs: PLReportTxCC[]): { cat6Nodes: Cat6Node[]; months: string[] } {
+  type WGL  = { bm: Map<string, number>; total: number; txs: TxLeaf[] };
+  type WCC  = { cc_name: string; order: number; bm: Map<string, number>; total: number; gl_map: Map<string, WGL> };
+  type WCat = { bm: Map<string, number>; total: number; cc_map: Map<string, WCC> };
 
-  const ccMap = new Map<string, WCC>();
+  const cat6Map = new Map<string, WCat>();
   const monthSet = new Set<string>();
 
   for (const tx of txs) {
-    const month = tx.month ?? "Unknown";
-    const mvmt  = tx.movement ?? 0;
-    const glN   = tx.gl_name ?? "(No GL Name)";
-    const desc  = tx.check_description;
+    const cat6_key  = tx.category_6 ?? "(No Category)";
+    const month     = tx.month ?? "Unknown";
+    const mvmt      = tx.movement ?? 0;
+    const glN       = tx.gl_name ?? "(No GL Name)";
+    const desc      = tx.check_description;
 
-    let cc_key: string;
-    let cc_name: string;
-    let order: number;
-
+    let cc_key: string, cc_name: string, order: number;
     if (tx.cost_center_status === "unassigned" || (!tx.cost_center_id && tx.cost_center_status !== "conflict")) {
       cc_key = "unassigned"; cc_name = "Unassigned"; order = 1;
     } else if (tx.cost_center_status === "conflict") {
@@ -56,39 +61,53 @@ export function buildPivotByCC(txs: PLReportTxCC[]): { ccNodes: CCNode[]; months
 
     if (tx.month) monthSet.add(tx.month);
 
-    if (!ccMap.has(cc_key)) ccMap.set(cc_key, { bm: new Map(), total: 0, gl_names: new Map() });
-    const wCC = ccMap.get(cc_key)!;
+    if (!cat6Map.has(cat6_key)) cat6Map.set(cat6_key, { bm: new Map(), total: 0, cc_map: new Map() });
+    const wCat = cat6Map.get(cat6_key)!;
+    wCat.total += mvmt; wCat.bm.set(month, (wCat.bm.get(month) ?? 0) + mvmt);
+
+    if (!wCat.cc_map.has(cc_key)) wCat.cc_map.set(cc_key, { cc_name, order, bm: new Map(), total: 0, gl_map: new Map() });
+    const wCC = wCat.cc_map.get(cc_key)!;
     wCC.total += mvmt; wCC.bm.set(month, (wCC.bm.get(month) ?? 0) + mvmt);
 
-    if (!wCC.gl_names.has(glN)) wCC.gl_names.set(glN, { bm: new Map(), total: 0, txs: [] });
-    const wGL = wCC.gl_names.get(glN)!;
+    if (!wCC.gl_map.has(glN)) wCC.gl_map.set(glN, { bm: new Map(), total: 0, txs: [] });
+    const wGL = wCC.gl_map.get(glN)!;
     wGL.total += mvmt; wGL.bm.set(month, (wGL.bm.get(month) ?? 0) + mvmt);
     wGL.txs.push({ id: tx.id, month, desc, mvmt });
   }
 
   const months = MONTH_ORDER.filter((m) => monthSet.has(m));
 
-  const ccNodes: CCNode[] = [...ccMap.entries()].map(([cc_key, w]) => {
-    const order = cc_key === "unassigned" ? 1 : cc_key === "conflict" ? 2 : 0;
-    const cc_name = cc_key === "unassigned" ? "Unassigned" : cc_key === "conflict" ? "Conflict"
-      : txs.find((t) => t.cost_center_id === cc_key)?.cost_centers?.name ?? cc_key;
-    return {
-      cc_key, cc_name, order,
-      byMonth: Object.fromEntries(w.bm),
-      total: w.total,
-      gl_names: [...w.gl_names.entries()].map(([gl_name, wGL]) => ({
+  const cat6Nodes: Cat6Node[] = [...cat6Map.entries()].map(([cat6_key, wCat]) => {
+    const cc_nodes: CCNode[] = [...wCat.cc_map.entries()].map(([cc_key, wCC]) => ({
+      cc_key, cc_name: wCC.cc_name, order: wCC.order,
+      byMonth: Object.fromEntries(wCC.bm),
+      total: wCC.total,
+      gl_names: [...wCC.gl_map.entries()].map(([gl_name, wGL]) => ({
         gl_name,
         byMonth: Object.fromEntries(wGL.bm),
         total: wGL.total,
         txs: wGL.txs,
       })).sort((a, b) => a.gl_name.localeCompare(b.gl_name)),
+    })).sort((a, b) => {
+      if (a.order !== b.order) return a.order - b.order;
+      return a.cc_name.localeCompare(b.cc_name);
+    });
+
+    return {
+      cat6_key,
+      cat6_name: cat6_key,
+      byMonth: Object.fromEntries(wCat.bm),
+      total: wCat.total,
+      cc_nodes,
     };
   }).sort((a, b) => {
-    if (a.order !== b.order) return a.order - b.order;
-    return a.cc_name.localeCompare(b.cc_name);
+    // "(No Category)" goes last
+    if (a.cat6_key === "(No Category)") return 1;
+    if (b.cat6_key === "(No Category)") return -1;
+    return a.cat6_name.localeCompare(b.cat6_name);
   });
 
-  return { ccNodes, months };
+  return { cat6Nodes, months };
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -115,7 +134,7 @@ export function PivotTableByCC({
 }: {
   txs: PLReportTxCC[]; loading?: boolean; emptyMessage?: string;
 }) {
-  const { ccNodes, months } = useMemo(() => buildPivotByCC(txs), [txs]);
+  const { cat6Nodes, months } = useMemo(() => buildPivotByCC(txs), [txs]);
   const [exp, setExp] = useState<Set<string>>(new Set());
 
   function toggle(key: string) {
@@ -130,13 +149,13 @@ export function PivotTableByCC({
       </div>
     );
   }
-  if (ccNodes.length === 0) {
+  if (cat6Nodes.length === 0) {
     return <p className="py-8 text-center text-xs text-gray-400">{emptyMessage}</p>;
   }
 
-  const grandTotal = ccNodes.reduce((s, c) => s + c.total, 0);
+  const grandTotal = cat6Nodes.reduce((s, c) => s + c.total, 0);
   const grandByMonth: Record<string, number> = {};
-  for (const c of ccNodes) for (const [m, v] of Object.entries(c.byMonth))
+  for (const c of cat6Nodes) for (const [m, v] of Object.entries(c.byMonth))
     grandByMonth[m] = (grandByMonth[m] ?? 0) + v;
 
   const gtBase: React.CSSProperties = {
@@ -165,75 +184,109 @@ export function PivotTableByCC({
     </tr>
   );
 
-  for (const ccNode of ccNodes) {
-    const kCC = `cc:${ccNode.cc_key}`;
-    const openCC = exp.has(kCC);
+  for (const cat6Node of cat6Nodes) {
+    const kCat6  = `cat6:${cat6Node.cat6_key}`;
+    const openCat6 = exp.has(kCat6);
 
-    const isSentinel = ccNode.cc_key === "unassigned" || ccNode.cc_key === "conflict";
-    const ccRowCls = isSentinel
-      ? "border-b border-amber-100 bg-amber-50 hover:bg-amber-100 cursor-pointer"
-      : "border-b border-blue-100 bg-blue-50 hover:bg-blue-100 cursor-pointer";
-    const ccTextCls = isSentinel ? "text-amber-800" : "text-blue-900";
-
+    // Category 6 row (level 1)
     rows.push(
-      <tr key={kCC} className={ccRowCls} onClick={() => toggle(kCC)}>
-        <td className={`sticky left-0 z-10 ${isSentinel ? "bg-amber-50" : "bg-blue-50"} px-2 py-1 text-[11px] font-bold ${ccTextCls} whitespace-nowrap`}>
+      <tr key={kCat6}
+          className="border-b border-indigo-100 bg-indigo-50 hover:bg-indigo-100 cursor-pointer"
+          onClick={() => toggle(kCat6)}>
+        <td className="sticky left-0 z-10 bg-indigo-50 px-2 py-1 text-[11px] font-bold text-indigo-900 whitespace-nowrap">
           <span className="inline-flex items-center gap-1">
-            {openCC ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-            {ccNode.cc_name}
+            {openCat6 ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+            {cat6Node.cat6_name}
           </span>
         </td>
         {months.map((m) => (
-          <td key={m} className={`${numCell} font-bold ${mvCls(ccNode.byMonth[m])}`}>
-            {fmtM(ccNode.byMonth[m])}
+          <td key={m} className={`${numCell} font-bold ${mvCls(cat6Node.byMonth[m])}`}>
+            {fmtM(cat6Node.byMonth[m])}
           </td>
         ))}
-        <td className={`${numCell} font-bold ${mvCls(ccNode.total)}`}>{fmtM(ccNode.total)}</td>
+        <td className={`${numCell} font-bold ${mvCls(cat6Node.total)}`}>{fmtM(cat6Node.total)}</td>
       </tr>
     );
 
-    if (!openCC) continue;
+    if (!openCat6) continue;
 
-    for (const glNode of ccNode.gl_names) {
-      const kGL = `gl:${ccNode.cc_key}|${glNode.gl_name}`;
-      const openGL = exp.has(kGL);
+    for (const ccNode of cat6Node.cc_nodes) {
+      const kCC = `cc:${cat6Node.cat6_key}|${ccNode.cc_key}`;
+      const openCC = exp.has(kCC);
 
+      const isSentinel = ccNode.cc_key === "unassigned" || ccNode.cc_key === "conflict";
+      const ccBg = isSentinel ? "bg-amber-50" : "bg-blue-50";
+      const ccHover = isSentinel ? "hover:bg-amber-100" : "hover:bg-blue-100";
+      const ccBorder = isSentinel ? "border-amber-100" : "border-blue-100";
+      const ccText = isSentinel ? "text-amber-800" : "text-blue-900";
+
+      // Cost Center row (level 2)
       rows.push(
-        <tr key={kGL} className="border-b border-gray-100 bg-gray-50 hover:bg-gray-100 cursor-pointer" onClick={() => toggle(kGL)}>
-          <td className="sticky left-0 z-10 bg-gray-50 pl-6 pr-2 py-0.5 text-[11px] font-semibold text-gray-700 whitespace-nowrap">
+        <tr key={kCC}
+            className={`border-b ${ccBorder} ${ccBg} ${ccHover} cursor-pointer`}
+            onClick={() => toggle(kCC)}>
+          <td className={`sticky left-0 z-10 ${ccBg} pl-5 pr-2 py-1 text-[11px] font-bold ${ccText} whitespace-nowrap`}>
             <span className="inline-flex items-center gap-1">
-              {openGL ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-              {glNode.gl_name}
+              {openCC ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+              {ccNode.cc_name}
             </span>
           </td>
           {months.map((m) => (
-            <td key={m} className={`${numCell} font-semibold ${mvCls(glNode.byMonth[m])}`}>
-              {fmtM(glNode.byMonth[m])}
+            <td key={m} className={`${numCell} font-semibold ${mvCls(ccNode.byMonth[m])}`}>
+              {fmtM(ccNode.byMonth[m])}
             </td>
           ))}
-          <td className={`${numCell} font-semibold ${mvCls(glNode.total)}`}>{fmtM(glNode.total)}</td>
+          <td className={`${numCell} font-semibold ${mvCls(ccNode.total)}`}>{fmtM(ccNode.total)}</td>
         </tr>
       );
 
-      if (!openGL) continue;
+      if (!openCC) continue;
 
-      for (const tx of glNode.txs) {
+      for (const glNode of ccNode.gl_names) {
+        const kGL = `gl:${cat6Node.cat6_key}|${ccNode.cc_key}|${glNode.gl_name}`;
+        const openGL = exp.has(kGL);
+
+        // GL Name row (level 3)
         rows.push(
-          <tr key={tx.id} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
-            <td className="sticky left-0 z-10 bg-white pl-10 pr-2 py-0.5 text-[10px] text-gray-400 max-w-[260px] truncate whitespace-nowrap">
-              {tx.desc ?? "—"}
+          <tr key={kGL}
+              className="border-b border-gray-100 bg-gray-50 hover:bg-gray-100 cursor-pointer"
+              onClick={() => toggle(kGL)}>
+            <td className="sticky left-0 z-10 bg-gray-50 pl-9 pr-2 py-0.5 text-[11px] font-semibold text-gray-700 whitespace-nowrap">
+              <span className="inline-flex items-center gap-1">
+                {openGL ? <ChevronDown size={9} /> : <ChevronRight size={9} />}
+                {glNode.gl_name}
+              </span>
             </td>
-            {months.map((m) => {
-              const match = m === tx.month;
-              return (
-                <td key={m} className={`${numCell} text-[10px] ${match ? mvCls(tx.mvmt) : ""}`}>
-                  {match ? fmtM(tx.mvmt) : ""}
-                </td>
-              );
-            })}
-            <td className={`${numCell} text-[10px] ${mvCls(tx.mvmt)}`}>{fmtM(tx.mvmt)}</td>
+            {months.map((m) => (
+              <td key={m} className={`${numCell} font-semibold ${mvCls(glNode.byMonth[m])}`}>
+                {fmtM(glNode.byMonth[m])}
+              </td>
+            ))}
+            <td className={`${numCell} font-semibold ${mvCls(glNode.total)}`}>{fmtM(glNode.total)}</td>
           </tr>
         );
+
+        if (!openGL) continue;
+
+        // Description rows (level 4 — leaf)
+        for (const tx of glNode.txs) {
+          rows.push(
+            <tr key={tx.id} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
+              <td className="sticky left-0 z-10 bg-white pl-12 pr-2 py-0.5 text-[10px] text-gray-400 max-w-[280px] truncate whitespace-nowrap">
+                {tx.desc ?? "—"}
+              </td>
+              {months.map((m) => {
+                const match = m === tx.month;
+                return (
+                  <td key={m} className={`${numCell} text-[10px] ${match ? mvCls(tx.mvmt) : ""}`}>
+                    {match ? fmtM(tx.mvmt) : ""}
+                  </td>
+                );
+              })}
+              <td className={`${numCell} text-[10px] ${mvCls(tx.mvmt)}`}>{fmtM(tx.mvmt)}</td>
+            </tr>
+          );
+        }
       }
     }
   }
@@ -245,7 +298,7 @@ export function PivotTableByCC({
         <thead className="sticky top-0 z-20 bg-gray-50">
           <tr className="border-b border-gray-200">
             <th className="sticky left-0 z-30 bg-gray-50 px-3 py-1.5 text-left text-[10px] font-semibold text-gray-500 whitespace-nowrap">
-              Cost Center / GL Name
+              Category 6 / Cost Center / GL Name
             </th>
             {months.map((m) => (
               <th key={m} className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 whitespace-nowrap bg-gray-50">

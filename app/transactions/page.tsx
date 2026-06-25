@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { RefreshCw } from "lucide-react";
-import { Pagination } from "@/components/pagination";
 import { ColumnFilter } from "@/components/column-filter";
-import type { PLTransaction, PLUpload, TransactionsResponse, FilterOptionsResponse } from "@/types";
+import type { PLTransaction, FilterOptionsResponse, TransactionTotals } from "@/types";
 
-const PAGE_SIZE = 100;
+// ─── Virtual scroll constants ─────────────────────────────────────────────────
+
+const ROW_H = 38;   // px — must match actual <tr> height
+const OVERSCAN = 25; // extra rows above + below viewport to pre-render
 
 // ─── Filter state ─────────────────────────────────────────────────────────────
 
@@ -18,8 +20,8 @@ type FilterState = {
   branch: string[];
   vendor: string[];
   ref_numb: string[];
-  cost_center: string[]; // CC names + "Unassigned" / "Conflict"
-  source: string[];      // "Original" | "Addback"
+  cost_center: string[];
+  source: string[];
   description: string;
   debit_min: string; debit_max: string;
   credit_min: string; credit_max: string;
@@ -36,13 +38,8 @@ const emptyFilters = (): FilterState => ({
 
 type CCRef = { id: string; name: string };
 
-function buildParams(
-  uploadId: string,
-  f: FilterState,
-  page: number,
-  ccList: CCRef[]
-): URLSearchParams {
-  const p = new URLSearchParams({ page: String(page) });
+function buildParams(uploadId: string, f: FilterState, ccList: CCRef[]): URLSearchParams {
+  const p = new URLSearchParams({ all: "true" });
   if (uploadId) p.set("uploadId", uploadId);
   f.month.forEach((v) => p.append("month", v));
   f.year.forEach((v) => p.append("year", v));
@@ -58,31 +55,28 @@ function buildParams(
   if (f.credit_max) p.set("credit_max", f.credit_max);
   if (f.movement_min) p.set("movement_min", f.movement_min);
   if (f.movement_max) p.set("movement_max", f.movement_max);
-
-  // Translate CC display values → API params
   for (const val of f.cost_center) {
     if (val === "Unassigned") p.append("cc_status", "unassigned");
     else if (val === "Conflict") p.append("cc_status", "conflict");
-    else {
-      const cc = ccList.find((c) => c.name === val);
-      if (cc) p.append("cost_center_id", cc.id);
-    }
+    else { const cc = ccList.find((c) => c.name === val); if (cc) p.append("cost_center_id", cc.id); }
   }
-
-  // Translate Source display values → API params
   for (const val of f.source) {
     if (val === "Original") p.append("source", "original");
     else if (val === "Addback") p.append("source", "addback");
   }
-
   return p;
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
-function fmt(n: number | null | undefined) {
-  if (n == null) return "—";
+function fmt(v: unknown): string {
+  const n = Number(v);
+  if (v == null || v === "" || isNaN(n)) return "—";
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+}
+
+function mvColor(v: unknown): string {
+  return (Number(v) || 0) >= 0 ? "text-green-700" : "text-red-700";
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -91,49 +85,31 @@ function TotalCard({ label, value, colorClass }: { label: string; value: number;
   return (
     <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
       <p className="text-xs text-gray-400">{label}</p>
-      <p className={`mt-0.5 text-lg font-bold ${colorClass}`}>
-        {new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}
-      </p>
+      <p className={`mt-0.5 text-lg font-bold ${colorClass}`}>{fmt(value)}</p>
     </div>
   );
 }
 
-function TH({ label, children, className = "" }: {
-  label?: string;
-  children?: React.ReactNode;
-  className?: string;
-}) {
+function TH({ label, children, className = "" }: { label?: string; children?: React.ReactNode; className?: string }) {
   return (
-    <th className={`whitespace-nowrap px-3 py-3 font-medium ${className}`}>
-      <span className="inline-flex items-center gap-0.5">
-        {label}
-        {children}
-      </span>
+    <th className={`px-2 py-2.5 font-medium text-left ${className}`}>
+      <span className="inline-flex items-center gap-0.5 whitespace-nowrap">{label}{children}</span>
     </th>
   );
 }
 
-// ─── Cost Center cell ─────────────────────────────────────────────────────────
-
 function CCCell({ tx }: { tx: PLTransaction }) {
-  if (tx.cost_center_status === "conflict") {
-    return (
-      <span className="inline-flex items-center rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">
-        Conflict
-      </span>
-    );
-  }
-  if (tx.cost_center_status === "assigned" && tx.cost_centers?.name) {
-    return <span className="text-gray-700">{tx.cost_centers.name}</span>;
-  }
-  return <span className="text-gray-400">—</span>;
+  if (tx.cost_center_status === "conflict")
+    return <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">Conflict</span>;
+  if (tx.cost_center_status === "assigned" && tx.cost_centers?.name)
+    return <span className="text-gray-700 truncate">{tx.cost_centers.name}</span>;
+  return <span className="text-gray-300">—</span>;
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function TransactionsPage() {
-  const [uploads, setUploads] = useState<PLUpload[]>([]);
-  // Default: empty string = "All uploads"
+  const [uploads, setUploads] = useState<{ id: string; file_name: string }[]>([]);
   const [selectedUpload, setSelectedUpload] = useState("");
   const [filterOpts, setFilterOpts] = useState<FilterOptionsResponse>({
     month: [], year: [], gl_code: [], gl_name: [],
@@ -141,26 +117,49 @@ export default function TransactionsPage() {
     costCenters: [],
   });
   const [filters, setFilters] = useState<FilterState>(emptyFilters());
-  const [page, setPage] = useState(1);
 
   const [rows, setRows] = useState<PLTransaction[]>([]);
-  const [count, setCount] = useState(0);
-  const [totals, setTotals] = useState({ debit: 0, credit: 0, movement: 0 });
+  const [totals, setTotals] = useState<TransactionTotals>({ debit: 0, credit: 0, movement: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Load upload list — default stays "All uploads" (empty string)
+  // ── Virtual scroll ──────────────────────────────────────────────────────────
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerH, setContainerH] = useState(600);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((es) => setContainerH(es[0].contentRect.height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  function onScroll(e: React.UIEvent<HTMLDivElement>) {
+    setScrollTop(e.currentTarget.scrollTop);
+  }
+
+  const N = rows.length;
+  const firstV = Math.floor(scrollTop / ROW_H);
+  const lastV = Math.ceil((scrollTop + containerH) / ROW_H);
+  const renderFrom = Math.max(0, firstV - OVERSCAN);
+  const renderTo = Math.min(N, lastV + OVERSCAN);
+  const visibleRows = rows.slice(renderFrom, renderTo);
+  const topPad = renderFrom * ROW_H;
+  const botPad = Math.max(0, (N - renderTo) * ROW_H);
+
+  // ── Data loading ────────────────────────────────────────────────────────────
+
   useEffect(() => {
     fetch("/api/uploads")
       .then((r) => r.json())
-      .then((data: PLUpload[]) => {
-        const completed = data.filter((u) => u.status === "completed");
-        setUploads(completed);
-      })
+      .then((data: { id: string; file_name: string; status: string }[]) =>
+        setUploads(data.filter((u) => u.status === "completed"))
+      )
       .catch(console.error);
   }, []);
 
-  // Refresh filter options whenever selected upload changes
   useEffect(() => {
     const params = selectedUpload ? `?uploadId=${selectedUpload}` : "";
     fetch(`/api/transactions/filter-options${params}`)
@@ -169,68 +168,54 @@ export default function TransactionsPage() {
       .catch(console.error);
   }, [selectedUpload]);
 
-  const fetchTransactions = useCallback(async () => {
-    setLoading(true); setError("");
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    // Reset scroll
+    if (containerRef.current) { containerRef.current.scrollTop = 0; setScrollTop(0); }
     try {
-      const params = buildParams(selectedUpload, filters, page, filterOpts.costCenters);
-      const res = await fetch(`/api/transactions?${params}`);
-      if (!res.ok) {
-        const j = await res.json();
-        setError(j.error ?? "Request failed");
-        return;
-      }
-      const json: TransactionsResponse = await res.json();
+      const p = buildParams(selectedUpload, filters, filterOpts.costCenters);
+      const res = await fetch(`/api/transactions?${p}`);
+      if (!res.ok) { const j = await res.json(); setError(j.error ?? "Request failed"); return; }
+      const json = await res.json() as { data: PLTransaction[]; totals: TransactionTotals };
       setRows(json.data);
-      setCount(json.count);
       setTotals(json.totals);
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [selectedUpload, filters, page, filterOpts.costCenters]);
+  }, [selectedUpload, filters, filterOpts.costCenters]);
 
-  useEffect(() => { fetchTransactions(); }, [fetchTransactions]);
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
   function setFilter<K extends keyof FilterState>(key: K, value: FilterState[K]) {
     setFilters((prev) => ({ ...prev, [key]: value }));
-    setPage(1);
   }
 
-  const totalPages = Math.ceil(count / PAGE_SIZE);
-
-  // CC filter options: sentinel values first, then alphabetical CC names
-  const ccFilterOptions = [
-    "Unassigned",
-    "Conflict",
-    ...filterOpts.costCenters.map((cc) => cc.name),
-  ];
+  const ccFilterOptions = ["Unassigned", "Conflict", ...filterOpts.costCenters.map((cc) => cc.name)];
 
   return (
-    <div className="space-y-4">
-      {/* Header row */}
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-4 h-[calc(100vh-32px)]">
+      {/* Header */}
+      <div className="flex items-center justify-between shrink-0">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Transaction Review</h2>
-          <p className="text-sm text-gray-500">{count.toLocaleString()} rows · read-only</p>
+          <p className="text-sm text-gray-500">
+            {loading ? "Loading…" : `${N.toLocaleString()} rows`}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <select
             value={selectedUpload}
-            onChange={(e) => {
-              setSelectedUpload(e.target.value);
-              setFilters(emptyFilters());
-              setPage(1);
-            }}
+            onChange={(e) => { setSelectedUpload(e.target.value); setFilters(emptyFilters()); }}
             className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:border-blue-400 focus:outline-none"
           >
             <option value="">All uploads</option>
-            {uploads.map((u) => (
-              <option key={u.id} value={u.id}>{u.file_name}</option>
-            ))}
+            {uploads.map((u) => <option key={u.id} value={u.id}>{u.file_name}</option>)}
           </select>
           <button
-            onClick={fetchTransactions}
+            onClick={fetchAll}
             className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
           >
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
@@ -240,156 +225,163 @@ export default function TransactionsPage() {
       </div>
 
       {/* Totals */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-3 shrink-0">
         <TotalCard label="Total debit" value={totals.debit} colorClass="text-red-600" />
         <TotalCard label="Total credit" value={totals.credit} colorClass="text-green-600" />
-        <TotalCard
-          label="Net movement"
-          value={totals.movement}
-          colorClass={totals.movement >= 0 ? "text-green-700" : "text-red-700"}
-        />
+        <TotalCard label="Net movement" value={totals.movement}
+          colorClass={totals.movement >= 0 ? "text-green-700" : "text-red-700"} />
       </div>
 
       {error && (
-        <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
+        <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600 shrink-0">{error}</p>
       )}
 
-      {/* Table */}
-      <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="overflow-auto rounded-xl" style={{ maxHeight: "calc(100vh - 320px)" }}>
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 z-20 bg-gray-50">
-              <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
-                {/* Cost Center first */}
-                <TH label="Cost Center">
-                  <ColumnFilter label="Cost Center" type="categorical"
-                    options={ccFilterOptions} selected={filters.cost_center}
-                    onChange={(v) => setFilter("cost_center", v)} />
-                </TH>
-                <TH label="Month">
-                  <ColumnFilter label="Month" type="categorical"
-                    options={filterOpts.month} selected={filters.month}
-                    onChange={(v) => setFilter("month", v)} />
-                </TH>
-                <TH label="Year">
-                  <ColumnFilter label="Year" type="categorical"
-                    options={filterOpts.year} selected={filters.year}
-                    onChange={(v) => setFilter("year", v)} />
-                </TH>
-                <TH label="GL Code">
-                  <ColumnFilter label="GL Code" type="categorical"
-                    options={filterOpts.gl_code} selected={filters.gl_code}
-                    onChange={(v) => setFilter("gl_code", v)} />
-                </TH>
-                <TH label="GL Name">
-                  <ColumnFilter label="GL Name" type="categorical"
-                    options={filterOpts.gl_name} selected={filters.gl_name}
-                    onChange={(v) => setFilter("gl_name", v)} />
-                </TH>
-                <TH label="Branch">
-                  <ColumnFilter label="Branch" type="categorical"
-                    options={filterOpts.branch} selected={filters.branch}
-                    onChange={(v) => setFilter("branch", v)} />
-                </TH>
-                <TH label="Description">
-                  <ColumnFilter label="Description" type="text"
-                    value={filters.description}
-                    onChange={(v) => setFilter("description", v)} />
-                </TH>
-                <TH label="Vendor">
-                  <ColumnFilter label="Vendor" type="categorical"
-                    options={filterOpts.vendor} selected={filters.vendor}
-                    onChange={(v) => setFilter("vendor", v)} />
-                </TH>
-                <TH label="Ref Numb">
-                  <ColumnFilter label="Ref Numb" type="categorical"
-                    options={filterOpts.ref_numb} selected={filters.ref_numb}
-                    onChange={(v) => setFilter("ref_numb", v)} />
-                </TH>
-                <TH label="Debit" className="text-right">
-                  <ColumnFilter label="Debit" type="numeric"
-                    min={filters.debit_min} max={filters.debit_max}
-                    onChange={(min, max) => { setFilter("debit_min", min); setFilter("debit_max", max); }} />
-                </TH>
-                <TH label="Credit" className="text-right">
-                  <ColumnFilter label="Credit" type="numeric"
-                    min={filters.credit_min} max={filters.credit_max}
-                    onChange={(min, max) => { setFilter("credit_min", min); setFilter("credit_max", max); }} />
-                </TH>
-                <TH label="Movement" className="text-right">
-                  <ColumnFilter label="Movement" type="numeric"
-                    min={filters.movement_min} max={filters.movement_max}
-                    onChange={(min, max) => { setFilter("movement_min", min); setFilter("movement_max", max); }} />
-                </TH>
-                <TH label="Source">
-                  <ColumnFilter label="Source" type="categorical"
-                    options={["Original", "Addback"]} selected={filters.source}
-                    onChange={(v) => setFilter("source", v)} />
-                </TH>
+      {/* Virtual scroll table */}
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-auto rounded-xl border border-gray-200 bg-white shadow-sm min-h-0"
+        onScroll={onScroll}
+      >
+        <table className="w-full text-xs table-fixed border-collapse">
+          <colgroup>
+            <col style={{ width: "100px" }} /> {/* Cost Center */}
+            <col style={{ width: "68px" }} />  {/* Month */}
+            <col style={{ width: "44px" }} />  {/* Year */}
+            <col style={{ width: "62px" }} />  {/* GL Code */}
+            <col style={{ width: "120px" }} /> {/* GL Name */}
+            <col style={{ width: "55px" }} />  {/* Branch */}
+            <col />                             {/* Description — flexible */}
+            <col style={{ width: "110px" }} /> {/* Vendor */}
+            <col style={{ width: "65px" }} />  {/* Ref Numb */}
+            <col style={{ width: "88px" }} />  {/* Debit */}
+            <col style={{ width: "88px" }} />  {/* Credit */}
+            <col style={{ width: "88px" }} />  {/* Movement */}
+            <col style={{ width: "62px" }} />  {/* Source */}
+          </colgroup>
+          <thead className="sticky top-0 z-20 bg-gray-50">
+            <tr className="border-b border-gray-200 text-gray-500">
+              <TH label="Cost Center">
+                <ColumnFilter label="Cost Center" type="categorical"
+                  options={ccFilterOptions} selected={filters.cost_center}
+                  onChange={(v) => setFilter("cost_center", v)} />
+              </TH>
+              <TH label="Month">
+                <ColumnFilter label="Month" type="categorical"
+                  options={filterOpts.month} selected={filters.month}
+                  onChange={(v) => setFilter("month", v)} />
+              </TH>
+              <TH label="Year">
+                <ColumnFilter label="Year" type="categorical"
+                  options={filterOpts.year} selected={filters.year}
+                  onChange={(v) => setFilter("year", v)} />
+              </TH>
+              <TH label="GL Code">
+                <ColumnFilter label="GL Code" type="categorical"
+                  options={filterOpts.gl_code} selected={filters.gl_code}
+                  onChange={(v) => setFilter("gl_code", v)} />
+              </TH>
+              <TH label="GL Name">
+                <ColumnFilter label="GL Name" type="categorical"
+                  options={filterOpts.gl_name} selected={filters.gl_name}
+                  onChange={(v) => setFilter("gl_name", v)} />
+              </TH>
+              <TH label="Branch">
+                <ColumnFilter label="Branch" type="categorical"
+                  options={filterOpts.branch} selected={filters.branch}
+                  onChange={(v) => setFilter("branch", v)} />
+              </TH>
+              <TH label="Description">
+                <ColumnFilter label="Description" type="text"
+                  value={filters.description}
+                  onChange={(v) => setFilter("description", v)} />
+              </TH>
+              <TH label="Vendor">
+                <ColumnFilter label="Vendor" type="categorical"
+                  options={filterOpts.vendor} selected={filters.vendor}
+                  onChange={(v) => setFilter("vendor", v)} />
+              </TH>
+              <TH label="Ref Numb">
+                <ColumnFilter label="Ref Numb" type="categorical"
+                  options={filterOpts.ref_numb} selected={filters.ref_numb}
+                  onChange={(v) => setFilter("ref_numb", v)} />
+              </TH>
+              <TH label="Debit" className="text-right">
+                <ColumnFilter label="Debit" type="numeric"
+                  min={filters.debit_min} max={filters.debit_max}
+                  onChange={(min, max) => { setFilter("debit_min", min); setFilter("debit_max", max); }} />
+              </TH>
+              <TH label="Credit" className="text-right">
+                <ColumnFilter label="Credit" type="numeric"
+                  min={filters.credit_min} max={filters.credit_max}
+                  onChange={(min, max) => { setFilter("credit_min", min); setFilter("credit_max", max); }} />
+              </TH>
+              <TH label="Movement" className="text-right">
+                <ColumnFilter label="Movement" type="numeric"
+                  min={filters.movement_min} max={filters.movement_max}
+                  onChange={(min, max) => { setFilter("movement_min", min); setFilter("movement_max", max); }} />
+              </TH>
+              <TH label="Source">
+                <ColumnFilter label="Source" type="categorical"
+                  options={["Original", "Addback"]} selected={filters.source}
+                  onChange={(v) => setFilter("source", v)} />
+              </TH>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr style={{ height: 200 }}>
+                <td colSpan={13} className="text-center align-middle text-gray-400">
+                  <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
+                  <span className="ml-2">Loading all transactions…</span>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={13} className="py-10 text-center text-gray-400">
-                    <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
-                  </td>
-                </tr>
-              ) : rows.length === 0 ? (
-                <tr>
-                  <td colSpan={13} className="py-10 text-center text-gray-400">
-                    No transactions found with the current filters.
-                  </td>
-                </tr>
-              ) : (
-                rows.map((tx) => (
+            ) : N === 0 ? (
+              <tr style={{ height: 120 }}>
+                <td colSpan={13} className="text-center align-middle text-gray-400">
+                  No transactions found with the current filters.
+                </td>
+              </tr>
+            ) : (
+              <>
+                {topPad > 0 && (
+                  <tr aria-hidden="true"><td colSpan={13} style={{ height: topPad, padding: 0 }} /></tr>
+                )}
+                {visibleRows.map((tx) => (
                   <tr
                     key={tx.id}
+                    style={{ height: ROW_H }}
                     className={[
-                      "border-b border-gray-50 hover:bg-gray-50",
-                      !tx.category_1 ? "bg-amber-50/40" : "",
+                      "border-b border-gray-50 hover:bg-blue-50/20",
+                      !tx.category_1 ? "bg-amber-50/30" : "",
                     ].join(" ")}
                   >
-                    <td className="px-3 py-2.5">
-                      <CCCell tx={tx} />
-                    </td>
-                    <td className="px-3 py-2.5 text-gray-700">{tx.month ?? "—"}</td>
-                    <td className="px-3 py-2.5 text-gray-700">{tx.year ?? "—"}</td>
-                    <td className="px-3 py-2.5 font-mono text-gray-800">{tx.gl_code ?? "—"}</td>
-                    <td className="max-w-[160px] truncate px-3 py-2.5 text-gray-700">{tx.gl_name ?? "—"}</td>
-                    <td className="px-3 py-2.5 text-gray-700">{tx.branch ?? "—"}</td>
-                    <td className="max-w-[180px] truncate px-3 py-2.5 text-gray-600">{tx.check_description ?? "—"}</td>
-                    <td className="max-w-[120px] truncate px-3 py-2.5 text-gray-600">{tx.vendor ?? "—"}</td>
-                    <td className="px-3 py-2.5 font-mono text-gray-600">{tx.ref_numb ?? "—"}</td>
-                    <td className="px-3 py-2.5 text-right font-mono text-red-600">{fmt(tx.debit)}</td>
-                    <td className="px-3 py-2.5 text-right font-mono text-green-600">{fmt(tx.credit)}</td>
-                    <td className={`px-3 py-2.5 text-right font-mono ${(tx.movement ?? 0) >= 0 ? "text-green-700" : "text-red-700"}`}>
-                      {fmt(tx.movement)}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      {tx.source === "addback" ? (
-                        <span className="inline-flex items-center rounded bg-purple-100 px-1.5 py-0.5 text-xs font-medium text-purple-700">
-                          Addback
-                        </span>
-                      ) : (
-                        <span className="text-gray-400 text-xs">Original</span>
-                      )}
+                    <td className="px-2 py-0 overflow-hidden"><CCCell tx={tx} /></td>
+                    <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap">{tx.month ?? "—"}</td>
+                    <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap">{tx.year ?? "—"}</td>
+                    <td className="px-2 py-0 font-mono text-gray-800 overflow-hidden whitespace-nowrap">{tx.gl_code ?? "—"}</td>
+                    <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap truncate">{tx.gl_name ?? "—"}</td>
+                    <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap">{tx.branch ?? "—"}</td>
+                    <td className="px-2 py-0 text-gray-600 overflow-hidden whitespace-nowrap truncate">{tx.check_description ?? "—"}</td>
+                    <td className="px-2 py-0 text-gray-600 overflow-hidden whitespace-nowrap truncate">{tx.vendor ?? "—"}</td>
+                    <td className="px-2 py-0 font-mono text-gray-600 overflow-hidden whitespace-nowrap">{tx.ref_numb ?? "—"}</td>
+                    <td className="px-2 py-0 text-right font-mono text-red-600 overflow-hidden whitespace-nowrap">{fmt(tx.debit)}</td>
+                    <td className="px-2 py-0 text-right font-mono text-green-600 overflow-hidden whitespace-nowrap">{fmt(tx.credit)}</td>
+                    <td className={`px-2 py-0 text-right font-mono overflow-hidden whitespace-nowrap ${mvColor(tx.movement)}`}>{fmt(tx.movement)}</td>
+                    <td className="px-2 py-0 overflow-hidden whitespace-nowrap">
+                      {tx.source === "addback"
+                        ? <span className="rounded bg-purple-100 px-1 py-0.5 text-[10px] font-medium text-purple-700">Addback</span>
+                        : <span className="text-gray-400 text-[10px]">Original</span>}
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                ))}
+                {botPad > 0 && (
+                  <tr aria-hidden="true"><td colSpan={13} style={{ height: botPad, padding: 0 }} /></tr>
+                )}
+              </>
+            )}
+          </tbody>
+        </table>
       </div>
-
-      <Pagination
-        page={page}
-        totalPages={totalPages}
-        count={count}
-        pageSize={PAGE_SIZE}
-        onPageChange={setPage}
-      />
     </div>
   );
 }

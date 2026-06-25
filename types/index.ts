@@ -255,6 +255,7 @@ export interface PLReportTx {
   gl_code: string | null;
   gl_name: string | null;
   category_2: string | null;
+  category_6: string | null;
   category_7: string | null;
   order_1: number | null;
   order_2: number | null;
@@ -339,6 +340,7 @@ export interface ConflictGroup {
 }
 
 export interface ResolvedConflictTx extends ConflictTx {
+  cost_center_id: string | null;
   resolved_cc: { id: string; name: string } | null;
   resolved_at: string | null;
 }
@@ -353,10 +355,14 @@ export interface ResolvedConflictGroup {
 
 export interface VendorSummary {
   vendor: string;
+  vendor_key: string;         // normalized (trim+lowercase) for API calls
+  tx_count: number;           // total transactions (within active filters)
+  tx_count_unassigned: number;
   branches: string[];
   months: string[];
+  years: string[];
   gl_items: { gl_code: string; gl_name: string }[];
-  cost_centers: string[];
+  cost_centers: string[];     // display names of assigned CCs
 }
 
 export interface TransactionTotals {

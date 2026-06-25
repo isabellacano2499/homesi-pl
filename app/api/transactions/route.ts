@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
 import type { TransactionFilters, TransactionsResponse } from "@/types";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 100;
+
+const SELECT_DATA =
+  "id,journal_post_date,gl_code,gl_name,branch,vendor,ref_numb," +
+  "check_description,debit,credit,movement," +
+  "category_1,category_5,category_6,upload_id,year,month," +
+  "cost_center_id,cost_center_status,cost_centers(name),source";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function withFilters(query: any, f: TransactionFilters): any {
@@ -23,8 +29,6 @@ function withFilters(query: any, f: TransactionFilters): any {
   if (f.creditMax) query = query.lte("credit", parseFloat(f.creditMax));
   if (f.movementMin) query = query.gte("movement", parseFloat(f.movementMin));
   if (f.movementMax) query = query.lte("movement", parseFloat(f.movementMax));
-
-  // Cost center: OR across statuses and specific IDs
   if (f.costCenterIds.length || f.costCenterStatuses.length) {
     const parts = [
       ...f.costCenterStatuses.map((s) => `cost_center_status.eq.${s}`),
@@ -32,13 +36,19 @@ function withFilters(query: any, f: TransactionFilters): any {
     ];
     query = query.or(parts.join(","));
   }
-
-  // Source filter ('original' | 'addback')
-  if (f.sources.length > 0) {
-    query = query.in("source", f.sources);
-  }
-
+  if (f.sources.length > 0) query = query.in("source", f.sources);
   return query;
+}
+
+function sumTotals(rows: { debit: unknown; credit: unknown; movement: unknown }[]) {
+  return rows.reduce(
+    (acc, r) => ({
+      debit: acc.debit + (Number(r.debit) || 0),
+      credit: acc.credit + (Number(r.credit) || 0),
+      movement: acc.movement + (Number(r.movement) || 0),
+    }),
+    { debit: 0, credit: 0, movement: 0 }
+  );
 }
 
 export async function GET(req: NextRequest) {
@@ -68,54 +78,48 @@ export async function GET(req: NextRequest) {
     movementMax: searchParams.get("movement_max") ?? "",
   };
 
+  // ── "all=true" mode: fetch every matching row, compute totals from data ──
+  if (searchParams.get("all") === "true") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allRows: any[] = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await withFilters(
+        supabase.from("pl_transactions").select(SELECT_DATA),
+        filters
+      ).order("journal_post_date", { ascending: true }).range(offset, offset + 999);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (!data?.length) break;
+      allRows.push(...data);
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+    const totals = sumTotals(allRows);
+    return NextResponse.json({ data: allRows, count: allRows.length, totals } satisfies TransactionsResponse);
+  }
+
+  // ── Paginated mode (legacy / fallback) ────────────────────────────────────
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
   const rangeFrom = (page - 1) * PAGE_SIZE;
   const rangeTo = rangeFrom + PAGE_SIZE - 1;
 
   const [countRes, totalsRes, dataRes] = await Promise.all([
+    withFilters(supabase.from("pl_transactions").select("id", { count: "exact", head: true }), filters),
+    withFilters(supabase.from("pl_transactions").select("debit,credit,movement"), filters),
     withFilters(
-      supabase.from("pl_transactions").select("id", { count: "exact", head: true }),
-      filters
-    ),
-    withFilters(
-      supabase.from("pl_transactions").select("debit,credit,movement"),
-      filters
-    ),
-    withFilters(
-      supabase
-        .from("pl_transactions")
-        .select(
-          "id,journal_post_date,gl_code,gl_name,branch,vendor,ref_numb," +
-          "check_description,debit,credit,movement," +
-          "category_1,category_5,category_6,upload_id,year,month," +
-          "cost_center_id,cost_center_status,cost_centers(name),source"
-        )
-        .order("journal_post_date", { ascending: true })
-        .range(rangeFrom, rangeTo),
+      supabase.from("pl_transactions").select(SELECT_DATA).order("journal_post_date", { ascending: true }).range(rangeFrom, rangeTo),
       filters
     ),
   ]);
 
-  if (countRes.error)
-    return NextResponse.json({ error: countRes.error.message }, { status: 500 });
-  if (totalsRes.error)
-    return NextResponse.json({ error: totalsRes.error.message }, { status: 500 });
-  if (dataRes.error)
-    return NextResponse.json({ error: dataRes.error.message }, { status: 500 });
-
-  const totals = (totalsRes.data ?? []).reduce(
-    (acc: { debit: number; credit: number; movement: number }, r: { debit: unknown; credit: unknown; movement: unknown }) => ({
-      debit: acc.debit + (Number(r.debit) || 0),
-      credit: acc.credit + (Number(r.credit) || 0),
-      movement: acc.movement + (Number(r.movement) || 0),
-    }),
-    { debit: 0, credit: 0, movement: 0 }
-  );
+  if (countRes.error) return NextResponse.json({ error: countRes.error.message }, { status: 500 });
+  if (totalsRes.error) return NextResponse.json({ error: totalsRes.error.message }, { status: 500 });
+  if (dataRes.error) return NextResponse.json({ error: dataRes.error.message }, { status: 500 });
 
   const response: TransactionsResponse = {
     data: dataRes.data ?? [],
     count: countRes.count ?? 0,
-    totals,
+    totals: sumTotals(totalsRes.data ?? []),
   };
   return NextResponse.json(response);
 }
