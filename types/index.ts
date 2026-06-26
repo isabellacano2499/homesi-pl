@@ -273,6 +273,8 @@ export interface PLReportTx {
   order_1: number | null;
   order_2: number | null;
   order_3: number | null;
+  check_description_2?: string | null;
+  check_description_3?: string | null;
   // Optional CC fields — present when the CC view is requested
   cost_center_id?: string | null;
   cost_center_status?: string | null;
