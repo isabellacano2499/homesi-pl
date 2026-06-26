@@ -306,7 +306,7 @@ function ManualTab({ branches, costCenters }: { branches: string[]; costCenters:
     </p>
   );
 
-  const editNormVendor = editingTx?.vendor?.trim().replace(/\s+/g, " ") ?? null;
+  const editNormVendor = editingTx?.vendor?.trim().replace(/\s+/g, " ") || null;
   const editAssignType: "vendor" | "description3" = editNormVendor ? "vendor" : "description3";
   const editAssignValue = editNormVendor ?? (editingTx?.check_description_3 ?? "");
 
@@ -346,7 +346,7 @@ function ManualTab({ branches, costCenters }: { branches: string[]; costCenters:
                 </thead>
                 <tbody>
                   {group.transactions.map((tx: AssignmentTx) => {
-                    const normVendor = tx.vendor?.trim().replace(/\s+/g, " ") ?? null;
+                    const normVendor = tx.vendor?.trim().replace(/\s+/g, " ") || null;
                     const assignType: "vendor" | "description3" = normVendor ? "vendor" : "description3";
                     const assignValue = normVendor ?? (tx.check_description_3 ?? "");
                     const splitKey = assignValue ? `${assignType}:${assignValue}` : null;
