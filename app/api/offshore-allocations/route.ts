@@ -3,10 +3,19 @@ import { createServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
+// Exact CD2 values that form their own named blocks.
+// Anything else routes to "Other / Unclassified".
+const EXPECTED_BLOCKS = new Set(["Roster Offshore", "Vendors COL", "Vendors US"]);
+const OTHER_BLOCK_KEY = "Other / Unclassified";
+
 export type OAGroupRow = {
   group_key: string;
+  // How CC assignment targets this row (null = no assignment possible)
+  assign_type: "description3" | "vendor" | null;
   check_description_3: string | null;
   vendor: string | null;
+  // Present only on "other" block rows: the distinct raw CD2 values that ended up here
+  raw_cd2s?: string[];
   branches: string[];
   years: number[];
   months: string[];
@@ -20,7 +29,7 @@ export type OAGroupRow = {
 
 export type OABlock = {
   block_key: string;
-  block_type: "roster" | "vendor";
+  block_type: "roster" | "vendor" | "other";
   rows: OAGroupRow[];
 };
 
@@ -55,8 +64,10 @@ export async function GET() {
 
   type WRow = {
     group_key: string;
+    assign_type: "description3" | "vendor" | null;
     check_description_3: string | null;
     vendor: string | null;
+    raw_cd2s?: Set<string>;
     branches: Set<string>;
     years: Set<number>;
     months: Set<string>;
@@ -69,35 +80,60 @@ export async function GET() {
   };
   type WBlock = {
     block_key: string;
-    block_type: "roster" | "vendor";
+    block_type: "roster" | "vendor" | "other";
     rows: Map<string, WRow>;
   };
 
   const blockMap = new Map<string, WBlock>();
 
   for (const tx of all) {
-    const cd2 = (tx.check_description_2 ?? "").trim() || "(No Description 2)";
-    const blockType: "roster" | "vendor" = cd2.toLowerCase().includes("roster") ? "roster" : "vendor";
+    const cd2Raw = (tx.check_description_2 ?? "").trim();
 
-    let block = blockMap.get(cd2);
+    // ── Route to the correct block ─────────────────────────────────────────
+    const isExpected = EXPECTED_BLOCKS.has(cd2Raw);
+    const blockKey  = isExpected ? cd2Raw : OTHER_BLOCK_KEY;
+    const blockType: "roster" | "vendor" | "other" = isExpected
+      ? (cd2Raw === "Roster Offshore" ? "roster" : "vendor")
+      : "other";
+
+    let block = blockMap.get(blockKey);
     if (!block) {
-      block = { block_key: cd2, block_type: blockType, rows: new Map() };
-      blockMap.set(cd2, block);
+      block = { block_key: blockKey, block_type: blockType, rows: new Map() };
+      blockMap.set(blockKey, block);
     }
 
-    const cd3 = (tx.check_description_3 ?? "").trim() || null;
+    const cd3    = (tx.check_description_3 ?? "").trim() || null;
     const vendor = (tx.vendor ?? "").trim() || null;
-    const group_key =
-      blockType === "roster"
-        ? (cd3 ?? "(No Description 3)")
-        : (vendor ?? "(Unknown Vendor)");
+
+    // ── Determine group key ────────────────────────────────────────────────
+    let group_key: string;
+    let assign_type: "description3" | "vendor" | null;
+
+    if (blockType === "roster") {
+      group_key   = cd3 ?? "(No Description 3)";
+      assign_type = "description3";
+    } else if (blockType === "vendor") {
+      group_key   = vendor ?? "(Unknown Vendor)";
+      assign_type = "vendor";
+    } else {
+      // "other" block: group by vendor if present, else individual tx row
+      if (vendor) {
+        group_key   = vendor;
+        assign_type = "vendor";
+      } else {
+        group_key   = `__raw__${tx.id}`;
+        assign_type = null;
+      }
+    }
 
     let row = block.rows.get(group_key);
     if (!row) {
       row = {
         group_key,
+        assign_type,
         check_description_3: blockType === "roster" ? (cd3 ?? "(No Description 3)") : cd3,
         vendor: blockType === "vendor" ? (vendor ?? "(Unknown Vendor)") : vendor,
+        ...(blockType === "other" ? { raw_cd2s: new Set<string>() } : {}),
         branches: new Set(),
         years: new Set(),
         months: new Set(),
@@ -118,38 +154,49 @@ export async function GET() {
     if (!row.position && tx.position) row.position = tx.position;
     if (!row.branch_allocation && tx.branch_allocation) row.branch_allocation = tx.branch_allocation;
     if (tx.cost_centers?.name) row.cc_labels.add(tx.cost_centers.name);
+    if (blockType === "other" && row.raw_cd2s) {
+      const label = cd2Raw || "(empty)";
+      row.raw_cd2s.add(label);
+    }
     row.tx_count++;
     if (!tx.cost_center_id || tx.cost_center_status === "unassigned") row.tx_count_unassigned++;
   }
 
-  const rosters: OABlock[] = [];
-  const vendors: OABlock[] = [];
-
-  for (const wb of blockMap.values()) {
-    const rows: OAGroupRow[] = [...wb.rows.values()]
-      .map((r) => ({
-        group_key: r.group_key,
+  function serializeRows(wb: WBlock): OAGroupRow[] {
+    return [...wb.rows.values()]
+      .map((r): OAGroupRow => ({
+        group_key:          r.group_key,
+        assign_type:        r.assign_type,
         check_description_3: r.check_description_3,
-        vendor: r.vendor,
-        branches: [...r.branches].sort(),
-        years: [...r.years].sort((a, b) => a - b),
-        months: MONTH_ORDER.filter((m) => r.months.has(m)),
-        category: r.category,
-        position: r.position,
-        branch_allocation: r.branch_allocation,
-        cc_labels: [...r.cc_labels].sort(),
-        tx_count: r.tx_count,
+        vendor:             r.vendor,
+        ...(r.raw_cd2s ? { raw_cd2s: [...r.raw_cd2s].sort() } : {}),
+        branches:           [...r.branches].sort(),
+        years:              [...r.years].sort((a, b) => a - b),
+        months:             MONTH_ORDER.filter((m) => r.months.has(m)),
+        category:           r.category,
+        position:           r.position,
+        branch_allocation:  r.branch_allocation,
+        cc_labels:          [...r.cc_labels].sort(),
+        tx_count:           r.tx_count,
         tx_count_unassigned: r.tx_count_unassigned,
       }))
       .sort((a, b) => a.group_key.localeCompare(b.group_key));
+  }
 
-    const block: OABlock = { block_key: wb.block_key, block_type: wb.block_type, rows };
+  const rosters: OABlock[] = [];
+  const vendors: OABlock[] = [];
+  const others:  OABlock[] = [];
+
+  for (const wb of blockMap.values()) {
+    const block: OABlock = { block_key: wb.block_key, block_type: wb.block_type, rows: serializeRows(wb) };
     if (wb.block_type === "roster") rosters.push(block);
-    else vendors.push(block);
+    else if (wb.block_type === "vendor") vendors.push(block);
+    else others.push(block);
   }
 
   rosters.sort((a, b) => a.block_key.localeCompare(b.block_key));
   vendors.sort((a, b) => a.block_key.localeCompare(b.block_key));
+  // "Other / Unclassified" always last
 
-  return NextResponse.json([...rosters, ...vendors] as OABlock[]);
+  return NextResponse.json([...rosters, ...vendors, ...others] as OABlock[]);
 }
