@@ -30,6 +30,7 @@ interface UploadSectionProps {
 
 function UploadSection({ endpoint, title, description, infoItems }: UploadSectionProps) {
   const [file, setFile] = useState<File | null>(null);
+  const [fileBuffer, setFileBuffer] = useState<ArrayBuffer | null>(null);
   const [status, setStatus] = useState<UploadStatus>("idle");
   const [result, setResult] = useState<UploadPLResponse | AddbacksUploadResponse | OffshoreAllocationsUploadResponse | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
@@ -42,13 +43,20 @@ function UploadSection({ endpoint, title, description, infoItems }: UploadSectio
     setStatus("idle");
     setResult(null);
     setErrorMsg("");
+    // Read file into memory immediately so disk changes (Excel auto-save, OneDrive sync)
+    // don't cause ERR_UPLOAD_FILE_CHANGED during the actual upload.
+    f.arrayBuffer().then(setFileBuffer).catch(() => setFileBuffer(null));
   }
 
   async function handleUpload() {
     if (!file) return;
     setStatus("uploading");
     const fd = new FormData();
-    fd.append("file", file);
+    if (fileBuffer) {
+      fd.append("file", new Blob([fileBuffer], { type: file.type }), file.name);
+    } else {
+      fd.append("file", file);
+    }
     try {
       const res = await fetch(endpoint, { method: "POST", body: fd });
       const json = await res.json();
@@ -67,6 +75,7 @@ function UploadSection({ endpoint, title, description, infoItems }: UploadSectio
 
   function reset() {
     setFile(null);
+    setFileBuffer(null);
     setStatus("idle");
     setResult(null);
     setErrorMsg("");
