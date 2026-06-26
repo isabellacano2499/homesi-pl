@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Search, RefreshCw } from "lucide-react";
+import { Search, RefreshCw, Percent } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
+import { SplitEditor } from "@/components/split-editor";
 import type { CostCenter, VendorSummary } from "@/types";
 
 const MONTH_ORDER = [
@@ -14,39 +15,23 @@ function sortMonths(arr: string[]): string[] {
   return [...arr].sort((a, b) => MONTH_ORDER.indexOf(a) - MONTH_ORDER.indexOf(b));
 }
 
-type Pending = {
-  vendorKey: string;
-  vendorName: string;
-  txCount: number;
-  ccId: string;
-  ccName: string;
-};
-
 export default function VendorsPage() {
-  // ── Options from first unfiltered load ──────────────────────────────────────
   const [allBranches, setAllBranches] = useState<string[]>([]);
   const [allMonths, setAllMonths]     = useState<string[]>([]);
   const [allYears, setAllYears]       = useState<string[]>([]);
 
-  // ── Filters ──────────────────────────────────────────────────────────────────
   const [filterBranches, setFilterBranches] = useState<string[]>([]);
   const [filterMonths, setFilterMonths]     = useState<string[]>([]);
   const [filterYears, setFilterYears]       = useState<string[]>([]);
 
-  // ── Data ──────────────────────────────────────────────────────────────────────
-  const [vendors, setVendors] = useState<VendorSummary[]>([]);
+  const [vendors, setVendors]       = useState<VendorSummary[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState("");
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState("");
 
-  // ── UI state ─────────────────────────────────────────────────────────────────
-  const [query, setQuery]     = useState("");
-  const [rowCcId, setRowCcId] = useState<Record<string, string>>({});
-  const [pending, setPending] = useState<Pending | null>(null);
-  const [saving, setSaving]   = useState(false);
-  const [saveMsg, setSaveMsg] = useState("");
+  const [query, setQuery]   = useState("");
+  const [editing, setEditing] = useState<VendorSummary | null>(null);
 
-  // ── Fetch cost centers ──────────────────────────────────────────────────────
   useEffect(() => {
     fetch("/api/cost-centers")
       .then((r) => r.json())
@@ -54,11 +39,10 @@ export default function VendorsPage() {
       .catch(console.error);
   }, []);
 
-  // ── Fetch vendors ─────────────────────────────────────────────────────────
   const fetchVendors = useCallback(async (
     branches: string[], months: string[], years: string[], isInitial = false,
   ) => {
-    setLoading(true); setError(""); setSaveMsg("");
+    setLoading(true); setError("");
     try {
       const p = new URLSearchParams();
       branches.forEach((b) => p.append("branch", b));
@@ -81,66 +65,21 @@ export default function VendorsPage() {
     }
   }, []);
 
-  // Initial load
   useEffect(() => { fetchVendors([], [], [], true); }, [fetchVendors]);
 
-  // Reload when filters change (skip initial)
   const filtersKey = `${filterBranches.join("|")}||${filterMonths.join("|")}||${filterYears.join("|")}`;
   const isInitialFilters = filterBranches.length === 0 && filterMonths.length === 0 && filterYears.length === 0;
   useEffect(() => {
-    if (isInitialFilters) return; // already loaded by initial effect
+    if (isInitialFilters) return;
     fetchVendors(filterBranches, filterMonths, filterYears, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersKey]);
 
-  // ── Client-side search ────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     if (!query.trim()) return vendors;
     const q = query.toLowerCase();
     return vendors.filter((v) => v.vendor.toLowerCase().includes(q));
   }, [vendors, query]);
-
-  // ── Assign CC ─────────────────────────────────────────────────────────────
-
-  function startAssign(v: VendorSummary) {
-    const ccId = rowCcId[v.vendor_key];
-    if (!ccId) return;
-    const cc = costCenters.find((c) => c.id === ccId);
-    if (!cc) return;
-    setPending({ vendorKey: v.vendor_key, vendorName: v.vendor, txCount: v.tx_count, ccId, ccName: cc.name });
-  }
-
-  async function confirmAssign() {
-    if (!pending) return;
-    setSaving(true); setSaveMsg("");
-    try {
-      const body: Record<string, unknown> = {
-        vendor_key: pending.vendorKey,
-        cost_center_id: pending.ccId,
-      };
-      if (filterBranches.length > 0) body.branch = filterBranches;
-      if (filterMonths.length > 0) body.month = filterMonths;
-      if (filterYears.length > 0) body.year = filterYears;
-
-      const res = await fetch("/api/vendors/assign-cc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const j = await res.json();
-        setSaveMsg(`Error: ${j.error ?? "Unknown error"}`);
-        return;
-      }
-      const { updated } = await res.json() as { updated: number };
-      setSaveMsg(`✓ Assigned ${updated} transaction${updated !== 1 ? "s" : ""} to ${pending.ccName}`);
-      setRowCcId((prev) => { const n = { ...prev }; delete n[pending.vendorKey]; return n; });
-      setPending(null);
-      await fetchVendors(filterBranches, filterMonths, filterYears, false);
-    } finally {
-      setSaving(false);
-    }
-  }
 
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-32px)]">
@@ -180,41 +119,8 @@ export default function VendorsPage() {
         </div>
       </div>
 
-      {/* Status messages */}
       {error && (
         <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-600 shrink-0">{error}</p>
-      )}
-      {saveMsg && (
-        <p className="rounded-lg border border-green-100 bg-green-50 px-4 py-2 text-sm text-green-700 shrink-0">{saveMsg}</p>
-      )}
-
-      {/* Confirm modal */}
-      {pending && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-          <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xl w-[360px]">
-            <h3 className="text-base font-semibold text-gray-900 mb-2">Assign Cost Center</h3>
-            <p className="text-sm text-gray-600 mb-4">
-              Assign <span className="font-medium text-gray-900">{pending.txCount.toLocaleString()} transaction{pending.txCount !== 1 ? "s" : ""}</span> for{" "}
-              <span className="font-medium text-gray-900">&quot;{pending.vendorName}&quot;</span> to{" "}
-              <span className="font-medium text-blue-700">{pending.ccName}</span>?
-              {(filterBranches.length > 0 || filterMonths.length > 0 || filterYears.length > 0) && (
-                <span className="block mt-1 text-xs text-gray-400">
-                  Applies only to transactions matching your active filters.
-                </span>
-              )}
-            </p>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setPending(null)} disabled={saving}
-                className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-40">
-                Cancel
-              </button>
-              <button onClick={confirmAssign} disabled={saving}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40">
-                {saving ? "Saving…" : "Yes, Assign"}
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Table */}
@@ -236,28 +142,21 @@ export default function VendorsPage() {
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Branches</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">GL Code / Name</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Current CCs</th>
-                <th className="px-4 py-3 font-medium whitespace-nowrap">Assign CC</th>
+                <th className="px-4 py-3 font-medium whitespace-nowrap">Allocation</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((v) => (
                 <tr key={v.vendor_key} className="border-b border-gray-50 hover:bg-gray-50 align-middle">
-                  {/* Vendor name */}
                   <td className="px-4 py-2.5 font-medium text-gray-900 max-w-[200px] truncate whitespace-nowrap">
                     {v.vendor || <span className="text-gray-400 italic">—</span>}
                   </td>
-
-                  {/* Total tx */}
                   <td className="px-4 py-2.5 text-gray-600 tabular-nums">{v.tx_count}</td>
-
-                  {/* Unassigned */}
                   <td className="px-4 py-2.5">
                     {v.tx_count_unassigned > 0
                       ? <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700">{v.tx_count_unassigned}</span>
                       : <span className="text-gray-300">—</span>}
                   </td>
-
-                  {/* Branches */}
                   <td className="px-4 py-2.5">
                     <span className="inline-flex flex-wrap gap-1">
                       {v.branches.map((b) => (
@@ -266,8 +165,6 @@ export default function VendorsPage() {
                       {v.branches.length === 0 && <span className="text-gray-300">—</span>}
                     </span>
                   </td>
-
-                  {/* GL items */}
                   <td className="px-4 py-2.5">
                     <div className="flex flex-col gap-0.5">
                       {v.gl_items.slice(0, 3).map((g) => (
@@ -282,44 +179,31 @@ export default function VendorsPage() {
                       {v.gl_items.length === 0 && <span className="text-gray-300">—</span>}
                     </div>
                   </td>
-
-                  {/* Current CCs */}
                   <td className="px-4 py-2.5">
                     <span className="inline-flex flex-wrap gap-1">
                       {v.cost_centers.map((cc) => (
                         <span key={cc} className={[
                           "rounded px-1.5 py-0.5 font-medium",
                           cc === "Unassigned" ? "bg-gray-100 text-gray-500" :
-                          cc === "Conflict" ? "bg-amber-100 text-amber-700" :
-                          "bg-green-50 text-green-700",
+                          cc === "Conflict"   ? "bg-amber-100 text-amber-700" :
+                                               "bg-green-50 text-green-700",
                         ].join(" ")}>{cc}</span>
                       ))}
                       {v.cost_centers.length === 0 && <span className="text-gray-300">—</span>}
                     </span>
                   </td>
-
-                  {/* Assign CC column */}
                   <td className="px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={rowCcId[v.vendor_key] ?? ""}
-                        onChange={(e) => setRowCcId((prev) => ({ ...prev, [v.vendor_key]: e.target.value }))}
-                        className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none max-w-[160px]"
+                    {v.vendor ? (
+                      <button
+                        onClick={() => setEditing(v)}
+                        className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
                       >
-                        <option value="">Choose CC…</option>
-                        {costCenters.map((cc) => (
-                          <option key={cc.id} value={cc.id}>{cc.name}</option>
-                        ))}
-                      </select>
-                      {rowCcId[v.vendor_key] && (
-                        <button
-                          onClick={() => startAssign(v)}
-                          className="rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 whitespace-nowrap"
-                        >
-                          Assign
-                        </button>
-                      )}
-                    </div>
+                        <Percent size={11} />
+                        Edit allocation
+                      </button>
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -327,6 +211,22 @@ export default function VendorsPage() {
           </table>
         )}
       </div>
+
+      {/* Split editor modal */}
+      {editing && (
+        <SplitEditor
+          assignType="vendor"
+          assignValue={editing.vendor}
+          displayName={editing.vendor}
+          txCount={editing.tx_count}
+          costCenters={costCenters}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            fetchVendors(filterBranches, filterMonths, filterYears, false);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,0 +1,226 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { X, Plus, Trash2 } from "lucide-react";
+import type { CostCenter } from "@/types";
+
+interface SplitRow {
+  cost_center_id: string;
+  percentage: string;
+}
+
+interface SplitEditorProps {
+  assignType: "vendor" | "description3";
+  assignValue: string;
+  displayName: string;
+  txCount: number;
+  costCenters: CostCenter[];
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+export function SplitEditor({
+  assignType, assignValue, displayName, txCount, costCenters, onClose, onSaved,
+}: SplitEditorProps) {
+  const [rows, setRows]       = useState<SplitRow[]>([{ cost_center_id: "", percentage: "100" }]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving]   = useState(false);
+  const [errMsg, setErrMsg]   = useState("");
+
+  // Load existing splits on open
+  useEffect(() => {
+    fetch(
+      `/api/cc-allocation-splits?type=${encodeURIComponent(assignType)}&value=${encodeURIComponent(assignValue)}`
+    )
+      .then((r) => r.json())
+      .then((data: { cost_center_id: string; percentage: number }[]) => {
+        if (data.length > 0) {
+          setRows(data.map((d) => ({
+            cost_center_id: d.cost_center_id,
+            percentage: String(d.percentage),
+          })));
+        }
+        // else: keep the default [{ cc: "", percentage: "100" }]
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [assignType, assignValue]);
+
+  const parsedRows = rows.map((r) => ({
+    ...r,
+    pct: parseFloat(r.percentage) || 0,
+  }));
+  const sum    = parsedRows.reduce((s, r) => s + r.pct, 0);
+  const sumOk  = Math.abs(sum - 100) < 0.01;
+  const canSave = sumOk && rows.every((r) => r.cost_center_id) && !saving && !loading;
+
+  function setRowField(idx: number, field: keyof SplitRow, value: string) {
+    setRows((prev) => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r));
+  }
+  function addRow()         { setRows((prev) => [...prev, { cost_center_id: "", percentage: "" }]); }
+  function removeRow(idx: number) { setRows((prev) => prev.filter((_, i) => i !== idx)); }
+
+  async function handleSave() {
+    setSaving(true); setErrMsg("");
+    try {
+      const res = await fetch("/api/cc-allocation-splits", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assign_type:  assignType,
+          assign_value: assignValue,
+          splits: parsedRows.map((r) => ({ cost_center_id: r.cost_center_id, percentage: r.pct })),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setErrMsg(json.error ?? "Save failed"); return; }
+      onSaved();
+    } catch (e) {
+      setErrMsg(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Sum indicator styling
+  const sumLabel =
+    sum === 0   ? "Enter percentages — must total 100%"
+    : sumOk      ? `✓ Total: 100%`
+    : sum > 100  ? `Exceeds 100% by ${(sum - 100).toFixed(3)}% — reduce before saving`
+    :              `${(100 - sum).toFixed(3)}% remaining  (total: ${sum.toFixed(3)}%)`;
+
+  const sumColor  = sum === 0 ? "text-gray-400" : sumOk ? "text-green-700" : sum > 100 ? "text-red-600" : "text-amber-700";
+  const sumBorder = sumOk ? "border-green-200 bg-green-50" : sum > 100 ? "border-red-200 bg-red-50" : "border-amber-100 bg-amber-50";
+
+  // Check for duplicate CCs
+  const ccIds = rows.map((r) => r.cost_center_id).filter(Boolean);
+  const hasDuplicateCCs = ccIds.length !== new Set(ccIds).size;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-gray-200 bg-white shadow-xl">
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4">
+          <div className="min-w-0 pr-4">
+            <h3 className="text-base font-semibold text-gray-900">Cost Center Allocation</h3>
+            <p className="mt-0.5 text-sm text-gray-600 truncate" title={displayName}>{displayName}</p>
+            <p className="text-xs text-gray-400">
+              {txCount.toLocaleString()} transaction{txCount !== 1 ? "s" : ""} will be updated globally
+            </p>
+          </div>
+          <button onClick={onClose} className="shrink-0 text-gray-400 hover:text-gray-600 mt-0.5">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-5 space-y-3">
+          {loading ? (
+            <div className="py-8 text-center text-gray-400">
+              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
+            </div>
+          ) : (
+            <>
+              {/* Column labels */}
+              <div className="grid grid-cols-[1fr_6rem_1.5rem] gap-2 px-0.5">
+                <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Cost Center</span>
+                <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wide text-right">%</span>
+                <span />
+              </div>
+
+              {/* Rows */}
+              <div className="space-y-2">
+                {rows.map((row, idx) => (
+                  <div key={idx} className="grid grid-cols-[1fr_6rem_1.5rem] gap-2 items-center">
+                    <select
+                      value={row.cost_center_id}
+                      onChange={(e) => setRowField(idx, "cost_center_id", e.target.value)}
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:border-blue-400 focus:outline-none w-full"
+                    >
+                      <option value="">Select…</option>
+                      {costCenters.map((cc) => (
+                        <option key={cc.id} value={cc.id}>{cc.name}</option>
+                      ))}
+                    </select>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        min="0.001"
+                        max="100"
+                        step="0.001"
+                        value={row.percentage}
+                        onChange={(e) => setRowField(idx, "percentage", e.target.value)}
+                        placeholder="0"
+                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 pr-6 text-sm text-right text-gray-700 focus:border-blue-400 focus:outline-none"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">%</span>
+                    </div>
+                    <button
+                      onClick={() => removeRow(idx)}
+                      disabled={rows.length <= 1}
+                      className="text-gray-300 hover:text-red-500 disabled:opacity-0 disabled:pointer-events-none"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add row */}
+              <button
+                onClick={addRow}
+                className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700"
+              >
+                <Plus size={13} /> Add cost center
+              </button>
+
+              {/* Sum indicator */}
+              <div className={`flex items-center justify-between rounded-lg border px-3 py-2 ${sumBorder}`}>
+                <span className={`text-xs font-medium ${sumColor}`}>{sumLabel}</span>
+                {rows.length === 1 && !sumOk && (
+                  <button
+                    onClick={() => setRowField(0, "percentage", "100")}
+                    className="text-xs text-blue-500 hover:text-blue-700 underline shrink-0 ml-2"
+                  >
+                    Set 100%
+                  </button>
+                )}
+              </div>
+
+              {hasDuplicateCCs && (
+                <p className="text-xs text-red-600">Each cost center can only appear once.</p>
+              )}
+
+              {errMsg && (
+                <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{errMsg}</p>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-gray-100 px-5 py-4">
+          <p className="text-[11px] text-gray-400">
+            Assignments apply to all historical data
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!canSave || hasDuplicateCCs}
+              title={!sumOk ? "Percentages must total 100% before saving" : undefined}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {saving ? "Saving…" : "Save allocation"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

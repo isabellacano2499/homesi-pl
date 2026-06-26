@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, Check, AlertTriangle } from "lucide-react";
+import { RefreshCw, AlertTriangle, Percent } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
+import { SplitEditor } from "@/components/split-editor";
 import type { CostCenter } from "@/types";
 import type { OABlock, OAGroupRow } from "@/app/api/offshore-allocations/route";
 
@@ -10,23 +11,6 @@ const MONTH_ORDER = [
   "January","February","March","April","May","June",
   "July","August","September","October","November","December",
 ];
-
-// ─── Confirm dialog ───────────────────────────────────────────────────────────
-
-interface ConfirmState {
-  open: boolean;
-  type: "description3" | "vendor";
-  value: string;
-  ccId: string;
-  ccName: string;
-  txCount: number;
-}
-
-const CONFIRM_CLOSED: ConfirmState = {
-  open: false, type: "vendor", value: "", ccId: "", ccName: "", txCount: 0,
-};
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function rowVisible(
   row: OAGroupRow,
@@ -77,15 +61,11 @@ interface BlockTableProps {
   filterYears: string[];
   filterMonths: string[];
   filterBranches: string[];
-  rowCcId: Record<string, string>;
-  onCcChange: (groupKey: string, ccId: string) => void;
-  onAssign: (row: OAGroupRow, ccId: string, ccName: string) => void;
-  assigning: string | null;
+  onEditAllocation: (row: OAGroupRow) => void;
 }
 
 function BlockTable({
-  block, costCenters, filterYears, filterMonths, filterBranches,
-  rowCcId, onCcChange, onAssign, assigning,
+  block, costCenters, filterYears, filterMonths, filterBranches, onEditAllocation,
 }: BlockTableProps) {
   const visibleRows = useMemo(
     () => block.rows.filter((r) => rowVisible(r, filterYears, filterMonths, filterBranches)),
@@ -97,15 +77,17 @@ function BlockTable({
   const isRoster = block.block_type === "roster";
   const isOther  = block.block_type === "other";
 
-  const headerBg  = isOther ? "bg-amber-50"   : isRoster ? "bg-violet-50" : "bg-blue-50";
+  const headerBg   = isOther ? "bg-amber-50"   : isRoster ? "bg-violet-50" : "bg-blue-50";
   const headerText = isOther ? "text-amber-800" : isRoster ? "text-violet-800" : "text-blue-800";
+
+  // Suppress unused costCenters lint (passed down for future use)
+  void costCenters;
 
   return (
     <div className={[
       "rounded-xl border bg-white shadow-sm overflow-hidden",
       isOther ? "border-amber-200" : "border-gray-200",
     ].join(" ")}>
-      {/* Block header */}
       <div className={`px-4 py-2.5 border-b ${isOther ? "border-amber-200" : "border-gray-200"} flex items-center justify-between ${headerBg}`}>
         <span className={`text-sm font-semibold flex items-center gap-2 ${headerText}`}>
           {isOther && <AlertTriangle size={14} className="text-amber-500" />}
@@ -132,17 +114,14 @@ function BlockTable({
               <th className="px-3 py-2 font-medium whitespace-nowrap">Vendor</th>
               <th className="px-3 py-2 font-medium whitespace-nowrap">Branch Allocation</th>
               <th className="px-3 py-2 font-medium whitespace-nowrap">Cost Center</th>
-              <th className="px-3 py-2 font-medium whitespace-nowrap min-w-[220px]">Assign CC</th>
+              <th className="px-3 py-2 font-medium whitespace-nowrap min-w-[140px]">Allocation</th>
             </tr>
           </thead>
           <tbody>
             {visibleRows.map((row) => {
-              const selectedCcId = rowCcId[row.group_key] ?? "";
-              const isAssigning  = assigning === row.group_key;
-              const canAssign    = row.assign_type !== null;
+              const canAssign = row.assign_type !== null;
               return (
                 <tr key={row.group_key} className="border-b border-gray-50 hover:bg-gray-50 align-middle">
-                  {/* Raw CD2 — only for "other" block */}
                   {isOther && (
                     <td className="px-3 py-2 font-mono text-amber-700 whitespace-nowrap max-w-[180px] truncate"
                         title={row.raw_cd2s?.join(", ")}>
@@ -153,67 +132,37 @@ function BlockTable({
                         : <span className="text-amber-300">(empty)</span>}
                     </td>
                   )}
-                  {/* Description 3 */}
                   <td className="px-3 py-2 text-gray-700 whitespace-nowrap max-w-[180px] truncate">
                     {row.check_description_3 ?? <span className="text-gray-300">—</span>}
                   </td>
-                  {/* Branch */}
                   <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
                     <BranchCell branches={row.branches} />
                   </td>
-                  {/* Category */}
                   <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
                     {row.category ?? <span className="text-gray-300">—</span>}
                   </td>
-                  {/* Position */}
                   <td className="px-3 py-2 text-gray-500 whitespace-nowrap max-w-[140px] truncate">
                     {row.position ?? <span className="text-gray-300">—</span>}
                   </td>
-                  {/* Vendor */}
                   <td className="px-3 py-2 text-gray-500 whitespace-nowrap max-w-[140px] truncate">
                     {row.vendor ?? <span className="text-gray-300">—</span>}
                   </td>
-                  {/* Branch Allocation */}
                   <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
                     {row.branch_allocation ?? <span className="text-gray-300">—</span>}
                   </td>
-                  {/* Current CC */}
                   <td className="px-3 py-2 whitespace-nowrap">
                     <CCCell row={row} />
                   </td>
-                  {/* Assign CC */}
                   <td className="px-3 py-2 whitespace-nowrap">
                     {canAssign ? (
-                      <div className="flex items-center gap-1.5">
-                        <select
-                          value={selectedCcId}
-                          onChange={(e) => onCcChange(row.group_key, e.target.value)}
-                          className="rounded border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[120px]"
-                        >
-                          <option value="">Select CC…</option>
-                          {costCenters.map((cc) => (
-                            <option key={cc.id} value={cc.id}>{cc.name}</option>
-                          ))}
-                        </select>
-                        <button
-                          disabled={!selectedCcId || isAssigning}
-                          onClick={() => {
-                            const cc = costCenters.find((c) => c.id === selectedCcId);
-                            if (cc) onAssign(row, selectedCcId, cc.name);
-                          }}
-                          className="flex items-center gap-1 rounded bg-blue-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                        >
-                          {isAssigning ? (
-                            <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                          ) : (
-                            <Check size={11} />
-                          )}
-                          Assign
-                        </button>
-                        <span className="text-gray-400 text-[10px] whitespace-nowrap">
-                          {row.tx_count} tx
-                        </span>
-                      </div>
+                      <button
+                        onClick={() => onEditAllocation(row)}
+                        className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
+                      >
+                        <Percent size={10} />
+                        Edit allocation
+                        <span className="text-gray-400 font-normal">({row.tx_count} tx)</span>
+                      </button>
                     ) : (
                       <span className="text-gray-300 text-[11px]" title="No vendor or description key to assign by">
                         — ({row.tx_count} tx)
@@ -233,18 +182,16 @@ function BlockTable({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OffshoreAllocationsPage() {
-  const [blocks, setBlocks] = useState<OABlock[]>([]);
+  const [blocks, setBlocks]           = useState<OABlock[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState("");
 
-  const [filterYears, setFilterYears] = useState<string[]>([]);
-  const [filterMonths, setFilterMonths] = useState<string[]>([]);
+  const [filterYears, setFilterYears]       = useState<string[]>([]);
+  const [filterMonths, setFilterMonths]     = useState<string[]>([]);
   const [filterBranches, setFilterBranches] = useState<string[]>([]);
 
-  const [rowCcId, setRowCcId] = useState<Record<string, string>>({});
-  const [assigning, setAssigning] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<ConfirmState>(CONFIRM_CLOSED);
+  const [editingRow, setEditingRow] = useState<OAGroupRow | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true); setError("");
@@ -293,45 +240,6 @@ export default function OffshoreAllocationsPage() {
     [blocks],
   );
 
-  function handleCcChange(groupKey: string, ccId: string) {
-    setRowCcId((prev) => ({ ...prev, [groupKey]: ccId }));
-  }
-
-  function handleAssignClick(row: OAGroupRow, ccId: string, ccName: string) {
-    if (!row.assign_type) return;
-    setConfirm({
-      open: true,
-      type: row.assign_type,
-      value: row.group_key,
-      ccId,
-      ccName,
-      txCount: row.tx_count,
-    });
-  }
-
-  async function handleConfirmAssign() {
-    const { type, value, ccId } = confirm;
-    setConfirm(CONFIRM_CLOSED);
-    setAssigning(value);
-    try {
-      const res = await fetch("/api/offshore-allocations/assign-cc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, value, cost_center_id: ccId }),
-      });
-      if (!res.ok) {
-        const j = await res.json();
-        setError(j.error ?? "Assignment failed");
-        return;
-      }
-      await fetchData();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setAssigning(null);
-    }
-  }
-
   const hasFilters = filterYears.length > 0 || filterMonths.length > 0 || filterBranches.length > 0;
 
   return (
@@ -368,7 +276,7 @@ export default function OffshoreAllocationsPage() {
         )}
         {hasFilters && (
           <span className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-0.5 border border-amber-100">
-            Filters affect display only — CC assignment applies globally to all historical data
+            Filters affect display only — allocations apply globally to all historical data
           </span>
         )}
       </div>
@@ -399,47 +307,26 @@ export default function OffshoreAllocationsPage() {
               filterYears={filterYears}
               filterMonths={filterMonths}
               filterBranches={filterBranches}
-              rowCcId={rowCcId}
-              onCcChange={handleCcChange}
-              onAssign={handleAssignClick}
-              assigning={assigning}
+              onEditAllocation={setEditingRow}
             />
           ))
         )}
       </div>
 
-      {/* Confirm dialog */}
-      {confirm.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-            <h3 className="text-base font-bold text-gray-900 mb-2">Confirm Assignment</h3>
-            <p className="text-sm text-gray-600 mb-1">
-              Assign <span className="font-semibold text-blue-700">{confirm.ccName}</span> to
-            </p>
-            <p className="text-sm font-medium text-gray-800 mb-3 truncate">{confirm.value}</p>
-            <p className="text-sm text-gray-500 mb-5">
-              This will update{" "}
-              <span className="font-bold text-gray-800">
-                {confirm.txCount.toLocaleString()} transaction{confirm.txCount !== 1 ? "s" : ""}
-              </span>{" "}
-              across all historical data regardless of active filters.
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setConfirm(CONFIRM_CLOSED)}
-                className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmAssign}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-              >
-                Assign
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Split editor modal */}
+      {editingRow && editingRow.assign_type && (
+        <SplitEditor
+          assignType={editingRow.assign_type}
+          assignValue={editingRow.group_key}
+          displayName={editingRow.check_description_3 ?? editingRow.group_key}
+          txCount={editingRow.tx_count}
+          costCenters={costCenters}
+          onClose={() => setEditingRow(null)}
+          onSaved={() => {
+            setEditingRow(null);
+            fetchData();
+          }}
+        />
       )}
     </div>
   );

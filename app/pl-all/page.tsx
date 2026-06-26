@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { PivotTable } from "@/components/pivot-table";
 import { PivotTableByCC } from "@/components/pivot-table-cc";
 import { ReportFilter } from "@/components/report-filter";
+import { buildSplitsMap, fanOutBySplits } from "@/lib/apply-splits";
 import type { PLReportTx, PLReportTxCC, FilterOptionsResponse } from "@/types";
+import type { SplitEntry } from "@/lib/apply-splits";
 
 const MONTH_ORDER = [
   "January","February","March","April","May","June",
@@ -17,21 +19,20 @@ export default function PLAllPage() {
   const [opts, setOpts] = useState<FilterOptionsResponse | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("gl");
 
-  // Server-side filters (trigger API reload via Load button)
   const [years,    setYears]    = useState<string[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
   const [sources,  setSources]  = useState<string[]>([]);
 
-  // Client-side filters (applied via useMemo, no reload)
   const [glCodes, setGlCodes] = useState<string[]>([]);
   const [months,  setMonths]  = useState<string[]>([]);
 
-  const [rawTxs,  setRawTxs]  = useState<PLReportTx[]>([]);
+  const [rawTxs,    setRawTxs]    = useState<PLReportTx[]>([]);
+  const [allSplits, setAllSplits] = useState<SplitEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState("");
   const [loaded,  setLoaded]  = useState(false);
 
-  // Load filter options once
+  // Load filter options + all splits once on mount
   useEffect(() => {
     fetch("/api/transactions/filter-options")
       .then(r => r.json())
@@ -39,6 +40,11 @@ export default function PLAllPage() {
         setOpts(v);
         if (v.year.length > 0) setYears([v.year[v.year.length - 1]]);
       })
+      .catch(console.error);
+
+    fetch("/api/cc-allocation-splits")
+      .then(r => r.json())
+      .then((data: SplitEntry[]) => setAllSplits(data))
       .catch(console.error);
   }, []);
 
@@ -70,12 +76,21 @@ export default function PLAllPage() {
     [rawTxs]
   );
 
+  // Client-side GL/month filter (unchanged from before)
   const txs = useMemo(() => {
     let out = rawTxs;
     if (glCodes.length > 0) out = out.filter(t => t.gl_code && glCodes.includes(t.gl_code));
     if (months.length  > 0) out = out.filter(t => t.month  && months.includes(t.month));
     return out;
   }, [rawTxs, glCodes, months]);
+
+  // Build splits map once; apply fan-out only for the CC view
+  const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
+
+  const txsForCC = useMemo((): PLReportTxCC[] => {
+    if (viewMode !== "cc") return [];
+    return fanOutBySplits(txs, splitsMap);
+  }, [txs, splitsMap, viewMode]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -163,7 +178,7 @@ export default function PLAllPage() {
         <p className="text-sm text-gray-500">
           {viewMode === "gl"
             ? "Pivot by Category 2 → Category 7 → GL Name → GL Code"
-            : "Pivot by Cost Center → GL Name → Transaction"}
+            : "Pivot by Cost Center → GL Name → Transaction · Vendor/OA allocations prorated by %"}
         </p>
       </div>
 
@@ -187,7 +202,7 @@ export default function PLAllPage() {
 
       {(loaded || loading) && viewMode === "cc" && (
         <PivotTableByCC
-          txs={txs as PLReportTxCC[]}
+          txs={txsForCC}
           loading={loading}
           emptyMessage="No transactions found for the selected filters."
         />

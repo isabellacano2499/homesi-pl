@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { PivotTable } from "@/components/pivot-table";
 import { ReportFilter } from "@/components/report-filter";
+import { buildSplitsMap, fanOutBySplits } from "@/lib/apply-splits";
+import type { SplitEntry } from "@/lib/apply-splits";
 import type { CostCenter, PLReportTx, FilterOptionsResponse } from "@/types";
 
 const MONTH_ORDER = [
@@ -26,45 +28,55 @@ export default function CostCenterReportPage() {
   const [glCodes, setGlCodes] = useState<string[]>([]);
   const [months,  setMonths]  = useState<string[]>([]);
 
-  const [rawTxs,  setRawTxs]  = useState<PLReportTx[]>([]);
+  const [rawTxs,    setRawTxs]    = useState<PLReportTx[]>([]);
+  const [allSplits, setAllSplits] = useState<SplitEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState("");
   const [loaded,  setLoaded]  = useState(false);
 
-  // Load CC list + filter options on mount
+  // Load CC list + filter options + splits on mount
   useEffect(() => {
     Promise.all([
       fetch("/api/cost-centers").then(r => r.json()),
       fetch("/api/transactions/filter-options").then(r => r.json()),
-    ]).then(([ccs, filterOpts]: [CostCenter[], FilterOptionsResponse]) => {
+      fetch("/api/cc-allocation-splits").then(r => r.json()),
+    ]).then(([ccs, filterOpts, splits]: [CostCenter[], FilterOptionsResponse, SplitEntry[]]) => {
       setCostCenters(ccs);
       setOpts(filterOpts);
-      // Default: first CC name, or "Unassigned" if none
+      setAllSplits(splits);
       setSelectedCCs(ccs.length > 0 ? [ccs[0].name] : ["Unassigned"]);
       if (filterOpts.year.length > 0)
         setYears([filterOpts.year[filterOpts.year.length - 1]]);
     }).catch(console.error);
   }, []);
 
-  // Map display name → API param (UUID or sentinel)
-  function displayToApiParam(name: string): string {
-    if (name === "Unassigned") return "unassigned";
-    if (name === "Conflict") return "conflict";
-    return costCenters.find(cc => cc.name === name)?.id ?? name;
-  }
+  const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
 
   async function load() {
     if (selectedCCs.length === 0) return;
     setLoading(true); setError("");
     try {
       const p = new URLSearchParams();
-      selectedCCs.forEach(name => p.append("cc", displayToApiParam(name)));
       years.forEach(y => p.append("year", y));
       branches.forEach(b => p.append("branch", b));
       sources.forEach(s => p.append("source", s));
-      const res = await fetch(`/api/cost-center-report?${p}`);
+      const res = await fetch(`/api/pl-all?${p}`);
       if (!res.ok) { const j = await res.json(); setError(j.error ?? "Error"); return; }
-      setRawTxs(await res.json());
+      const allTxs: PLReportTx[] = await res.json();
+
+      // Apply split fan-out, then filter client-side by selected cost centers
+      const fanned = fanOutBySplits(allTxs, splitsMap);
+      const filtered = fanned.filter(tx => {
+        for (const name of selectedCCs) {
+          if (name === "Unassigned" && (!tx.cost_center_id || tx.cost_center_status === "unassigned")) return true;
+          if (name === "Conflict" && tx.cost_center_status === "conflict") return true;
+          const ccId = costCenters.find(c => c.name === name)?.id;
+          if (ccId && tx.cost_center_id === ccId) return true;
+        }
+        return false;
+      });
+
+      setRawTxs(filtered as PLReportTx[]);
       setLoaded(true);
       setGlCodes([]); setMonths([]);
     } catch (e) {
