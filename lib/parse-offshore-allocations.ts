@@ -49,7 +49,7 @@ const HEADER_ALIASES: Record<ColKey, string[]> = {
   checkDescription:  ["check description", "checkdescription", "check_description", "description"],
   checkDescription2: ["check description 2", "checkdescription2", "check_description_2"],
   checkDescription3: ["check description 3", "checkdescription3", "check_description_3"],
-  movement:          ["movement"],
+  movement:          ["movement", "payroll", "total pay", "amount"],
   year:              ["year"],
   month:             ["month"],
   vendor:            ["vendor"],
