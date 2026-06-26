@@ -33,8 +33,10 @@ export default function VendorsPage() {
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState("");
 
-  const [query, setQuery]   = useState("");
-  const [editing, setEditing] = useState<VendorSummary | null>(null);
+  const [query, setQuery]       = useState("");
+  const [editing, setEditing]   = useState<VendorSummary | null>(null);
+  const [unassigning, setUnassigning] = useState<string | null>(null); // vendor_key being confirmed
+  const [unassignBusy, setUnassignBusy] = useState(false);
 
   useEffect(() => {
     fetch("/api/cost-centers")
@@ -213,13 +215,54 @@ export default function VendorsPage() {
                   </td>
                   <td className="px-4 py-2.5">
                     {v.vendor ? (
-                      <button
-                        onClick={() => setEditing(v)}
-                        className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
-                      >
-                        <Percent size={11} />
-                        Edit allocation
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setEditing(v)}
+                          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
+                        >
+                          <Percent size={11} />
+                          Edit allocation
+                        </button>
+                        {/* Unassign — only visible when a split is defined for this vendor */}
+                        {splitsMap.get(`vendor:${v.vendor.trim().replace(/\s+/g, " ")}`) && (
+                          unassigning === v.vendor_key ? (
+                            <span className="flex items-center gap-1 text-[11px]">
+                              <span className="text-red-600 font-medium">Remove?</span>
+                              <button
+                                onClick={async () => {
+                                  setUnassignBusy(true);
+                                  await fetch(
+                                    `/api/cc-allocation-splits?type=vendor&value=${encodeURIComponent(v.vendor)}`,
+                                    { method: "DELETE" }
+                                  );
+                                  setUnassignBusy(false);
+                                  setUnassigning(null);
+                                  fetchVendors(filterBranches, filterMonths, filterYears, false);
+                                  fetch("/api/cc-allocation-splits").then(r => r.json()).then(setAllSplits).catch(console.error);
+                                }}
+                                disabled={unassignBusy}
+                                className="rounded px-1.5 py-0.5 bg-red-600 text-white text-[10px] hover:bg-red-700 disabled:opacity-40"
+                              >
+                                Yes
+                              </button>
+                              <button
+                                onClick={() => setUnassigning(null)}
+                                className="rounded px-1.5 py-0.5 border border-gray-200 text-gray-500 text-[10px] hover:bg-gray-50"
+                              >
+                                No
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => setUnassigning(v.vendor_key)}
+                              title="Remove this vendor's cost center allocation"
+                              className="rounded-lg border border-gray-100 px-2 py-1.5 text-[11px] text-red-400 hover:border-red-200 hover:text-red-600 whitespace-nowrap"
+                            >
+                              Unassign
+                            </button>
+                          )
+                        )}
+                      </div>
                     ) : (
                       <span className="text-gray-300">—</span>
                     )}

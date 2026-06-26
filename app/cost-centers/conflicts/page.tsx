@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, CheckCircle, ChevronDown, ChevronRight,
   RotateCcw, UserCheck, Layers, ClipboardList,
 } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
+import { buildSplitsMap } from "@/lib/apply-splits";
+import { SplitDisplay } from "@/components/split-display";
+import type { SplitEntry } from "@/lib/apply-splits";
 import type { CostCenter, ConflictGroup, ResolvedConflictGroup, AssignmentGroup, AssignmentTx } from "@/types";
 
 function fmt(n: number | null | undefined) {
@@ -260,14 +263,21 @@ function AssignedByRuleTab({ costCenters, branches }: { costCenters: CostCenter[
 
 function ManualTab({ branches }: { branches: string[] }) {
   const [groups, setGroups] = useState<AssignmentGroup[]>([]);
+  const [allSplits, setAllSplits] = useState<SplitEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/cost-center-assignment/manual${branchParams(branches)}`);
-      if (res.ok) setGroups(await res.json());
+      const [groupsRes, splitsRes] = await Promise.all([
+        fetch(`/api/cost-center-assignment/manual${branchParams(branches)}`),
+        fetch("/api/cc-allocation-splits"),
+      ]);
+      if (groupsRes.ok) setGroups(await groupsRes.json());
+      if (splitsRes.ok) setAllSplits(await splitsRes.json());
     } finally { setLoading(false); }
   }, [branches]);
 
@@ -335,9 +345,18 @@ function ManualTab({ branches }: { branches: string[] }) {
                       <td className="max-w-[120px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
                       <td className={`px-4 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
                       <td className="px-4 py-2">
-                        {tx.cost_center_name
-                          ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800 text-[10px] font-medium">{tx.cost_center_name}</span>
-                          : <span className="text-gray-400">—</span>}
+                        {(() => {
+                          const normVendor = tx.vendor?.trim().replace(/\s+/g, " ");
+                          const splits =
+                            (normVendor ? splitsMap.get(`vendor:${normVendor}`) : undefined) ??
+                            (tx.check_description_3 ? splitsMap.get(`description3:${tx.check_description_3}`) : undefined);
+                          if (splits && splits.length > 0) {
+                            return <SplitDisplay splits={splits} />;
+                          }
+                          return tx.cost_center_name
+                            ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800 text-[10px] font-medium">{tx.cost_center_name}</span>
+                            : <span className="text-gray-400">—</span>;
+                        })()}
                       </td>
                     </tr>
                   ))}

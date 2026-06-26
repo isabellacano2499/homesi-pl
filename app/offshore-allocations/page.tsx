@@ -74,11 +74,17 @@ interface BlockTableProps {
   filterMonths: string[];
   filterBranches: string[];
   splitsMap: Map<string, SplitEntry[]>;
+  unassigning: string | null;
+  unassignBusy: boolean;
   onEditAllocation: (row: OAGroupRow) => void;
+  onUnassign: (row: OAGroupRow) => void;
+  onUnassignConfirm: (row: OAGroupRow) => void;
+  onUnassignCancel: () => void;
 }
 
 function BlockTable({
-  block, costCenters, filterYears, filterMonths, filterBranches, splitsMap, onEditAllocation,
+  block, costCenters, filterYears, filterMonths, filterBranches, splitsMap,
+  unassigning, unassignBusy, onEditAllocation, onUnassign, onUnassignConfirm, onUnassignCancel,
 }: BlockTableProps) {
   const visibleRows = useMemo(
     () => block.rows.filter((r) => rowVisible(r, filterYears, filterMonths, filterBranches)),
@@ -168,14 +174,45 @@ function BlockTable({
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     {canAssign ? (
-                      <button
-                        onClick={() => onEditAllocation(row)}
-                        className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
-                      >
-                        <Percent size={10} />
-                        Edit allocation
-                        <span className="text-gray-400 font-normal">({row.tx_count} tx)</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => onEditAllocation(row)}
+                          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
+                        >
+                          <Percent size={10} />
+                          Edit allocation
+                          <span className="text-gray-400 font-normal">({row.tx_count} tx)</span>
+                        </button>
+                        {/* Unassign — only when a split is already defined */}
+                        {splitsMap.get(`${row.assign_type}:${row.group_key}`) && (
+                          unassigning === row.group_key ? (
+                            <span className="flex items-center gap-1 text-[11px]">
+                              <span className="text-red-600 font-medium">Remove?</span>
+                              <button
+                                onClick={() => onUnassignConfirm(row)}
+                                disabled={unassignBusy}
+                                className="rounded px-1.5 py-0.5 bg-red-600 text-white text-[10px] hover:bg-red-700 disabled:opacity-40"
+                              >
+                                Yes
+                              </button>
+                              <button
+                                onClick={onUnassignCancel}
+                                className="rounded px-1.5 py-0.5 border border-gray-200 text-gray-500 text-[10px] hover:bg-gray-50"
+                              >
+                                No
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => onUnassign(row)}
+                              title="Remove this allocation"
+                              className="rounded-lg border border-gray-100 px-2 py-1 text-[11px] text-red-400 hover:border-red-200 hover:text-red-600 whitespace-nowrap"
+                            >
+                              Unassign
+                            </button>
+                          )
+                        )}
+                      </div>
                     ) : (
                       <span className="text-gray-300 text-[11px]" title="No vendor or description key to assign by">
                         — ({row.tx_count} tx)
@@ -205,7 +242,9 @@ export default function OffshoreAllocationsPage() {
   const [filterMonths, setFilterMonths]     = useState<string[]>([]);
   const [filterBranches, setFilterBranches] = useState<string[]>([]);
 
-  const [editingRow, setEditingRow] = useState<OAGroupRow | null>(null);
+  const [editingRow, setEditingRow]     = useState<OAGroupRow | null>(null);
+  const [unassigning, setUnassigning]   = useState<string | null>(null); // group_key being confirmed
+  const [unassignBusy, setUnassignBusy] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true); setError("");
@@ -328,7 +367,22 @@ export default function OffshoreAllocationsPage() {
               filterMonths={filterMonths}
               filterBranches={filterBranches}
               splitsMap={splitsMap}
+              unassigning={unassigning}
+              unassignBusy={unassignBusy}
               onEditAllocation={setEditingRow}
+              onUnassign={(row) => setUnassigning(row.group_key)}
+              onUnassignConfirm={async (row) => {
+                if (!row.assign_type) return;
+                setUnassignBusy(true);
+                await fetch(
+                  `/api/cc-allocation-splits?type=${encodeURIComponent(row.assign_type)}&value=${encodeURIComponent(row.group_key)}`,
+                  { method: "DELETE" }
+                );
+                setUnassignBusy(false);
+                setUnassigning(null);
+                fetchData();
+              }}
+              onUnassignCancel={() => setUnassigning(null)}
             />
           ))
         )}

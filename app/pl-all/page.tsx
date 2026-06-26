@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PivotTable } from "@/components/pivot-table";
 import { PivotTableByCC } from "@/components/pivot-table-cc";
 import { ReportFilter } from "@/components/report-filter";
@@ -31,30 +31,18 @@ export default function PLAllPage() {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState("");
   const [loaded,  setLoaded]  = useState(false);
+  const autoLoaded = useRef(false);
 
-  // Load filter options + all splits once on mount
-  useEffect(() => {
-    fetch("/api/transactions/filter-options")
-      .then(r => r.json())
-      .then((v: FilterOptionsResponse) => {
-        setOpts(v);
-        if (v.year.length > 0) setYears([v.year[v.year.length - 1]]);
-      })
-      .catch(console.error);
-
-    fetch("/api/cc-allocation-splits")
-      .then(r => r.json())
-      .then((data: SplitEntry[]) => setAllSplits(data))
-      .catch(console.error);
-  }, []);
-
-  async function load() {
+  // Extract the fetch logic so it can be called with explicit params
+  // (avoids stale-closure race when the initial auto-load fires right after
+  //  filter options arrive — `years` state may not have propagated yet)
+  async function fetchData(yrs: string[], brs: string[], srcs: string[]) {
     setLoading(true); setError("");
     try {
       const p = new URLSearchParams();
-      years.forEach(y => p.append("year", y));
-      branches.forEach(b => p.append("branch", b));
-      sources.forEach(s => p.append("source", s));
+      yrs.forEach(y => p.append("year", y));
+      brs.forEach(b => p.append("branch", b));
+      srcs.forEach(s => p.append("source", s));
       const res = await fetch(`/api/pl-all?${p}`);
       if (!res.ok) { const j = await res.json(); setError(j.error ?? "Error"); return; }
       setRawTxs(await res.json());
@@ -65,6 +53,31 @@ export default function PLAllPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Load filter options + splits on mount; auto-load data with the default year
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/transactions/filter-options").then(r => r.json()),
+      fetch("/api/cc-allocation-splits").then(r => r.json()),
+    ]).then(([filterOpts, splits]: [FilterOptionsResponse, SplitEntry[]]) => {
+      setOpts(filterOpts);
+      setAllSplits(splits);
+      const defaultYear = filterOpts.year.length > 0
+        ? [filterOpts.year[filterOpts.year.length - 1]]
+        : [];
+      setYears(defaultYear);
+      // Auto-load with the correct year — use explicit params to avoid stale closure
+      if (!autoLoaded.current && defaultYear.length > 0) {
+        autoLoaded.current = true;
+        fetchData(defaultYear, [], []);
+      }
+    }).catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function load() {
+    return fetchData(years, branches, sources);
   }
 
   const glCodeOptions = useMemo(

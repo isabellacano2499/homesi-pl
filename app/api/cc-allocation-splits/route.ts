@@ -107,3 +107,59 @@ export async function PUT(req: NextRequest) {
 
   return NextResponse.json({ saved: splits.length, tx_updated: txIds.length });
 }
+
+/**
+ * DELETE — remove all splits for one (assign_type, assign_value) key
+ * and reset matching pl_transactions back to unassigned.
+ * Query params: ?type=vendor|description3&value=...
+ */
+export async function DELETE(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const assign_type  = searchParams.get("type")  as "vendor" | "description3" | null;
+  const assign_value = searchParams.get("value");
+
+  if (!assign_type || !assign_value) {
+    return NextResponse.json({ error: "type and value query params are required" }, { status: 400 });
+  }
+
+  const supabase = createServerClient();
+
+  // 1. Delete all split rows for this key
+  const { error: delErr } = await supabase
+    .from("cc_allocation_splits")
+    .delete()
+    .eq("assign_type", assign_type)
+    .eq("assign_value", assign_value);
+  if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
+
+  // 2. Find matching transactions
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let txQ: any = supabase.from("pl_transactions").select("id");
+  if (assign_type === "vendor") {
+    txQ = txQ.eq("vendor", assign_value);
+  } else {
+    txQ = txQ.eq("source", "offshore_allocations").eq("check_description_3", assign_value);
+  }
+  const { data: txRows, error: txErr } = await txQ;
+  if (txErr) return NextResponse.json({ error: txErr.message }, { status: 500 });
+
+  const txIds: string[] = (txRows ?? []).map((r: { id: string }) => r.id);
+
+  // 3. Reset to unassigned in chunks of 500
+  if (txIds.length > 0) {
+    for (let i = 0; i < txIds.length; i += CHUNK) {
+      const { error: updErr } = await supabase
+        .from("pl_transactions")
+        .update({
+          cost_center_id:        null,
+          cost_center_status:    "unassigned",
+          cost_center_conflicts: null,
+          assignment_origin:     null,
+        })
+        .in("id", txIds.slice(i, i + CHUNK));
+      if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+    }
+  }
+
+  return NextResponse.json({ deleted: true, tx_reset: txIds.length });
+}

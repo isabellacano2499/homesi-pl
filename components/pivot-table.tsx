@@ -6,12 +6,11 @@
 //   Category 2    (blue-50, order_1)
 //     Category 6  (indigo-50, order_2; "(No Category 6)" last)
 //       Category 7  (gray-50, order_3)
-//         GL Name   (white, alphabetical)
-//           GL Code (white mono, alphabetical)
+//         "GL Code - GL Name"  (white, alphabetical by code)
 //             Check Description 2  (sky-50, only for OA transactions)
 //               Check Description 3 (sky-50/30, only for OA transactions)
 //                 Transactions (leaf)
-//             Transactions without CD2 (leaf, same indent as before)
+//             Transactions without CD2 (leaf)
 
 import { useMemo, useState } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
@@ -33,11 +32,17 @@ type TxLeaf = {
 };
 type Desc3Node = { desc3: string; byMonth: Record<string,number>; total: number; txs: TxLeaf[] };
 type Desc2Node = { desc2: string; byMonth: Record<string,number>; total: number; desc3s: Desc3Node[] };
-type CodeNode  = { code: string; byMonth: Record<string,number>; total: number; txs: TxLeaf[]; desc2s: Desc2Node[] };
-type NameNode  = { name: string; byMonth: Record<string,number>; total: number; codes: CodeNode[] };
-type Cat7Node  = { cat7: string; order3: number; byMonth: Record<string,number>; total: number; names: NameNode[] };
+type GLNode    = { glKey: string; byMonth: Record<string,number>; total: number; txs: TxLeaf[]; desc2s: Desc2Node[] };
+type Cat7Node  = { cat7: string; order3: number; byMonth: Record<string,number>; total: number; gls: GLNode[] };
 type Cat6Node  = { cat6: string; order2: number; byMonth: Record<string,number>; total: number; cat7s: Cat7Node[] };
 export type Cat2Node = { cat2: string; order1: number; byMonth: Record<string,number>; total: number; cat6s: Cat6Node[] };
+
+function glLabel(code: string | null | undefined, name: string | null | undefined): string {
+  const c = code?.trim();
+  const n = name?.trim();
+  if (c && n) return `${c} - ${n}`;
+  return c || n || "(No GL)";
+}
 
 function bm2rec(m: Map<string,number>): Record<string,number> {
   return Object.fromEntries(m);
@@ -46,9 +51,8 @@ function bm2rec(m: Map<string,number>): Record<string,number> {
 export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: string[] } {
   type WDesc3 = { bm: Map<string,number>; total: number; txs: TxLeaf[] };
   type WDesc2 = { bm: Map<string,number>; total: number; desc3s: Map<string,WDesc3> };
-  type WCode  = { bm: Map<string,number>; total: number; txs: TxLeaf[]; desc2s: Map<string,WDesc2> };
-  type WName  = { bm: Map<string,number>; total: number; codes: Map<string,WCode> };
-  type WCat7  = { order3: number; bm: Map<string,number>; total: number; names: Map<string,WName> };
+  type WGL    = { bm: Map<string,number>; total: number; txs: TxLeaf[]; desc2s: Map<string,WDesc2> };
+  type WCat7  = { order3: number; bm: Map<string,number>; total: number; gls: Map<string,WGL> };
   type WCat6  = { order2: number; bm: Map<string,number>; total: number; cat7s: Map<string,WCat7> };
   type WCat2  = { order1: number; bm: Map<string,number>; total: number; cat6s: Map<string,WCat6> };
 
@@ -59,10 +63,9 @@ export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: stri
     const cat2  = tx.category_2 ?? "Uncategorized";
     const cat6  = tx.category_6 ?? "(No Category 6)";
     const cat7  = tx.category_7 ?? "(No Category 7)";
-    const name  = tx.gl_name    ?? "(No GL Name)";
-    const code  = tx.gl_code    ?? "(No GL Code)";
-    const month = tx.month      ?? "Unknown";
-    const mvmt  = tx.movement   ?? 0;
+    const glKey = glLabel(tx.gl_code, tx.gl_name);
+    const month = tx.month ?? "Unknown";
+    const mvmt  = tx.movement ?? 0;
     if (tx.month) monthSet.add(tx.month);
 
     if (!cat2Map.has(cat2))
@@ -76,19 +79,14 @@ export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: stri
     wC6.total += mvmt; wC6.bm.set(month, (wC6.bm.get(month)??0) + mvmt);
 
     if (!wC6.cat7s.has(cat7))
-      wC6.cat7s.set(cat7, { order3: tx.order_3 ?? 9999, bm: new Map(), total: 0, names: new Map() });
+      wC6.cat7s.set(cat7, { order3: tx.order_3 ?? 9999, bm: new Map(), total: 0, gls: new Map() });
     const wC7 = wC6.cat7s.get(cat7)!;
     wC7.total += mvmt; wC7.bm.set(month, (wC7.bm.get(month)??0) + mvmt);
 
-    if (!wC7.names.has(name))
-      wC7.names.set(name, { bm: new Map(), total: 0, codes: new Map() });
-    const wN = wC7.names.get(name)!;
-    wN.total += mvmt; wN.bm.set(month, (wN.bm.get(month)??0) + mvmt);
-
-    if (!wN.codes.has(code))
-      wN.codes.set(code, { bm: new Map(), total: 0, txs: [], desc2s: new Map() });
-    const wKode = wN.codes.get(code)!;
-    wKode.total += mvmt; wKode.bm.set(month, (wKode.bm.get(month)??0) + mvmt);
+    if (!wC7.gls.has(glKey))
+      wC7.gls.set(glKey, { bm: new Map(), total: 0, txs: [], desc2s: new Map() });
+    const wGL = wC7.gls.get(glKey)!;
+    wGL.total += mvmt; wGL.bm.set(month, (wGL.bm.get(month)??0) + mvmt);
 
     const leaf: TxLeaf = {
       id: tx.id, month, branch: tx.branch,
@@ -98,11 +96,10 @@ export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: stri
 
     const desc2 = (tx.check_description_2 ?? "").trim() || null;
     if (desc2) {
-      // OA transaction — group under CD2 → CD3
       const desc3 = (tx.check_description_3 ?? "").trim() || "(No Description 3)";
-      if (!wKode.desc2s.has(desc2))
-        wKode.desc2s.set(desc2, { bm: new Map(), total: 0, desc3s: new Map() });
-      const wD2 = wKode.desc2s.get(desc2)!;
+      if (!wGL.desc2s.has(desc2))
+        wGL.desc2s.set(desc2, { bm: new Map(), total: 0, desc3s: new Map() });
+      const wD2 = wGL.desc2s.get(desc2)!;
       wD2.total += mvmt; wD2.bm.set(month, (wD2.bm.get(month)??0) + mvmt);
 
       if (!wD2.desc3s.has(desc3))
@@ -111,8 +108,7 @@ export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: stri
       wD3.total += mvmt; wD3.bm.set(month, (wD3.bm.get(month)??0) + mvmt);
       wD3.txs.push(leaf);
     } else {
-      // Standard transaction — direct leaf under GL Code
-      wKode.txs.push(leaf);
+      wGL.txs.push(leaf);
     }
   }
 
@@ -124,20 +120,17 @@ export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: stri
       cat6, order2: wC6.order2, byMonth: bm2rec(wC6.bm), total: wC6.total,
       cat7s: [...wC6.cat7s.entries()].map(([cat7, wC7]) => ({
         cat7, order3: wC7.order3, byMonth: bm2rec(wC7.bm), total: wC7.total,
-        names: [...wC7.names.entries()].map(([name, wN]) => ({
-          name, byMonth: bm2rec(wN.bm), total: wN.total,
-          codes: [...wN.codes.entries()].map(([code, wKode]) => ({
-            code, byMonth: bm2rec(wKode.bm), total: wKode.total,
-            txs: wKode.txs,
-            desc2s: [...wKode.desc2s.entries()].map(([desc2, wD2]) => ({
-              desc2, byMonth: bm2rec(wD2.bm), total: wD2.total,
-              desc3s: [...wD2.desc3s.entries()].map(([desc3, wD3]) => ({
-                desc3, byMonth: bm2rec(wD3.bm), total: wD3.total,
-                txs: wD3.txs,
-              })).sort((a,b) => a.desc3.localeCompare(b.desc3)),
-            })).sort((a,b) => a.desc2.localeCompare(b.desc2)),
-          })).sort((a,b) => a.code.localeCompare(b.code)),
-        })).sort((a,b) => a.name.localeCompare(b.name)),
+        gls: [...wC7.gls.entries()].map(([glKey, wGL]) => ({
+          glKey, byMonth: bm2rec(wGL.bm), total: wGL.total,
+          txs: wGL.txs,
+          desc2s: [...wGL.desc2s.entries()].map(([desc2, wD2]) => ({
+            desc2, byMonth: bm2rec(wD2.bm), total: wD2.total,
+            desc3s: [...wD2.desc3s.entries()].map(([desc3, wD3]) => ({
+              desc3, byMonth: bm2rec(wD3.bm), total: wD3.total,
+              txs: wD3.txs,
+            })).sort((a,b) => a.desc3.localeCompare(b.desc3)),
+          })).sort((a,b) => a.desc2.localeCompare(b.desc2)),
+        })).sort((a,b) => a.glKey.localeCompare(b.glKey)),
       })).sort((a,b) => a.order3 - b.order3),
     })).sort((a,b) => {
       if (a.cat6 === "(No Category 6)") return 1;
@@ -298,129 +291,107 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
 
         if (!open7) continue;
 
-        for (const nm of c7.names) {
-          const kn = `gn:${c2.cat2}|${c6.cat6}|${c7.cat7}|${nm.name}`;
-          const openN = exp.has(kn);
+        for (const gl of c7.gls) {
+          const kg = `gl:${c2.cat2}|${c6.cat6}|${c7.cat7}|${gl.glKey}`;
+          const openG = exp.has(kg);
 
           rows.push(
-            <tr key={kn}
-                className="border-b border-gray-50 bg-white hover:bg-gray-50 cursor-pointer"
-                onClick={() => toggle(kn)}>
-              <td className="sticky left-0 z-10 bg-white pl-14 pr-2 py-0.5 text-[11px] text-gray-700 whitespace-nowrap">
+            <tr key={kg}
+                className="border-b border-gray-50 bg-white hover:bg-blue-50/30 cursor-pointer"
+                onClick={() => toggle(kg)}>
+              <td className="sticky left-0 z-10 bg-white pl-14 pr-2 py-0.5 text-[11px] text-gray-600 whitespace-nowrap">
                 <span className="inline-flex items-center gap-1">
-                  {openN ? <ChevronDown size={10}/> : <ChevronRight size={10}/>}
-                  {nm.name}
+                  {openG ? <ChevronDown size={10}/> : <ChevronRight size={10}/>}
+                  {gl.glKey}
                 </span>
               </td>
-              {months.map(m => <MCell key={m} v={nm.byMonth[m]} />)}
-              <td className={`${numCell} ${mvCls(nm.total)}`}>{fmtM(nm.total)}</td>
+              {months.map(m => <MCell key={m} v={gl.byMonth[m]} />)}
+              <td className={`${numCell} ${mvCls(gl.total)}`}>{fmtM(gl.total)}</td>
             </tr>
           );
 
-          if (!openN) continue;
+          if (!openG) continue;
 
-          for (const kode of nm.codes) {
-            const kk = `gc:${c2.cat2}|${c6.cat6}|${c7.cat7}|${nm.name}|${kode.code}`;
-            const openK = exp.has(kk);
+          // ── Direct transaction leaves (Original/Addback — no CD2) ─────────
+          for (const t of gl.txs) {
+            rows.push(
+              <tr key={t.id} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
+                <td className="sticky left-0 z-10 bg-white pl-[72px] pr-2 py-0.5 text-[10px] text-gray-400 max-w-[260px] truncate whitespace-nowrap">
+                  {t.desc ?? "—"}
+                </td>
+                {months.map(m => {
+                  const match = m === t.month;
+                  return (
+                    <td key={m} className={`${numCell} text-[10px] ${match ? mvCls(t.mvmt) : ""}`}>
+                      {match ? fmtM(t.mvmt) : ""}
+                    </td>
+                  );
+                })}
+                <td className={`${numCell} text-[10px] ${mvCls(t.mvmt)}`}>{fmtM(t.mvmt)}</td>
+              </tr>
+            );
+          }
+
+          // ── CD2 grouped leaves (Offshore Allocations only) ───────────────
+          for (const d2 of gl.desc2s) {
+            const kd2 = `d2:${c2.cat2}|${c6.cat6}|${c7.cat7}|${gl.glKey}|${d2.desc2}`;
+            const openD2 = exp.has(kd2);
 
             rows.push(
-              <tr key={kk}
-                  className="border-b border-gray-50 bg-white hover:bg-blue-50/30 cursor-pointer"
-                  onClick={() => toggle(kk)}>
-                <td className="sticky left-0 z-10 bg-white pl-[72px] pr-2 py-0.5 text-[11px] font-mono text-gray-500 whitespace-nowrap">
+              <tr key={kd2}
+                  className="border-b border-sky-100 bg-sky-50 hover:bg-sky-100 cursor-pointer"
+                  onClick={() => toggle(kd2)}>
+                <td className="sticky left-0 z-10 bg-sky-50 pl-[72px] pr-2 py-0.5 text-[10px] font-semibold text-sky-700 whitespace-nowrap">
                   <span className="inline-flex items-center gap-1">
-                    {openK ? <ChevronDown size={10}/> : <ChevronRight size={10}/>}
-                    {kode.code}
+                    {openD2 ? <ChevronDown size={9}/> : <ChevronRight size={9}/>}
+                    {d2.desc2}
                   </span>
                 </td>
-                {months.map(m => <MCell key={m} v={kode.byMonth[m]} />)}
-                <td className={`${numCell} ${mvCls(kode.total)}`}>{fmtM(kode.total)}</td>
+                {months.map(m => <MCell key={m} v={d2.byMonth[m]} />)}
+                <td className={`${numCell} ${mvCls(d2.total)}`}>{fmtM(d2.total)}</td>
               </tr>
             );
 
-            if (!openK) continue;
+            if (!openD2) continue;
 
-            // ── Direct transaction leaves (no CD2 — Original/Addback) ────────
-            for (const t of kode.txs) {
-              rows.push(
-                <tr key={t.id} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
-                  <td className="sticky left-0 z-10 bg-white pl-20 pr-2 py-0.5 text-[10px] text-gray-400 max-w-[260px] truncate whitespace-nowrap">
-                    {t.desc ?? "—"}
-                  </td>
-                  {months.map(m => {
-                    const match = m === t.month;
-                    return (
-                      <td key={m} className={`${numCell} text-[10px] ${match ? mvCls(t.mvmt) : ""}`}>
-                        {match ? fmtM(t.mvmt) : ""}
-                      </td>
-                    );
-                  })}
-                  <td className={`${numCell} text-[10px] ${mvCls(t.mvmt)}`}>{fmtM(t.mvmt)}</td>
-                </tr>
-              );
-            }
-
-            // ── CD2 grouped leaves (Offshore Allocations only) ───────────────
-            for (const d2 of kode.desc2s) {
-              const kd2 = `d2:${c2.cat2}|${c6.cat6}|${c7.cat7}|${nm.name}|${kode.code}|${d2.desc2}`;
-              const openD2 = exp.has(kd2);
+            for (const d3 of d2.desc3s) {
+              const kd3 = `d3:${c2.cat2}|${c6.cat6}|${c7.cat7}|${gl.glKey}|${d2.desc2}|${d3.desc3}`;
+              const openD3 = exp.has(kd3);
 
               rows.push(
-                <tr key={kd2}
-                    className="border-b border-sky-100 bg-sky-50 hover:bg-sky-100 cursor-pointer"
-                    onClick={() => toggle(kd2)}>
-                  <td className="sticky left-0 z-10 bg-sky-50 pl-20 pr-2 py-0.5 text-[10px] font-semibold text-sky-700 whitespace-nowrap">
+                <tr key={kd3}
+                    className="border-b border-sky-50 bg-white hover:bg-sky-50/50 cursor-pointer"
+                    onClick={() => toggle(kd3)}>
+                  <td className="sticky left-0 z-10 bg-white pl-[88px] pr-2 py-0.5 text-[10px] text-sky-600 whitespace-nowrap max-w-[260px] truncate">
                     <span className="inline-flex items-center gap-1">
-                      {openD2 ? <ChevronDown size={9}/> : <ChevronRight size={9}/>}
-                      {d2.desc2}
+                      {openD3 ? <ChevronDown size={9}/> : <ChevronRight size={9}/>}
+                      {d3.desc3}
                     </span>
                   </td>
-                  {months.map(m => <MCell key={m} v={d2.byMonth[m]} />)}
-                  <td className={`${numCell} ${mvCls(d2.total)}`}>{fmtM(d2.total)}</td>
+                  {months.map(m => <MCell key={m} v={d3.byMonth[m]} />)}
+                  <td className={`${numCell} ${mvCls(d3.total)}`}>{fmtM(d3.total)}</td>
                 </tr>
               );
 
-              if (!openD2) continue;
+              if (!openD3) continue;
 
-              for (const d3 of d2.desc3s) {
-                const kd3 = `d3:${c2.cat2}|${c6.cat6}|${c7.cat7}|${nm.name}|${kode.code}|${d2.desc2}|${d3.desc3}`;
-                const openD3 = exp.has(kd3);
-
+              for (const t of d3.txs) {
                 rows.push(
-                  <tr key={kd3}
-                      className="border-b border-sky-50 bg-white hover:bg-sky-50/50 cursor-pointer"
-                      onClick={() => toggle(kd3)}>
-                    <td className="sticky left-0 z-10 bg-white pl-[104px] pr-2 py-0.5 text-[10px] text-sky-600 whitespace-nowrap max-w-[260px] truncate">
-                      <span className="inline-flex items-center gap-1">
-                        {openD3 ? <ChevronDown size={9}/> : <ChevronRight size={9}/>}
-                        {d3.desc3}
-                      </span>
+                  <tr key={t.id} className="border-b border-gray-50 bg-white hover:bg-sky-50/20">
+                    <td className="sticky left-0 z-10 bg-white pl-[104px] pr-2 py-0.5 text-[10px] text-gray-400 max-w-[260px] truncate whitespace-nowrap">
+                      {t.desc ?? "—"}
                     </td>
-                    {months.map(m => <MCell key={m} v={d3.byMonth[m]} />)}
-                    <td className={`${numCell} ${mvCls(d3.total)}`}>{fmtM(d3.total)}</td>
+                    {months.map(m => {
+                      const match = m === t.month;
+                      return (
+                        <td key={m} className={`${numCell} text-[10px] ${match ? mvCls(t.mvmt) : ""}`}>
+                          {match ? fmtM(t.mvmt) : ""}
+                        </td>
+                      );
+                    })}
+                    <td className={`${numCell} text-[10px] ${mvCls(t.mvmt)}`}>{fmtM(t.mvmt)}</td>
                   </tr>
                 );
-
-                if (!openD3) continue;
-
-                for (const t of d3.txs) {
-                  rows.push(
-                    <tr key={t.id} className="border-b border-gray-50 bg-white hover:bg-sky-50/20">
-                      <td className="sticky left-0 z-10 bg-white pl-[120px] pr-2 py-0.5 text-[10px] text-gray-400 max-w-[260px] truncate whitespace-nowrap">
-                        {t.desc ?? "—"}
-                      </td>
-                      {months.map(m => {
-                        const match = m === t.month;
-                        return (
-                          <td key={m} className={`${numCell} text-[10px] ${match ? mvCls(t.mvmt) : ""}`}>
-                            {match ? fmtM(t.mvmt) : ""}
-                          </td>
-                        );
-                      })}
-                      <td className={`${numCell} text-[10px] ${mvCls(t.mvmt)}`}>{fmtM(t.mvmt)}</td>
-                    </tr>
-                  );
-                }
               }
             }
           }
@@ -436,7 +407,7 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
         <thead className="sticky top-0 z-20 bg-gray-50">
           <tr className="border-b border-gray-200">
             <th className="sticky left-0 z-30 bg-gray-50 px-3 py-1.5 text-left text-[10px] font-semibold text-gray-500 whitespace-nowrap">
-              Cat 2 / Cat 6 / Cat 7 / GL
+              Cat 2 / Cat 6 / Cat 7 / GL Code — GL Name
             </th>
             {months.map(m => (
               <th key={m} className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 whitespace-nowrap bg-gray-50">

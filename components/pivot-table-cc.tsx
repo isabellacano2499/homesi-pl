@@ -7,22 +7,30 @@ import type { PLReportTxCC } from "@/types";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type TxLeaf = { id: string; month: string; desc: string | null; mvmt: number };
-type GLNameNode  = { gl_name: string; byMonth: Record<string, number>; total: number; txs: TxLeaf[] };
+type GLNode = { glKey: string; byMonth: Record<string, number>; total: number; txs: TxLeaf[] };
 type CCNode = {
   cc_key: string;
   cc_name: string;
   order: number;   // 0=named CC, 1=Unassigned, 2=Conflict
   byMonth: Record<string, number>;
   total: number;
-  gl_names: GLNameNode[];
+  gl_nodes: GLNode[];
 };
 type Cat6Node = {
   cat6_key: string;
   cat6_name: string;
+  order2: number;
   byMonth: Record<string, number>;
   total: number;
   cc_nodes: CCNode[];
 };
+
+function glLabel(code: string | null | undefined, name: string | null | undefined): string {
+  const c = code?.trim();
+  const n = name?.trim();
+  if (c && n) return `${c} - ${n}`;
+  return c || n || "(No GL)";
+}
 
 const MONTH_ORDER = [
   "January","February","March","April","May","June",
@@ -36,7 +44,7 @@ const TOTAL_BG = "#1e3a5f";
 export function buildPivotByCC(txs: PLReportTxCC[]): { cat6Nodes: Cat6Node[]; months: string[] } {
   type WGL  = { bm: Map<string, number>; total: number; txs: TxLeaf[] };
   type WCC  = { cc_name: string; order: number; bm: Map<string, number>; total: number; gl_map: Map<string, WGL> };
-  type WCat = { bm: Map<string, number>; total: number; cc_map: Map<string, WCC> };
+  type WCat = { order2: number; bm: Map<string, number>; total: number; cc_map: Map<string, WCC> };
 
   const cat6Map = new Map<string, WCat>();
   const monthSet = new Set<string>();
@@ -45,8 +53,9 @@ export function buildPivotByCC(txs: PLReportTxCC[]): { cat6Nodes: Cat6Node[]; mo
     const cat6_key  = tx.category_6 ?? "(No Category)";
     const month     = tx.month ?? "Unknown";
     const mvmt      = tx.movement ?? 0;
-    const glN       = tx.gl_name ?? "(No GL Name)";
+    const glKey     = glLabel(tx.gl_code, tx.gl_name);
     const desc      = tx.check_description;
+    const order2    = tx.order_2 ?? 9999;
 
     let cc_key: string, cc_name: string, order: number;
     if (tx.cost_center_status === "unassigned" || (!tx.cost_center_id && tx.cost_center_status !== "conflict")) {
@@ -61,7 +70,7 @@ export function buildPivotByCC(txs: PLReportTxCC[]): { cat6Nodes: Cat6Node[]; mo
 
     if (tx.month) monthSet.add(tx.month);
 
-    if (!cat6Map.has(cat6_key)) cat6Map.set(cat6_key, { bm: new Map(), total: 0, cc_map: new Map() });
+    if (!cat6Map.has(cat6_key)) cat6Map.set(cat6_key, { order2, bm: new Map(), total: 0, cc_map: new Map() });
     const wCat = cat6Map.get(cat6_key)!;
     wCat.total += mvmt; wCat.bm.set(month, (wCat.bm.get(month) ?? 0) + mvmt);
 
@@ -69,8 +78,8 @@ export function buildPivotByCC(txs: PLReportTxCC[]): { cat6Nodes: Cat6Node[]; mo
     const wCC = wCat.cc_map.get(cc_key)!;
     wCC.total += mvmt; wCC.bm.set(month, (wCC.bm.get(month) ?? 0) + mvmt);
 
-    if (!wCC.gl_map.has(glN)) wCC.gl_map.set(glN, { bm: new Map(), total: 0, txs: [] });
-    const wGL = wCC.gl_map.get(glN)!;
+    if (!wCC.gl_map.has(glKey)) wCC.gl_map.set(glKey, { bm: new Map(), total: 0, txs: [] });
+    const wGL = wCC.gl_map.get(glKey)!;
     wGL.total += mvmt; wGL.bm.set(month, (wGL.bm.get(month) ?? 0) + mvmt);
     wGL.txs.push({ id: tx.id, month, desc, mvmt });
   }
@@ -82,12 +91,12 @@ export function buildPivotByCC(txs: PLReportTxCC[]): { cat6Nodes: Cat6Node[]; mo
       cc_key, cc_name: wCC.cc_name, order: wCC.order,
       byMonth: Object.fromEntries(wCC.bm),
       total: wCC.total,
-      gl_names: [...wCC.gl_map.entries()].map(([gl_name, wGL]) => ({
-        gl_name,
+      gl_nodes: [...wCC.gl_map.entries()].map(([glKey, wGL]) => ({
+        glKey,
         byMonth: Object.fromEntries(wGL.bm),
         total: wGL.total,
         txs: wGL.txs,
-      })).sort((a, b) => a.gl_name.localeCompare(b.gl_name)),
+      })).sort((a, b) => a.glKey.localeCompare(b.glKey)),
     })).sort((a, b) => {
       if (a.order !== b.order) return a.order - b.order;
       return a.cc_name.localeCompare(b.cc_name);
@@ -96,15 +105,15 @@ export function buildPivotByCC(txs: PLReportTxCC[]): { cat6Nodes: Cat6Node[]; mo
     return {
       cat6_key,
       cat6_name: cat6_key,
+      order2: wCat.order2,
       byMonth: Object.fromEntries(wCat.bm),
       total: wCat.total,
       cc_nodes,
     };
   }).sort((a, b) => {
-    // "(No Category)" goes last
     if (a.cat6_key === "(No Category)") return 1;
     if (b.cat6_key === "(No Category)") return -1;
-    return a.cat6_name.localeCompare(b.cat6_name);
+    return a.order2 - b.order2;  // order_2 sort (was alphabetical before)
   });
 
   return { cat6Nodes, months };
@@ -242,33 +251,33 @@ export function PivotTableByCC({
 
       if (!openCC) continue;
 
-      for (const glNode of ccNode.gl_names) {
-        const kGL = `gl:${cat6Node.cat6_key}|${ccNode.cc_key}|${glNode.gl_name}`;
+      for (const glNode of ccNode.gl_nodes) {
+        const kGL = `gl:${cat6Node.cat6_key}|${ccNode.cc_key}|${glNode.glKey}`;
         const openGL = exp.has(kGL);
 
-        // GL Name row (level 3)
+        // GL row (level 3)
         rows.push(
           <tr key={kGL}
               className="border-b border-gray-100 bg-gray-50 hover:bg-gray-100 cursor-pointer"
               onClick={() => toggle(kGL)}>
-            <td className="sticky left-0 z-10 bg-gray-50 pl-9 pr-2 py-0.5 text-[11px] font-semibold text-gray-700 whitespace-nowrap">
+            <td className="sticky left-0 z-10 bg-gray-50 pl-9 pr-2 py-0.5 text-[11px] text-gray-600 whitespace-nowrap">
               <span className="inline-flex items-center gap-1">
                 {openGL ? <ChevronDown size={9} /> : <ChevronRight size={9} />}
-                {glNode.gl_name}
+                {glNode.glKey}
               </span>
             </td>
             {months.map((m) => (
-              <td key={m} className={`${numCell} font-semibold ${mvCls(glNode.byMonth[m])}`}>
+              <td key={m} className={`${numCell} ${mvCls(glNode.byMonth[m])}`}>
                 {fmtM(glNode.byMonth[m])}
               </td>
             ))}
-            <td className={`${numCell} font-semibold ${mvCls(glNode.total)}`}>{fmtM(glNode.total)}</td>
+            <td className={`${numCell} ${mvCls(glNode.total)}`}>{fmtM(glNode.total)}</td>
           </tr>
         );
 
         if (!openGL) continue;
 
-        // Description rows (level 4 — leaf)
+        // Transaction leaf rows (level 4)
         for (const tx of glNode.txs) {
           rows.push(
             <tr key={tx.id} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
@@ -298,7 +307,7 @@ export function PivotTableByCC({
         <thead className="sticky top-0 z-20 bg-gray-50">
           <tr className="border-b border-gray-200">
             <th className="sticky left-0 z-30 bg-gray-50 px-3 py-1.5 text-left text-[10px] font-semibold text-gray-500 whitespace-nowrap">
-              Category 6 / Cost Center / GL Name
+              Category 6 / Cost Center / GL Code — GL Name
             </th>
             {months.map((m) => (
               <th key={m} className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 whitespace-nowrap bg-gray-50">
