@@ -22,6 +22,13 @@ function branchParams(branches: string[]): string {
   return "?" + branches.map((b) => `branch=${encodeURIComponent(b)}`).join("&");
 }
 
+function CD2Cell({ v }: { v: string | null | undefined }) {
+  return v ? <span className="text-sky-700 truncate">{v}</span> : <span className="text-gray-300">—</span>;
+}
+function CD3Cell({ v }: { v: string | null | undefined }) {
+  return v ? <span className="text-sky-600 truncate">{v}</span> : <span className="text-gray-300">—</span>;
+}
+
 // ─── Shared: assign multiple txs to a CC ─────────────────────────────────────
 
 async function apiAssign(transactionIds: string[], costCenterId: string): Promise<string | null> {
@@ -175,6 +182,8 @@ function AssignTab({
                     <th className="px-3 py-2 font-medium">Month</th>
                     <th className="px-3 py-2 font-medium">Branch</th>
                     <th className="px-3 py-2 font-medium">Description</th>
+                    <th className="px-3 py-2 font-medium">Check Desc 2</th>
+                    <th className="px-3 py-2 font-medium">Check Desc 3</th>
                     <th className="px-3 py-2 font-medium">Vendor</th>
                     <th className="px-3 py-2 text-right font-medium">Movement</th>
                     {mode === "override" && <th className="px-3 py-2 font-medium">Current CC</th>}
@@ -194,8 +203,10 @@ function AssignTab({
                       </td>
                       <td className="px-3 py-2 text-gray-700">{tx.month ?? "—"}</td>
                       <td className="px-3 py-2 text-gray-700">{tx.branch ?? "—"}</td>
-                      <td className="max-w-[160px] truncate px-3 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
-                      <td className="max-w-[120px] truncate px-3 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
+                      <td className="max-w-[140px] truncate px-3 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
+                      <td className="max-w-[90px] truncate px-3 py-2"><CD2Cell v={tx.check_description_2} /></td>
+                      <td className="max-w-[90px] truncate px-3 py-2"><CD3Cell v={tx.check_description_3} /></td>
+                      <td className="max-w-[100px] truncate px-3 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
                       <td className={`px-3 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
                       {mode === "override" && (
                         <td className="px-3 py-2">
@@ -306,6 +317,8 @@ function ManualTab({ branches }: { branches: string[] }) {
                     <th className="px-4 py-2 font-medium">Month</th>
                     <th className="px-4 py-2 font-medium">Branch</th>
                     <th className="px-4 py-2 font-medium">Description</th>
+                    <th className="px-4 py-2 font-medium">Check Desc 2</th>
+                    <th className="px-4 py-2 font-medium">Check Desc 3</th>
                     <th className="px-4 py-2 font-medium">Vendor</th>
                     <th className="px-4 py-2 text-right font-medium">Movement</th>
                     <th className="px-4 py-2 font-medium">Assigned to</th>
@@ -316,8 +329,10 @@ function ManualTab({ branches }: { branches: string[] }) {
                     <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50">
                       <td className="px-4 py-2 text-gray-700">{tx.month ?? "—"}</td>
                       <td className="px-4 py-2 text-gray-700">{tx.branch ?? "—"}</td>
-                      <td className="max-w-[200px] truncate px-4 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
-                      <td className="max-w-[140px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
+                      <td className="max-w-[160px] truncate px-4 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
+                      <td className="max-w-[90px] truncate px-4 py-2"><CD2Cell v={tx.check_description_2} /></td>
+                      <td className="max-w-[90px] truncate px-4 py-2"><CD3Cell v={tx.check_description_3} /></td>
+                      <td className="max-w-[120px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
                       <td className={`px-4 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
                       <td className="px-4 py-2">
                         {tx.cost_center_name
@@ -453,6 +468,8 @@ function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; bra
                     <th className="px-3 py-2 font-medium">Month</th>
                     <th className="px-3 py-2 font-medium">Branch</th>
                     <th className="px-3 py-2 font-medium">Description</th>
+                    <th className="px-3 py-2 font-medium">Check Desc 2</th>
+                    <th className="px-3 py-2 font-medium">Check Desc 3</th>
                     <th className="px-3 py-2 font-medium">Vendor</th>
                     <th className="px-3 py-2 text-right font-medium">Movement</th>
                     <th className="px-3 py-2 font-medium">Conflicting CCs</th>
@@ -469,8 +486,10 @@ function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; bra
                       </td>
                       <td className="px-3 py-2 text-gray-700">{tx.month ?? "—"}</td>
                       <td className="px-3 py-2 text-gray-700">{tx.branch ?? "—"}</td>
-                      <td className="max-w-[160px] truncate px-3 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
-                      <td className="max-w-[120px] truncate px-3 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
+                      <td className="max-w-[130px] truncate px-3 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
+                      <td className="max-w-[90px] truncate px-3 py-2"><CD2Cell v={tx.check_description_2} /></td>
+                      <td className="max-w-[90px] truncate px-3 py-2"><CD3Cell v={tx.check_description_3} /></td>
+                      <td className="max-w-[100px] truncate px-3 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
                       <td className={`px-3 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
                       <td className="px-3 py-2">
                         <span className="inline-flex flex-wrap gap-1">
@@ -528,7 +547,6 @@ function ConflictResolvedTab({
       if (res.ok) {
         const data = await res.json() as ResolvedConflictGroup[];
         setGroups(data);
-        // Pre-populate rowCcId from current assignment
         const initial: Record<string, string> = {};
         for (const g of data) for (const tx of g.transactions) {
           if ((tx as ResolvedConflictGroup["transactions"][number] & { cost_center_id?: string }).cost_center_id) {
@@ -611,6 +629,8 @@ function ConflictResolvedTab({
                     <th className="px-4 py-2 font-medium">Month</th>
                     <th className="px-4 py-2 font-medium">Branch</th>
                     <th className="px-4 py-2 font-medium">Description</th>
+                    <th className="px-4 py-2 font-medium">Check Desc 2</th>
+                    <th className="px-4 py-2 font-medium">Check Desc 3</th>
                     <th className="px-4 py-2 font-medium">Vendor</th>
                     <th className="px-4 py-2 text-right font-medium">Movement</th>
                     <th className="px-4 py-2 font-medium">Was conflicting</th>
@@ -630,8 +650,10 @@ function ConflictResolvedTab({
                       <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50">
                         <td className="px-4 py-2 text-gray-700">{tx.month ?? "—"}</td>
                         <td className="px-4 py-2 text-gray-700">{tx.branch ?? "—"}</td>
-                        <td className="max-w-[140px] truncate px-4 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
-                        <td className="max-w-[110px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
+                        <td className="max-w-[120px] truncate px-4 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
+                        <td className="max-w-[80px] truncate px-4 py-2"><CD2Cell v={tx.check_description_2} /></td>
+                        <td className="max-w-[80px] truncate px-4 py-2"><CD3Cell v={tx.check_description_3} /></td>
+                        <td className="max-w-[90px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
                         <td className={`px-4 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
                         <td className="px-4 py-2">
                           <span className="inline-flex flex-wrap gap-1">
@@ -641,13 +663,12 @@ function ConflictResolvedTab({
                           </span>
                         </td>
 
-                        {/* Editable CC column */}
                         <td className="px-4 py-2">
                           <div className="flex items-center gap-1.5">
                             <select
                               value={currentCcId}
                               onChange={(e) => setRowCcId((prev) => ({ ...prev, [tx.id]: e.target.value }))}
-                              className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none max-w-[140px]"
+                              className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none max-w-[130px]"
                               disabled={reassigning === tx.id}
                             >
                               <option value="">Choose…</option>
@@ -717,7 +738,6 @@ export default function CCAssignmentPage() {
       .then((data: CostCenter[]) => setCostCenters(data))
       .catch(console.error);
 
-    // Fetch branch options from filter-options
     fetch("/api/transactions/filter-options")
       .then((r) => r.json())
       .then((d: { branch: string[] }) => setAllBranches(d.branch ?? []))
@@ -731,13 +751,11 @@ export default function CCAssignmentPage() {
         <p className="text-sm text-gray-500">Assign, override, and resolve cost center conflicts.</p>
       </div>
 
-      {/* Branch filter */}
       <div className="flex items-center gap-2">
         <span className="text-xs text-gray-500 font-medium">Filter by branch:</span>
         <ReportFilter label="Branch" options={allBranches} selected={branches} onChange={setBranches} />
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 w-fit flex-wrap">
         {TABS.map((t) => {
           const Icon = t.icon;

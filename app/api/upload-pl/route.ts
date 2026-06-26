@@ -4,6 +4,7 @@ import { enrichTransactions } from "@/lib/enrich-transactions";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import { createServerClient } from "@/lib/supabase-server";
 import { INSERT_CHUNK_SIZE } from "@/lib/constants";
+import { checkDuplicateUpload, deleteUpload } from "@/lib/check-duplicate-upload";
 import type { ApiError, UploadPLResponse, PLTransaction, CostCenterWithRules, CostCenterRule } from "@/types";
 
 function apiError(message: string, status = 500): NextResponse<ApiError> {
@@ -20,7 +21,31 @@ export async function POST(req: NextRequest) {
     const file = formData.get("file") as File | null;
     if (!file) return apiError("No file provided", 400);
 
-    // ── 2. Create upload record (so errors can be attached to it) ─────────
+    const { searchParams } = new URL(req.url);
+    const force     = searchParams.get("force") === "true";
+    const replaceId = searchParams.get("replace_id") ?? null;
+
+    // ── 2. Normalize the Excel (needed for dupe check) ────────────────────
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const { rows, warnings } = normalizePL(buffer);
+
+    if (rows.length === 0) {
+      await supabase.from("pl_uploads").update({ status: "error", error_message: "No data rows found after normalization" }).eq("id", uploadId ?? "");
+      return apiError("No data rows found after normalization", 422);
+    }
+
+    // ── 3. Duplicate check (skip if force or replace) ─────────────────────
+    if (!force && !replaceId) {
+      const dupeResult = await checkDuplicateUpload(supabase, "original", rows);
+      if (dupeResult.found) {
+        return NextResponse.json({ duplicate: true, info: dupeResult.info }, { status: 409 });
+      }
+    }
+
+    // ── 4. Delete replaced upload if requested ────────────────────────────
+    if (replaceId) await deleteUpload(supabase, replaceId);
+
+    // ── 5. Create upload record ───────────────────────────────────────────
     const { data: uploadRecord, error: insertErr } = await supabase
       .from("pl_uploads")
       .insert({ file_name: file.name, status: "processing" })
@@ -35,25 +60,13 @@ export async function POST(req: NextRequest) {
     const id = uploadRecord.id as string;
     uploadId = id;
 
-    // ── 3. Normalize the Excel (pure function, no DB) ─────────────────────
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const { rows, warnings } = normalizePL(buffer);
-
-    if (rows.length === 0) {
-      await supabase
-        .from("pl_uploads")
-        .update({ status: "error", error_message: "No data rows found after normalization" })
-        .eq("id", id);
-      return apiError("No data rows found after normalization", 422);
-    }
-
-    // ── 4. Fetch lookup tables in parallel ────────────────────────────────
+    // ── 6. Fetch lookup tables in parallel ────────────────────────────────
     const [{ data: glMappings }, { data: branches }] = await Promise.all([
       supabase.from("gl_mapping").select("*"),
       supabase.from("branches").select("*"),
     ]);
 
-    // ── 5. Enrich rows with category / region data (pure function) ────────
+    // ── 7. Enrich rows with category / region data (pure function) ────────
     const { transactions, uncategorizedCount, unknownBranchCount } =
       enrichTransactions(rows, glMappings ?? [], branches ?? [], id);
 

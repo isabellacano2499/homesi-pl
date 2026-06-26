@@ -7,8 +7,8 @@ import type { PLTransaction, FilterOptionsResponse, TransactionTotals } from "@/
 
 // ─── Virtual scroll constants ─────────────────────────────────────────────────
 
-const ROW_H = 38;   // px — must match actual <tr> height
-const OVERSCAN = 25; // extra rows above + below viewport to pre-render
+const ROW_H = 38;
+const OVERSCAN = 25;
 
 // ─── Filter state ─────────────────────────────────────────────────────────────
 
@@ -23,8 +23,8 @@ type FilterState = {
   cost_center: string[];
   source: string[];
   description: string;
-  debit_min: string; debit_max: string;
-  credit_min: string; credit_max: string;
+  check_description_2: string[];
+  check_description_3: string[];
   movement_min: string; movement_max: string;
 };
 
@@ -32,7 +32,7 @@ const emptyFilters = (): FilterState => ({
   month: [], year: [], gl_code: [], gl_name: [], branch: [], vendor: [],
   ref_numb: [], cost_center: [], source: [],
   description: "",
-  debit_min: "", debit_max: "", credit_min: "", credit_max: "",
+  check_description_2: [], check_description_3: [],
   movement_min: "", movement_max: "",
 });
 
@@ -48,11 +48,9 @@ function buildParams(uploadId: string, f: FilterState, ccList: CCRef[]): URLSear
   f.branch.forEach((v) => p.append("branch", v));
   f.vendor.forEach((v) => p.append("vendor", v));
   f.ref_numb.forEach((v) => p.append("ref_numb", v));
+  f.check_description_2.forEach((v) => p.append("check_description_2", v));
+  f.check_description_3.forEach((v) => p.append("check_description_3", v));
   if (f.description) p.set("description", f.description);
-  if (f.debit_min) p.set("debit_min", f.debit_min);
-  if (f.debit_max) p.set("debit_max", f.debit_max);
-  if (f.credit_min) p.set("credit_min", f.credit_min);
-  if (f.credit_max) p.set("credit_max", f.credit_max);
   if (f.movement_min) p.set("movement_min", f.movement_min);
   if (f.movement_max) p.set("movement_max", f.movement_max);
   for (const val of f.cost_center) {
@@ -109,12 +107,15 @@ function CCCell({ tx }: { tx: PLTransaction }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+const COL_COUNT = 13;
+
 export default function TransactionsPage() {
   const [uploads, setUploads] = useState<{ id: string; file_name: string }[]>([]);
   const [selectedUpload, setSelectedUpload] = useState("");
   const [filterOpts, setFilterOpts] = useState<FilterOptionsResponse>({
     month: [], year: [], gl_code: [], gl_name: [],
     branch: [], vendor: [], category_5: [], category_6: [], ref_numb: [],
+    check_description_2: [], check_description_3: [],
     costCenters: [],
   });
   const [filters, setFilters] = useState<FilterState>(emptyFilters());
@@ -172,7 +173,6 @@ export default function TransactionsPage() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     setError("");
-    // Reset scroll
     if (containerRef.current) { containerRef.current.scrollTop = 0; setScrollTop(0); }
     try {
       const p = buildParams(selectedUpload, filters, filterOpts.costCenters);
@@ -225,10 +225,8 @@ export default function TransactionsPage() {
         </div>
       </div>
 
-      {/* Totals */}
-      <div className="grid grid-cols-3 gap-3 shrink-0">
-        <TotalCard label="Total debit" value={totals.debit} colorClass="text-red-600" />
-        <TotalCard label="Total credit" value={totals.credit} colorClass="text-green-600" />
+      {/* Totals — only movement shown */}
+      <div className="grid grid-cols-1 gap-3 shrink-0 max-w-xs">
         <TotalCard label="Net movement" value={totals.movement}
           colorClass={totals.movement >= 0 ? "text-green-700" : "text-red-700"} />
       </div>
@@ -244,9 +242,12 @@ export default function TransactionsPage() {
         onScroll={onScroll}
       >
         <table className="w-full text-xs table-fixed border-collapse">
-          <colgroup>{["100px","68px","44px","62px","120px","55px",undefined,"110px","65px","88px","88px","88px","62px"].map((w, i) => (
-            <col key={i} style={w ? { width: w } : undefined} />
-          ))}</colgroup>
+          <colgroup>
+            {/* CC | Month | Year | GL Code | GL Name | Branch | Desc | CD2 | CD3 | Vendor | Ref | Movement | Source */}
+            {["100px","68px","44px","62px","120px","55px",undefined,"90px","90px","110px","65px","88px","62px"].map((w, i) => (
+              <col key={i} style={w ? { width: w } : undefined} />
+            ))}
+          </colgroup>
           <thead className="sticky top-0 z-20 bg-gray-50">
             <tr className="border-b border-gray-200 text-gray-500">
               <TH label="Cost Center">
@@ -284,6 +285,16 @@ export default function TransactionsPage() {
                   value={filters.description}
                   onChange={(v) => setFilter("description", v)} />
               </TH>
+              <TH label="Check Desc 2">
+                <ColumnFilter label="Check Desc 2" type="categorical"
+                  options={filterOpts.check_description_2 ?? []} selected={filters.check_description_2}
+                  onChange={(v) => setFilter("check_description_2", v)} />
+              </TH>
+              <TH label="Check Desc 3">
+                <ColumnFilter label="Check Desc 3" type="categorical"
+                  options={filterOpts.check_description_3 ?? []} selected={filters.check_description_3}
+                  onChange={(v) => setFilter("check_description_3", v)} />
+              </TH>
               <TH label="Vendor">
                 <ColumnFilter label="Vendor" type="categorical"
                   options={filterOpts.vendor} selected={filters.vendor}
@@ -293,16 +304,6 @@ export default function TransactionsPage() {
                 <ColumnFilter label="Ref Numb" type="categorical"
                   options={filterOpts.ref_numb} selected={filters.ref_numb}
                   onChange={(v) => setFilter("ref_numb", v)} />
-              </TH>
-              <TH label="Debit" className="text-right">
-                <ColumnFilter label="Debit" type="numeric"
-                  min={filters.debit_min} max={filters.debit_max}
-                  onChange={(min, max) => { setFilter("debit_min", min); setFilter("debit_max", max); }} />
-              </TH>
-              <TH label="Credit" className="text-right">
-                <ColumnFilter label="Credit" type="numeric"
-                  min={filters.credit_min} max={filters.credit_max}
-                  onChange={(min, max) => { setFilter("credit_min", min); setFilter("credit_max", max); }} />
               </TH>
               <TH label="Movement" className="text-right">
                 <ColumnFilter label="Movement" type="numeric"
@@ -319,21 +320,21 @@ export default function TransactionsPage() {
           <tbody>
             {loading ? (
               <tr style={{ height: 200 }}>
-                <td colSpan={13} className="text-center align-middle text-gray-400">
+                <td colSpan={COL_COUNT} className="text-center align-middle text-gray-400">
                   <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
                   <span className="ml-2">Loading all transactions…</span>
                 </td>
               </tr>
             ) : N === 0 ? (
               <tr style={{ height: 120 }}>
-                <td colSpan={13} className="text-center align-middle text-gray-400">
+                <td colSpan={COL_COUNT} className="text-center align-middle text-gray-400">
                   No transactions found with the current filters.
                 </td>
               </tr>
             ) : (
               <>
                 {topPad > 0 && (
-                  <tr aria-hidden="true"><td colSpan={13} style={{ height: topPad, padding: 0 }} /></tr>
+                  <tr aria-hidden="true"><td colSpan={COL_COUNT} style={{ height: topPad, padding: 0 }} /></tr>
                 )}
                 {visibleRows.map((tx) => (
                   <tr
@@ -351,10 +352,10 @@ export default function TransactionsPage() {
                     <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap truncate">{tx.gl_name ?? "—"}</td>
                     <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap">{tx.branch ?? "—"}</td>
                     <td className="px-2 py-0 text-gray-600 overflow-hidden whitespace-nowrap truncate">{tx.check_description ?? "—"}</td>
+                    <td className="px-2 py-0 text-sky-700 overflow-hidden whitespace-nowrap truncate">{tx.check_description_2 ?? <span className="text-gray-300">—</span>}</td>
+                    <td className="px-2 py-0 text-sky-600 overflow-hidden whitespace-nowrap truncate">{tx.check_description_3 ?? <span className="text-gray-300">—</span>}</td>
                     <td className="px-2 py-0 text-gray-600 overflow-hidden whitespace-nowrap truncate">{tx.vendor ?? "—"}</td>
                     <td className="px-2 py-0 font-mono text-gray-600 overflow-hidden whitespace-nowrap">{tx.ref_numb ?? "—"}</td>
-                    <td className="px-2 py-0 text-right font-mono text-red-600 overflow-hidden whitespace-nowrap">{fmt(tx.debit)}</td>
-                    <td className="px-2 py-0 text-right font-mono text-green-600 overflow-hidden whitespace-nowrap">{fmt(tx.credit)}</td>
                     <td className={`px-2 py-0 text-right font-mono overflow-hidden whitespace-nowrap ${mvColor(tx.movement)}`}>{fmt(tx.movement)}</td>
                     <td className="px-2 py-0 overflow-hidden whitespace-nowrap">
                       {tx.source === "addback"
@@ -366,7 +367,7 @@ export default function TransactionsPage() {
                   </tr>
                 ))}
                 {botPad > 0 && (
-                  <tr aria-hidden="true"><td colSpan={13} style={{ height: botPad, padding: 0 }} /></tr>
+                  <tr aria-hidden="true"><td colSpan={COL_COUNT} style={{ height: botPad, padding: 0 }} /></tr>
                 )}
               </>
             )}

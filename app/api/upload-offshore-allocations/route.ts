@@ -3,6 +3,7 @@ import { parseOffshoreAllocations } from "@/lib/parse-offshore-allocations";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import { createServerClient } from "@/lib/supabase-server";
 import { INSERT_CHUNK_SIZE } from "@/lib/constants";
+import { checkDuplicateUpload, deleteUpload } from "@/lib/check-duplicate-upload";
 import type {
   OffshoreAllocationsUploadResponse,
   ApiError,
@@ -27,6 +28,10 @@ export async function POST(req: NextRequest) {
     const file = formData.get("file") as File | null;
     if (!file) return apiError("No file provided", 400);
 
+    const { searchParams } = new URL(req.url);
+    const force     = searchParams.get("force") === "true";
+    const replaceId = searchParams.get("replace_id") ?? null;
+
     // ── 2. Parse offshore allocations Excel ───────────────────────────────
     const buffer = Buffer.from(await file.arrayBuffer());
     const { rows, warnings } = parseOffshoreAllocations(buffer);
@@ -38,7 +43,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── 3. Create upload record ───────────────────────────────────────────
+    // ── 3. Duplicate check ────────────────────────────────────────────────
+    if (!force && !replaceId) {
+      const dupeResult = await checkDuplicateUpload(supabase, "offshore_allocations", rows);
+      if (dupeResult.found) {
+        return NextResponse.json({ duplicate: true, info: dupeResult.info }, { status: 409 });
+      }
+    }
+    if (replaceId) await deleteUpload(supabase, replaceId);
+
+    // ── 4. Create upload record ───────────────────────────────────────────
     const { data: uploadRecord, error: insertErr } = await supabase
       .from("pl_uploads")
       .insert({ file_name: file.name, status: "processing" })

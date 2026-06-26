@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let q: any = supabase
     .from("pl_transactions")
-    .select("id,gl_code,gl_name,month,year,branch,check_description,vendor,debit,credit,movement,cost_center_conflicts")
+    .select("id,gl_code,gl_name,month,year,branch,check_description,check_description_2,check_description_3,vendor,debit,credit,movement,cost_center_conflicts")
     .eq("cost_center_status", "conflict")
     .order("gl_code", { nullsFirst: false });
   if (branches.length > 0) q = q.in("branch", branches);
@@ -38,6 +38,8 @@ export async function GET(req: NextRequest) {
       year: tx.year,
       branch: tx.branch,
       check_description: tx.check_description,
+      check_description_2: tx.check_description_2,
+      check_description_3: tx.check_description_3,
       vendor: tx.vendor,
       debit: tx.debit,
       credit: tx.credit,

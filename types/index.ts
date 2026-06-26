@@ -225,6 +225,9 @@ export interface TransactionFilters {
   costCenterStatuses: string[];
   // Source filter ('original' | 'addback')
   sources: string[];
+  // Offshore Allocations description filters
+  check_description_2s: string[];
+  check_description_3s: string[];
   // Text search
   description: string;
   // Numeric ranges
@@ -247,6 +250,8 @@ export interface TransactionColumnValues {
   category_5: string[];
   category_6: string[];
   ref_numb: string[];
+  check_description_2: string[];
+  check_description_3: string[];
 }
 
 /** Full filter options including cost centers (replaces /api/transactions/values). */
@@ -298,6 +303,8 @@ export interface AssignmentTx {
   year: number | null;
   branch: string | null;
   check_description: string | null;
+  check_description_2: string | null;
+  check_description_3: string | null;
   vendor: string | null;
   debit: number;
   credit: number;
@@ -342,6 +349,8 @@ export interface ConflictTx {
   year: number | null;
   branch: string | null;
   check_description: string | null;
+  check_description_2: string | null;
+  check_description_3: string | null;
   vendor: string | null;
   debit: number;
   credit: number;

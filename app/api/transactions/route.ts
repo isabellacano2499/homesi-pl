@@ -6,7 +6,7 @@ const PAGE_SIZE = 100;
 
 const SELECT_DATA =
   "id,journal_post_date,gl_code,gl_name,branch,vendor,ref_numb," +
-  "check_description,debit,credit,movement," +
+  "check_description,check_description_2,check_description_3,debit,credit,movement," +
   "category_1,category_5,category_6,upload_id,year,month," +
   "cost_center_id,cost_center_status,cost_centers(name),source";
 
@@ -23,6 +23,8 @@ function withFilters(query: any, f: TransactionFilters): any {
   if (f.category6s.length) query = query.in("category_6", f.category6s);
   if (f.refNums.length) query = query.in("ref_numb", f.refNums);
   if (f.description) query = query.ilike("check_description", `%${f.description}%`);
+  if (f.check_description_2s.length) query = query.in("check_description_2", f.check_description_2s);
+  if (f.check_description_3s.length) query = query.in("check_description_3", f.check_description_3s);
   if (f.debitMin) query = query.gte("debit", parseFloat(f.debitMin));
   if (f.debitMax) query = query.lte("debit", parseFloat(f.debitMax));
   if (f.creditMin) query = query.gte("credit", parseFloat(f.creditMin));
@@ -70,6 +72,8 @@ export async function GET(req: NextRequest) {
     costCenterStatuses: searchParams.getAll("cc_status"),
     sources: searchParams.getAll("source"),
     description: searchParams.get("description") ?? "",
+    check_description_2s: searchParams.getAll("check_description_2"),
+    check_description_3s: searchParams.getAll("check_description_3"),
     debitMin: searchParams.get("debit_min") ?? "",
     debitMax: searchParams.get("debit_max") ?? "",
     creditMin: searchParams.get("credit_min") ?? "",

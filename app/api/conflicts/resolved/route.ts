@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
   const txIds = snapshots.map((s) => s.transaction_id);
   let txQ = supabase
     .from("pl_transactions")
-    .select("id,gl_code,gl_name,month,year,branch,check_description,vendor,debit,credit,movement,cost_center_id")
+    .select("id,gl_code,gl_name,month,year,branch,check_description,check_description_2,check_description_3,vendor,debit,credit,movement,cost_center_id")
     .in("id", txIds);
   if (branches.length > 0) txQ = txQ.in("branch", branches);
   const { data: txs, error: txErr } = await txQ;
@@ -48,6 +48,8 @@ export async function GET(req: NextRequest) {
       year: tx.year,
       branch: tx.branch,
       check_description: tx.check_description,
+      check_description_2: tx.check_description_2,
+      check_description_3: tx.check_description_3,
       vendor: tx.vendor,
       debit: tx.debit,
       credit: tx.credit,
