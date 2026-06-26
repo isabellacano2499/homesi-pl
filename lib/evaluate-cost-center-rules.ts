@@ -41,18 +41,51 @@ function matchesCostCenter(tx: PLTransaction, cc: CostCenterWithRules): boolean 
   const sorted = [...cc.rules].sort((a, b) => a.sequence - b.sequence);
   if (sorted.length === 0) return false;
 
-  // Strict left-to-right accumulation: no operator precedence.
-  // ((cond1 AND cond2) OR cond3) AND cond4 …
-  let result = matchCondition(tx, sorted[0]);
-  for (let i = 1; i < sorted.length; i++) {
-    const rule = sorted[i];
-    if (rule.logic_connector === "AND") {
-      result = result && matchCondition(tx, rule);
+  // Build an ordered list of groups.
+  // group_number = 0 means pre-migration (no grouping): each condition is its own
+  // singleton group identified by its sequence, preserving the existing behavior.
+  // group_number > 0: conditions with the same group_number form a group.
+  const groupMap = new Map<number | string, CostCenterRule[]>();
+  const groupOrder: (number | string)[] = [];
+
+  for (const rule of sorted) {
+    const key: number | string =
+      rule.group_number === 0 ? `_s${rule.sequence}` : rule.group_number;
+    if (!groupMap.has(key)) {
+      groupMap.set(key, []);
+      groupOrder.push(key);
+    }
+    groupMap.get(key)!.push(rule);
+  }
+
+  // Evaluate each group internally, then combine group results left-to-right.
+  // Within a group: first condition starts the group result; subsequent conditions
+  // use their logic_connector as the intra-group connector.
+  // Between groups: the first condition of each group carries the inter-group
+  // connector (how this group connects to the previous group result).
+  let result: boolean | null = null;
+
+  for (const key of groupOrder) {
+    const group = groupMap.get(key)!;
+    const interConnector = group[0].logic_connector;
+
+    let groupResult = matchCondition(tx, group[0]);
+    for (let i = 1; i < group.length; i++) {
+      const r = group[i];
+      if (r.logic_connector === "AND") groupResult = groupResult && matchCondition(tx, r);
+      else groupResult = groupResult || matchCondition(tx, r);
+    }
+
+    if (result === null) {
+      result = groupResult;
+    } else if (interConnector === "AND") {
+      result = result && groupResult;
     } else {
-      result = result || matchCondition(tx, rule);
+      result = result || groupResult;
     }
   }
-  return result;
+
+  return result ?? false;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

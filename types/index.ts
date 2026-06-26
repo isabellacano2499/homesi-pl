@@ -101,6 +101,7 @@ export interface CostCenterRule {
   field: string;
   operator: string;
   value: string;
+  group_number: number;
   created_at: string;
 }
 
