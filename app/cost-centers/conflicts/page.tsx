@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, CheckCircle, ChevronDown, ChevronRight,
-  RotateCcw, UserCheck, Layers, ClipboardList,
+  RotateCcw, UserCheck, Layers, ClipboardList, Percent,
 } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
+import { SplitEditor } from "@/components/split-editor";
 import { buildSplitsMap } from "@/lib/apply-splits";
 import { useActiveBranches, mergeWithGlobal } from "@/components/branch-filter-provider";
 import { SplitDisplay } from "@/components/split-display";
@@ -262,11 +263,14 @@ function AssignedByRuleTab({ costCenters, branches }: { costCenters: CostCenter[
 
 // ─── Manual Assigned Tab ──────────────────────────────────────────────────────
 
-function ManualTab({ branches }: { branches: string[] }) {
+function ManualTab({ branches, costCenters }: { branches: string[]; costCenters: CostCenter[] }) {
   const [groups, setGroups] = useState<AssignmentGroup[]>([]);
   const [allSplits, setAllSplits] = useState<SplitEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [editingTx, setEditingTx] = useState<AssignmentTx | null>(null);
+  const [unassigning, setUnassigning] = useState<string | null>(null);
+  const [unassignBusy, setUnassignBusy] = useState(false);
 
   const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
 
@@ -302,6 +306,10 @@ function ManualTab({ branches }: { branches: string[] }) {
     </p>
   );
 
+  const editNormVendor = editingTx?.vendor?.trim().replace(/\s+/g, " ") ?? null;
+  const editAssignType: "vendor" | "description3" = editNormVendor ? "vendor" : "description3";
+  const editAssignValue = editNormVendor ?? (editingTx?.check_description_3 ?? "");
+
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-400">{totalCount} manually assigned transaction{totalCount !== 1 ? "s" : ""} — permanent, never re-evaluated by reapply.</p>
@@ -333,40 +341,112 @@ function ManualTab({ branches }: { branches: string[] }) {
                     <th className="px-4 py-2 font-medium">Vendor</th>
                     <th className="px-4 py-2 text-right font-medium">Movement</th>
                     <th className="px-4 py-2 font-medium">Assigned to</th>
+                    <th className="px-4 py-2 font-medium">Allocation</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {group.transactions.map((tx: AssignmentTx) => (
-                    <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="px-4 py-2 text-gray-700">{tx.month ?? "—"}</td>
-                      <td className="px-4 py-2 text-gray-700">{tx.branch ?? "—"}</td>
-                      <td className="max-w-[160px] truncate px-4 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
-                      <td className="max-w-[90px] truncate px-4 py-2"><CD2Cell v={tx.check_description_2} /></td>
-                      <td className="max-w-[90px] truncate px-4 py-2"><CD3Cell v={tx.check_description_3} /></td>
-                      <td className="max-w-[120px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
-                      <td className={`px-4 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
-                      <td className="px-4 py-2">
-                        {(() => {
-                          const normVendor = tx.vendor?.trim().replace(/\s+/g, " ");
-                          const splits =
-                            (normVendor ? splitsMap.get(`vendor:${normVendor}`) : undefined) ??
-                            (tx.check_description_3 ? splitsMap.get(`description3:${tx.check_description_3}`) : undefined);
-                          if (splits && splits.length > 0) {
-                            return <SplitDisplay splits={splits} />;
-                          }
-                          return tx.cost_center_name
-                            ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800 text-[10px] font-medium">{tx.cost_center_name}</span>
-                            : <span className="text-gray-400">—</span>;
-                        })()}
-                      </td>
-                    </tr>
-                  ))}
+                  {group.transactions.map((tx: AssignmentTx) => {
+                    const normVendor = tx.vendor?.trim().replace(/\s+/g, " ") ?? null;
+                    const assignType: "vendor" | "description3" = normVendor ? "vendor" : "description3";
+                    const assignValue = normVendor ?? (tx.check_description_3 ?? "");
+                    const splitKey = assignValue ? `${assignType}:${assignValue}` : null;
+                    const hasSplit = splitKey ? !!splitsMap.get(splitKey) : false;
+
+                    return (
+                      <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50">
+                        <td className="px-4 py-2 text-gray-700">{tx.month ?? "—"}</td>
+                        <td className="px-4 py-2 text-gray-700">{tx.branch ?? "—"}</td>
+                        <td className="max-w-[160px] truncate px-4 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
+                        <td className="max-w-[90px] truncate px-4 py-2"><CD2Cell v={tx.check_description_2} /></td>
+                        <td className="max-w-[90px] truncate px-4 py-2"><CD3Cell v={tx.check_description_3} /></td>
+                        <td className="max-w-[120px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
+                        <td className={`px-4 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
+                        <td className="px-4 py-2">
+                          {(() => {
+                            const splits =
+                              (normVendor ? splitsMap.get(`vendor:${normVendor}`) : undefined) ??
+                              (tx.check_description_3 ? splitsMap.get(`description3:${tx.check_description_3}`) : undefined);
+                            if (splits && splits.length > 0) {
+                              return <SplitDisplay splits={splits} />;
+                            }
+                            return tx.cost_center_name
+                              ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800 text-[10px] font-medium">{tx.cost_center_name}</span>
+                              : <span className="text-gray-400">—</span>;
+                          })()}
+                        </td>
+                        <td className="px-4 py-2">
+                          {assignValue ? (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => setEditingTx(tx)}
+                                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
+                              >
+                                <Percent size={11} />
+                                Edit allocation
+                              </button>
+                              {hasSplit && (
+                                unassigning === tx.id ? (
+                                  <span className="flex items-center gap-1 text-[11px]">
+                                    <span className="text-red-600 font-medium">Remove?</span>
+                                    <button
+                                      onClick={async () => {
+                                        setUnassignBusy(true);
+                                        await fetch(
+                                          `/api/cc-allocation-splits?type=${assignType}&value=${encodeURIComponent(assignValue)}`,
+                                          { method: "DELETE" }
+                                        );
+                                        setUnassignBusy(false);
+                                        setUnassigning(null);
+                                        load();
+                                      }}
+                                      disabled={unassignBusy}
+                                      className="rounded px-1.5 py-0.5 bg-red-600 text-white text-[10px] hover:bg-red-700 disabled:opacity-40"
+                                    >
+                                      Yes
+                                    </button>
+                                    <button
+                                      onClick={() => setUnassigning(null)}
+                                      className="rounded px-1.5 py-0.5 border border-gray-200 text-gray-500 text-[10px] hover:bg-gray-50"
+                                    >
+                                      No
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={() => setUnassigning(tx.id)}
+                                    title="Remove this allocation"
+                                    className="rounded-lg border border-gray-100 px-2 py-1.5 text-[11px] text-red-400 hover:border-red-200 hover:text-red-600 whitespace-nowrap"
+                                  >
+                                    Unassign
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
           </div>
         );
       })}
+
+      {editingTx && (
+        <SplitEditor
+          assignType={editAssignType}
+          assignValue={editAssignValue}
+          displayName={editAssignValue}
+          txCount={1}
+          costCenters={costCenters}
+          onClose={() => setEditingTx(null)}
+          onSaved={() => { setEditingTx(null); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -802,7 +882,7 @@ export default function CCAssignmentPage() {
 
       {tab === "unassigned"        && <UnassignedTab costCenters={costCenters} branches={effectiveBranches} />}
       {tab === "assigned-by-rule"  && <AssignedByRuleTab costCenters={costCenters} branches={effectiveBranches} />}
-      {tab === "manual"            && <ManualTab branches={effectiveBranches} />}
+      {tab === "manual"            && <ManualTab branches={effectiveBranches} costCenters={costCenters} />}
       {tab === "conflict"          && <ConflictTab costCenters={costCenters} branches={effectiveBranches} />}
       {tab === "conflict-resolved" && <ConflictResolvedTab costCenters={costCenters} branches={effectiveBranches} />}
     </div>

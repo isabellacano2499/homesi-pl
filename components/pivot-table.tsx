@@ -74,8 +74,9 @@ export function buildPivot(txs: PLReportTx[]): { cat2s: Cat2Node[]; months: stri
     wC2.total += mvmt; wC2.bm.set(month, (wC2.bm.get(month)??0) + mvmt);
 
     if (!wC2.cat6s.has(cat6))
-      wC2.cat6s.set(cat6, { order2: tx.order_2 ?? 9999, bm: new Map(), total: 0, cat7s: new Map() });
+      wC2.cat6s.set(cat6, { order2: 9999, bm: new Map(), total: 0, cat7s: new Map() });
     const wC6 = wC2.cat6s.get(cat6)!;
+    if (tx.order_2 != null && tx.order_2 < wC6.order2) wC6.order2 = tx.order_2;
     wC6.total += mvmt; wC6.bm.set(month, (wC6.bm.get(month)??0) + mvmt);
 
     if (!wC6.cat7s.has(cat7))
