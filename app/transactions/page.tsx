@@ -5,6 +5,7 @@ import { RefreshCw } from "lucide-react";
 import { ColumnFilter } from "@/components/column-filter";
 import { buildSplitsMap } from "@/lib/apply-splits";
 import { SplitDisplay } from "@/components/split-display";
+import { useActiveBranches, mergeWithGlobal } from "@/components/branch-filter-provider";
 import type { SplitEntry } from "@/lib/apply-splits";
 import type { PLTransaction, FilterOptionsResponse, TransactionTotals } from "@/types";
 
@@ -41,14 +42,15 @@ const emptyFilters = (): FilterState => ({
 
 type CCRef = { id: string; name: string };
 
-function buildParams(uploadId: string, f: FilterState, ccList: CCRef[]): URLSearchParams {
+function buildParams(uploadId: string, f: FilterState, ccList: CCRef[], globalBranches: string[] = []): URLSearchParams {
   const p = new URLSearchParams({ all: "true" });
   if (uploadId) p.set("uploadId", uploadId);
+  const effectiveBranches = mergeWithGlobal(globalBranches, f.branch);
   f.month.forEach((v) => p.append("month", v));
   f.year.forEach((v) => p.append("year", v));
   f.gl_code.forEach((v) => p.append("gl_code", v));
   f.gl_name.forEach((v) => p.append("gl_name", v));
-  f.branch.forEach((v) => p.append("branch", v));
+  effectiveBranches.forEach((v) => p.append("branch", v));
   f.vendor.forEach((v) => p.append("vendor", v));
   f.ref_numb.forEach((v) => p.append("ref_numb", v));
   f.check_description_2.forEach((v) => p.append("check_description_2", v));
@@ -123,6 +125,7 @@ function CCCell({ tx, splitsMap }: { tx: PLTransaction; splitsMap: Map<string, S
 const COL_COUNT = 13;
 
 export default function TransactionsPage() {
+  const { activeBranches } = useActiveBranches();
   const [uploads, setUploads] = useState<{ id: string; file_name: string }[]>([]);
   const [selectedUpload, setSelectedUpload] = useState("");
   const [filterOpts, setFilterOpts] = useState<FilterOptionsResponse>({
@@ -193,7 +196,7 @@ export default function TransactionsPage() {
     setError("");
     if (containerRef.current) { containerRef.current.scrollTop = 0; setScrollTop(0); }
     try {
-      const p = buildParams(selectedUpload, filters, filterOpts.costCenters);
+      const p = buildParams(selectedUpload, filters, filterOpts.costCenters, activeBranches);
       const res = await fetch(`/api/transactions?${p}`);
       if (!res.ok) { const j = await res.json(); setError(j.error ?? "Request failed"); return; }
       const json = await res.json() as { data: PLTransaction[]; totals: TransactionTotals };
@@ -204,7 +207,7 @@ export default function TransactionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedUpload, filters, filterOpts.costCenters]);
+  }, [selectedUpload, filters, filterOpts.costCenters, activeBranches]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 

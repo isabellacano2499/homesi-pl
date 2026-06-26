@@ -5,6 +5,7 @@ import { Search, RefreshCw, Percent } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
 import { SplitEditor } from "@/components/split-editor";
 import { buildSplitsMap } from "@/lib/apply-splits";
+import { useActiveBranches, mergeWithGlobal } from "@/components/branch-filter-provider";
 import { SplitDisplay } from "@/components/split-display";
 import type { SplitEntry } from "@/lib/apply-splits";
 import type { CostCenter, VendorSummary } from "@/types";
@@ -19,6 +20,7 @@ function sortMonths(arr: string[]): string[] {
 }
 
 export default function VendorsPage() {
+  const { activeBranches } = useActiveBranches();
   const [allBranches, setAllBranches] = useState<string[]>([]);
   const [allMonths, setAllMonths]     = useState<string[]>([]);
   const [allYears, setAllYears]       = useState<string[]>([]);
@@ -54,8 +56,9 @@ export default function VendorsPage() {
   ) => {
     setLoading(true); setError("");
     try {
+      const effectiveBranches = mergeWithGlobal(activeBranches, branches);
       const p = new URLSearchParams();
-      branches.forEach((b) => p.append("branch", b));
+      effectiveBranches.forEach((b) => p.append("branch", b));
       months.forEach((m) => p.append("month", m));
       years.forEach((y) => p.append("year", y));
       const res = await fetch(`/api/vendors?${p}`);
@@ -73,7 +76,7 @@ export default function VendorsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeBranches]);
 
   useEffect(() => { fetchVendors([], [], [], true); }, [fetchVendors]);
 

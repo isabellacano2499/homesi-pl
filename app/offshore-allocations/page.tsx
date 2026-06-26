@@ -5,6 +5,7 @@ import { RefreshCw, AlertTriangle, Percent } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
 import { SplitEditor } from "@/components/split-editor";
 import { buildSplitsMap } from "@/lib/apply-splits";
+import { useActiveBranches } from "@/components/branch-filter-provider";
 import { SplitDisplay } from "@/components/split-display";
 import type { SplitEntry } from "@/lib/apply-splits";
 import type { CostCenter } from "@/types";
@@ -232,6 +233,7 @@ function BlockTable({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OffshoreAllocationsPage() {
+  const { activeBranches } = useActiveBranches();
   const [blocks, setBlocks]           = useState<OABlock[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [allSplits, setAllSplits]     = useState<SplitEntry[]>([]);
@@ -249,8 +251,10 @@ export default function OffshoreAllocationsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true); setError("");
     try {
+      const p = new URLSearchParams();
+      activeBranches.forEach(b => p.append("branch", b));
       const [blocksRes, ccRes, splitsRes] = await Promise.all([
-        fetch("/api/offshore-allocations"),
+        fetch(`/api/offshore-allocations${activeBranches.length > 0 ? `?${p}` : ""}`),
         fetch("/api/cost-centers"),
         fetch("/api/cc-allocation-splits"),
       ]);
@@ -270,7 +274,7 @@ export default function OffshoreAllocationsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeBranches]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import type { PLTransaction, CostCenterWithRules, CostCenterRule } from "@/types";
@@ -25,7 +25,10 @@ type TxRow = {
 const FETCH_BATCH = 1000;
 const UPDATE_PARALLEL = 100;
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => ({}));
+  const branches: string[] = Array.isArray(body?.branches) ? body.branches : [];
+
   const supabase = createServerClient();
 
   // ── 1. Load cost centers, rules, resolved snapshots ───────────────────────
@@ -80,13 +83,16 @@ export async function POST() {
   const snapshotDeletes: string[] = [];
 
   while (true) {
-    const { data, error: fetchErr } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q: any = supabase
       .from("pl_transactions")
       .select(
         "id,gl_code,gl_name,branch,vendor,check_description," +
         "ref_numb,category_5,category_6,doc_type,month,year,debit,credit,movement,assignment_origin"
       )
       .range(offset, offset + FETCH_BATCH - 1);
+    if (branches.length > 0) q = q.in("branch", branches);
+    const { data, error: fetchErr } = await q;
 
     if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
     if (!data || data.length === 0) break;

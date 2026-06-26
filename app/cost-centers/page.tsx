@@ -3,11 +3,13 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { Plus, Search, Trash2, RefreshCw, ChevronRight, Unlink } from "lucide-react";
+import { useActiveBranches } from "@/components/branch-filter-provider";
 import type { CostCenter } from "@/types";
 
 type CCWithCount = CostCenter & { rule_count: number };
 
 export default function CostCentersPage() {
+  const { activeBranches } = useActiveBranches();
   const [records, setRecords] = useState<CCWithCount[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -99,11 +101,18 @@ export default function CostCentersPage() {
   }
 
   async function handleReapply() {
-    if (!confirm("Re-apply all cost center rules to every transaction in the database? This may take a few seconds.")) return;
+    const scopeMsg = activeBranches.length > 0
+      ? ` (restricted to: ${activeBranches.join(", ")})`
+      : " (all branches)";
+    if (!confirm(`Re-apply all cost center rules${scopeMsg}? This may take a few seconds.`)) return;
     setReapplying(true);
     setReapplyMsg("");
     try {
-      const res = await fetch("/api/cost-centers/reapply", { method: "POST" });
+      const res = await fetch("/api/cost-centers/reapply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ branches: activeBranches }),
+      });
       let json: Record<string, unknown>;
       try {
         json = await res.json();

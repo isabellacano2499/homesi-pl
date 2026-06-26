@@ -5,6 +5,7 @@ import { PivotTable } from "@/components/pivot-table";
 import { PivotTableByCC } from "@/components/pivot-table-cc";
 import { ReportFilter } from "@/components/report-filter";
 import { buildSplitsMap, fanOutBySplits } from "@/lib/apply-splits";
+import { useActiveBranches, mergeWithGlobal } from "@/components/branch-filter-provider";
 import type { PLReportTx, PLReportTxCC, FilterOptionsResponse } from "@/types";
 import type { SplitEntry } from "@/lib/apply-splits";
 
@@ -16,6 +17,7 @@ const MONTH_ORDER = [
 type ViewMode = "gl" | "cc";
 
 export default function PLAllPage() {
+  const { activeBranches, isLoaded: branchFilterLoaded } = useActiveBranches();
   const [opts, setOpts] = useState<FilterOptionsResponse | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("gl");
 
@@ -39,9 +41,10 @@ export default function PLAllPage() {
   async function fetchData(yrs: string[], brs: string[], srcs: string[]) {
     setLoading(true); setError("");
     try {
+      const effectiveBranches = mergeWithGlobal(activeBranches, brs);
       const p = new URLSearchParams();
       yrs.forEach(y => p.append("year", y));
-      brs.forEach(b => p.append("branch", b));
+      effectiveBranches.forEach(b => p.append("branch", b));
       srcs.forEach(s => p.append("source", s));
       const res = await fetch(`/api/pl-all?${p}`);
       if (!res.ok) { const j = await res.json(); setError(j.error ?? "Error"); return; }
@@ -55,8 +58,9 @@ export default function PLAllPage() {
     }
   }
 
-  // Load filter options + splits on mount; auto-load data with the default year
+  // Load filter options + splits; auto-load once branch filter context is ready
   useEffect(() => {
+    if (!branchFilterLoaded) return;
     Promise.all([
       fetch("/api/transactions/filter-options").then(r => r.json()),
       fetch("/api/cc-allocation-splits").then(r => r.json()),
@@ -67,14 +71,14 @@ export default function PLAllPage() {
         ? [filterOpts.year[filterOpts.year.length - 1]]
         : [];
       setYears(defaultYear);
-      // Auto-load with the correct year — use explicit params to avoid stale closure
+      // Auto-load with the correct year — activeBranches captured via closure (already loaded)
       if (!autoLoaded.current && defaultYear.length > 0) {
         autoLoaded.current = true;
         fetchData(defaultYear, [], []);
       }
     }).catch(console.error);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [branchFilterLoaded]);
 
   function load() {
     return fetchData(years, branches, sources);

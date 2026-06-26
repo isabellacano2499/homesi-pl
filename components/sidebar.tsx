@@ -12,8 +12,10 @@ import {
   Store,
   Globe,
   ChevronDown,
+  Filter,
   type LucideIcon,
 } from "lucide-react";
+import { useActiveBranches } from "@/components/branch-filter-provider";
 
 // ─── Nav tree definition ──────────────────────────────────────────────────────
 // To add a top-level module: append one entry to NAV_ITEMS.
@@ -44,6 +46,7 @@ const NAV_ITEMS: NavItem[] = [
       { label: "Upload P&L", href: "/upload" },
       { label: "GL Mapping", href: "/config/gl-mapping" },
       { label: "Branches", href: "/config/branches" },
+      { label: "Branch Filter", href: "/settings", icon: Filter },
     ],
   },
 ];
@@ -148,7 +151,7 @@ function GroupItem({
       {/* Children: max-height animation handles show/hide without layout jump */}
       <div
         className={`overflow-hidden transition-[max-height] duration-200 ease-in-out ${
-          sidebarExpanded && open ? "max-h-40" : "max-h-0"
+          sidebarExpanded && open ? "max-h-64" : "max-h-0"
         }`}
       >
         <div className="mt-0.5 space-y-0.5">
@@ -165,6 +168,11 @@ function GroupItem({
 
 export function Sidebar() {
   const [expanded, setExpanded] = useState(false);
+  const { activeBranches } = useActiveBranches();
+  const hasFilter = activeBranches.length > 0;
+  const filterLabel = activeBranches.length === 1
+    ? activeBranches[0]
+    : `${activeBranches.length} branches`;
 
   return (
     <aside
@@ -213,7 +221,36 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-white/10 px-5 py-3">
+      <div className="border-t border-white/10 px-3 py-3 space-y-2">
+        {/* Active branch filter indicator */}
+        {hasFilter && (
+          <div className="relative h-7">
+            {/* Expanded: clickable text badge */}
+            <Link
+              href="/settings"
+              className={`absolute inset-0 flex items-center gap-1.5 rounded-md bg-amber-500/20 px-2 hover:bg-amber-500/30 transition-opacity duration-200 ${
+                expanded ? "opacity-100" : "opacity-0 pointer-events-none"
+              }`}
+              title={`Branch filter: ${activeBranches.join(", ")}`}
+            >
+              <Filter size={10} className="text-amber-400 shrink-0" />
+              <span className="text-[11px] text-amber-300 whitespace-nowrap overflow-hidden">
+                {filterLabel}
+              </span>
+            </Link>
+            {/* Collapsed: amber dot */}
+            <div
+              className={`absolute inset-0 flex items-center justify-center transition-opacity duration-200 ${
+                expanded ? "opacity-0 pointer-events-none" : "opacity-100"
+              }`}
+            >
+              <span
+                className="h-2 w-2 rounded-full bg-amber-400"
+                title={`Branch filter active: ${activeBranches.join(", ")}`}
+              />
+            </div>
+          </div>
+        )}
         <p
           className={`text-xs text-slate-500 whitespace-nowrap transition-opacity duration-200 ${
             expanded ? "opacity-100" : "opacity-0"

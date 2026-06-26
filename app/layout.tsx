@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
+import { BranchFilterProvider } from "@/components/branch-filter-provider";
 
 export const metadata: Metadata = {
   title: "Homesí P&L",
@@ -15,8 +16,10 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className="h-screen overflow-hidden bg-gray-100">
-        <Sidebar />
-        <main style={{ marginLeft: "68px" }} className="h-screen overflow-y-auto p-6">{children}</main>
+        <BranchFilterProvider>
+          <Sidebar />
+          <main style={{ marginLeft: "68px" }} className="h-screen overflow-y-auto p-6">{children}</main>
+        </BranchFilterProvider>
       </body>
     </html>
   );

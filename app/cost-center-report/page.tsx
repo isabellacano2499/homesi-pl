@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PivotTable } from "@/components/pivot-table";
 import { ReportFilter } from "@/components/report-filter";
 import { buildSplitsMap, fanOutBySplits } from "@/lib/apply-splits";
+import { useActiveBranches, mergeWithGlobal } from "@/components/branch-filter-provider";
 import type { SplitEntry } from "@/lib/apply-splits";
 import type { CostCenter, PLReportTx, FilterOptionsResponse } from "@/types";
 
@@ -13,6 +14,7 @@ const MONTH_ORDER = [
 ];
 
 export default function CostCenterReportPage() {
+  const { activeBranches } = useActiveBranches();
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [opts, setOpts] = useState<FilterOptionsResponse | null>(null);
 
@@ -56,9 +58,10 @@ export default function CostCenterReportPage() {
     if (selectedCCs.length === 0) return;
     setLoading(true); setError("");
     try {
+      const effectiveBranches = mergeWithGlobal(activeBranches, branches);
       const p = new URLSearchParams();
       years.forEach(y => p.append("year", y));
-      branches.forEach(b => p.append("branch", b));
+      effectiveBranches.forEach(b => p.append("branch", b));
       sources.forEach(s => p.append("source", s));
       const res = await fetch(`/api/pl-all?${p}`);
       if (!res.ok) { const j = await res.json(); setError(j.error ?? "Error"); return; }

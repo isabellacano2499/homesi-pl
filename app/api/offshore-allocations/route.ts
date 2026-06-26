@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -43,18 +43,22 @@ const MONTH_ORDER = [
   "July","August","September","October","November","December",
 ];
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const supabase = createServerClient();
+  const branches = new URL(req.url).searchParams.getAll("branch");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const all: any[] = [];
   let offset = 0;
 
   while (true) {
-    const { data, error } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q: any = supabase
       .from("pl_transactions")
       .select(SELECT)
       .eq("source", "offshore_allocations")
       .range(offset, offset + 999);
+    if (branches.length > 0) q = q.in("branch", branches);
+    const { data, error } = await q;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     if (!data || data.length === 0) break;
     all.push(...data);
@@ -87,7 +91,10 @@ export async function GET() {
   const blockMap = new Map<string, WBlock>();
 
   for (const tx of all) {
-    const cd2Raw = (tx.check_description_2 ?? "").trim();
+    const cd2Raw = (tx.check_description_2 ?? "")
+      .replace(/[  -   　]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
     // ── Route to the correct block ─────────────────────────────────────────
     const isExpected = EXPECTED_BLOCKS.has(cd2Raw);

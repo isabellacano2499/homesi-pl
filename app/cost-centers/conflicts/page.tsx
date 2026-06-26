@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
 import { buildSplitsMap } from "@/lib/apply-splits";
+import { useActiveBranches, mergeWithGlobal } from "@/components/branch-filter-provider";
 import { SplitDisplay } from "@/components/split-display";
 import type { SplitEntry } from "@/lib/apply-splits";
 import type { CostCenter, ConflictGroup, ResolvedConflictGroup, AssignmentGroup, AssignmentTx } from "@/types";
@@ -746,10 +747,13 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
 ];
 
 export default function CCAssignmentPage() {
+  const { activeBranches } = useActiveBranches();
   const [tab, setTab] = useState<Tab>("unassigned");
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
   const [allBranches, setAllBranches] = useState<string[]>([]);
+  // Effective branches = intersection of global filter and local selection
+  const effectiveBranches = mergeWithGlobal(activeBranches, branches);
 
   useEffect(() => {
     fetch("/api/cost-centers")
@@ -796,11 +800,11 @@ export default function CCAssignmentPage() {
         })}
       </div>
 
-      {tab === "unassigned"        && <UnassignedTab costCenters={costCenters} branches={branches} />}
-      {tab === "assigned-by-rule"  && <AssignedByRuleTab costCenters={costCenters} branches={branches} />}
-      {tab === "manual"            && <ManualTab branches={branches} />}
-      {tab === "conflict"          && <ConflictTab costCenters={costCenters} branches={branches} />}
-      {tab === "conflict-resolved" && <ConflictResolvedTab costCenters={costCenters} branches={branches} />}
+      {tab === "unassigned"        && <UnassignedTab costCenters={costCenters} branches={effectiveBranches} />}
+      {tab === "assigned-by-rule"  && <AssignedByRuleTab costCenters={costCenters} branches={effectiveBranches} />}
+      {tab === "manual"            && <ManualTab branches={effectiveBranches} />}
+      {tab === "conflict"          && <ConflictTab costCenters={costCenters} branches={effectiveBranches} />}
+      {tab === "conflict-resolved" && <ConflictResolvedTab costCenters={costCenters} branches={effectiveBranches} />}
     </div>
   );
 }
