@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, AlertTriangle, Percent } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
 import { SplitEditor } from "@/components/split-editor";
+import { buildSplitsMap } from "@/lib/apply-splits";
+import { SplitDisplay } from "@/components/split-display";
+import type { SplitEntry } from "@/lib/apply-splits";
 import type { CostCenter } from "@/types";
 import type { OABlock, OAGroupRow } from "@/app/api/offshore-allocations/route";
 
@@ -30,10 +33,19 @@ function BranchCell({ branches }: { branches: string[] }) {
   return <span title={branches.join(", ")}>{branches[0]} +{branches.length - 1}</span>;
 }
 
-function CCCell({ row }: { row: OAGroupRow }) {
+function CCCell({ row, splitsMap }: { row: OAGroupRow; splitsMap: Map<string, SplitEntry[]> }) {
+  const splits = row.assign_type && row.group_key
+    ? splitsMap.get(`${row.assign_type}:${row.group_key}`)
+    : undefined;
+
+  const hasSplits = splits && splits.length > 0;
+  const hasLabels = row.cc_labels.length > 0;
+
   return (
     <>
-      {row.cc_labels.length > 0 ? (
+      {hasSplits ? (
+        <SplitDisplay splits={splits} />
+      ) : hasLabels ? (
         <span className="inline-flex flex-wrap gap-1">
           {row.cc_labels.map((name) => (
             <span key={name} className="rounded bg-green-50 px-1.5 py-0.5 font-medium text-green-700">
@@ -44,7 +56,7 @@ function CCCell({ row }: { row: OAGroupRow }) {
       ) : (
         <span className="text-gray-300 text-[11px]">Unassigned</span>
       )}
-      {row.tx_count_unassigned > 0 && row.cc_labels.length > 0 && (
+      {row.tx_count_unassigned > 0 && (hasSplits || hasLabels) && (
         <span className="ml-1 text-amber-500 text-[10px]">
           ({row.tx_count_unassigned} unassigned)
         </span>
@@ -61,11 +73,12 @@ interface BlockTableProps {
   filterYears: string[];
   filterMonths: string[];
   filterBranches: string[];
+  splitsMap: Map<string, SplitEntry[]>;
   onEditAllocation: (row: OAGroupRow) => void;
 }
 
 function BlockTable({
-  block, costCenters, filterYears, filterMonths, filterBranches, onEditAllocation,
+  block, costCenters, filterYears, filterMonths, filterBranches, splitsMap, onEditAllocation,
 }: BlockTableProps) {
   const visibleRows = useMemo(
     () => block.rows.filter((r) => rowVisible(r, filterYears, filterMonths, filterBranches)),
@@ -151,7 +164,7 @@ function BlockTable({
                     {row.branch_allocation ?? <span className="text-gray-300">—</span>}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
-                    <CCCell row={row} />
+                    <CCCell row={row} splitsMap={splitsMap} />
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     {canAssign ? (
@@ -184,6 +197,7 @@ function BlockTable({
 export default function OffshoreAllocationsPage() {
   const [blocks, setBlocks]           = useState<OABlock[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
+  const [allSplits, setAllSplits]     = useState<SplitEntry[]>([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState("");
 
@@ -196,18 +210,22 @@ export default function OffshoreAllocationsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const [blocksRes, ccRes] = await Promise.all([
+      const [blocksRes, ccRes, splitsRes] = await Promise.all([
         fetch("/api/offshore-allocations"),
         fetch("/api/cost-centers"),
+        fetch("/api/cc-allocation-splits"),
       ]);
       if (!blocksRes.ok) {
         const j = await blocksRes.json();
         setError(j.error ?? "Failed to load offshore allocations");
         return;
       }
-      const [b, cc] = await Promise.all([blocksRes.json(), ccRes.json()]) as [OABlock[], CostCenter[]];
+      const [b, cc, splits] = await Promise.all([
+        blocksRes.json(), ccRes.json(), splitsRes.json(),
+      ]) as [OABlock[], CostCenter[], SplitEntry[]];
       setBlocks(b);
       setCostCenters(cc);
+      setAllSplits(splits);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -239,6 +257,8 @@ export default function OffshoreAllocationsPage() {
     () => blocks.reduce((sum, b) => sum + b.rows.reduce((s, r) => s + r.tx_count, 0), 0),
     [blocks],
   );
+
+  const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
 
   const hasFilters = filterYears.length > 0 || filterMonths.length > 0 || filterBranches.length > 0;
 
@@ -307,6 +327,7 @@ export default function OffshoreAllocationsPage() {
               filterYears={filterYears}
               filterMonths={filterMonths}
               filterBranches={filterBranches}
+              splitsMap={splitsMap}
               onEditAllocation={setEditingRow}
             />
           ))
@@ -324,7 +345,7 @@ export default function OffshoreAllocationsPage() {
           onClose={() => setEditingRow(null)}
           onSaved={() => {
             setEditingRow(null);
-            fetchData();
+            fetchData(); // fetchData already reloads splits
           }}
         />
       )}

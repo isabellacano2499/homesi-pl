@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Search, RefreshCw, Percent } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
 import { SplitEditor } from "@/components/split-editor";
+import { buildSplitsMap } from "@/lib/apply-splits";
+import { SplitDisplay } from "@/components/split-display";
+import type { SplitEntry } from "@/lib/apply-splits";
 import type { CostCenter, VendorSummary } from "@/types";
 
 const MONTH_ORDER = [
@@ -24,10 +27,11 @@ export default function VendorsPage() {
   const [filterMonths, setFilterMonths]     = useState<string[]>([]);
   const [filterYears, setFilterYears]       = useState<string[]>([]);
 
-  const [vendors, setVendors]       = useState<VendorSummary[]>([]);
+  const [vendors, setVendors]         = useState<VendorSummary[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [error, setError]           = useState("");
+  const [allSplits, setAllSplits]     = useState<SplitEntry[]>([]);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState("");
 
   const [query, setQuery]   = useState("");
   const [editing, setEditing] = useState<VendorSummary | null>(null);
@@ -36,6 +40,10 @@ export default function VendorsPage() {
     fetch("/api/cost-centers")
       .then((r) => r.json())
       .then((data: CostCenter[]) => setCostCenters(data))
+      .catch(console.error);
+    fetch("/api/cc-allocation-splits")
+      .then((r) => r.json())
+      .then((data: SplitEntry[]) => setAllSplits(data))
       .catch(console.error);
   }, []);
 
@@ -74,6 +82,8 @@ export default function VendorsPage() {
     fetchVendors(filterBranches, filterMonths, filterYears, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersKey]);
+
+  const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return vendors;
@@ -180,17 +190,26 @@ export default function VendorsPage() {
                     </div>
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className="inline-flex flex-wrap gap-1">
-                      {v.cost_centers.map((cc) => (
-                        <span key={cc} className={[
-                          "rounded px-1.5 py-0.5 font-medium",
-                          cc === "Unassigned" ? "bg-gray-100 text-gray-500" :
-                          cc === "Conflict"   ? "bg-amber-100 text-amber-700" :
-                                               "bg-green-50 text-green-700",
-                        ].join(" ")}>{cc}</span>
-                      ))}
-                      {v.cost_centers.length === 0 && <span className="text-gray-300">—</span>}
-                    </span>
+                    {(() => {
+                      const normVendor = v.vendor.trim().replace(/\s+/g, " ");
+                      const splits = normVendor ? splitsMap.get(`vendor:${normVendor}`) : undefined;
+                      if (splits && splits.length > 0) {
+                        return <SplitDisplay splits={splits} />;
+                      }
+                      return (
+                        <span className="inline-flex flex-wrap gap-1">
+                          {v.cost_centers.map((cc) => (
+                            <span key={cc} className={[
+                              "rounded px-1.5 py-0.5 font-medium",
+                              cc === "Unassigned" ? "bg-gray-100 text-gray-500" :
+                              cc === "Conflict"   ? "bg-amber-100 text-amber-700" :
+                                                   "bg-green-50 text-green-700",
+                            ].join(" ")}>{cc}</span>
+                          ))}
+                          {v.cost_centers.length === 0 && <span className="text-gray-300">—</span>}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-2.5">
                     {v.vendor ? (
@@ -224,6 +243,7 @@ export default function VendorsPage() {
           onSaved={() => {
             setEditing(null);
             fetchVendors(filterBranches, filterMonths, filterYears, false);
+            fetch("/api/cc-allocation-splits").then(r => r.json()).then(setAllSplits).catch(console.error);
           }}
         />
       )}

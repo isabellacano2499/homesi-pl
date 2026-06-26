@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { RefreshCw } from "lucide-react";
 import { ColumnFilter } from "@/components/column-filter";
+import { buildSplitsMap } from "@/lib/apply-splits";
+import { SplitDisplay } from "@/components/split-display";
+import type { SplitEntry } from "@/lib/apply-splits";
 import type { PLTransaction, FilterOptionsResponse, TransactionTotals } from "@/types";
 
 // ─── Virtual scroll constants ─────────────────────────────────────────────────
@@ -97,9 +100,19 @@ function TH({ label, children, className = "" }: { label?: string; children?: Re
   );
 }
 
-function CCCell({ tx }: { tx: PLTransaction }) {
+function CCCell({ tx, splitsMap }: { tx: PLTransaction; splitsMap: Map<string, SplitEntry[]> }) {
   if (tx.cost_center_status === "conflict")
     return <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">Conflict</span>;
+
+  const normVendor = tx.vendor?.trim().replace(/\s+/g, " ");
+  const splits =
+    (normVendor ? splitsMap.get(`vendor:${normVendor}`) : undefined) ??
+    (tx.check_description_3 ? splitsMap.get(`description3:${tx.check_description_3}`) : undefined);
+
+  if (splits && splits.length > 0) {
+    return <SplitDisplay splits={splits} compact fallback={<span className="text-gray-300">—</span>} />;
+  }
+
   if (tx.cost_center_status === "assigned" && tx.cost_centers?.name)
     return <span className="text-gray-700 truncate">{tx.cost_centers.name}</span>;
   return <span className="text-gray-300">—</span>;
@@ -122,6 +135,7 @@ export default function TransactionsPage() {
 
   const [rows, setRows] = useState<PLTransaction[]>([]);
   const [totals, setTotals] = useState<TransactionTotals>({ debit: 0, credit: 0, movement: 0 });
+  const [allSplits, setAllSplits] = useState<SplitEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -160,6 +174,10 @@ export default function TransactionsPage() {
         setUploads(data.filter((u) => u.status === "completed"))
       )
       .catch(console.error);
+    fetch("/api/cc-allocation-splits")
+      .then((r) => r.json())
+      .then((data: SplitEntry[]) => setAllSplits(data))
+      .catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -195,6 +213,7 @@ export default function TransactionsPage() {
   }
 
   const ccFilterOptions = ["Unassigned", "Conflict", ...filterOpts.costCenters.map((cc) => cc.name)];
+  const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
 
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-32px)]">
@@ -244,7 +263,7 @@ export default function TransactionsPage() {
         <table className="w-full text-xs table-fixed border-collapse">
           <colgroup>
             {/* CC | Month | Year | GL Code | GL Name | Branch | Desc | CD2 | CD3 | Vendor | Ref | Movement | Source */}
-            {["100px","68px","44px","62px","120px","55px",undefined,"90px","90px","110px","65px","88px","62px"].map((w, i) => (
+            {["150px","68px","44px","62px","120px","55px",undefined,"90px","90px","110px","65px","88px","62px"].map((w, i) => (
               <col key={i} style={w ? { width: w } : undefined} />
             ))}
           </colgroup>
@@ -345,7 +364,7 @@ export default function TransactionsPage() {
                       !tx.category_1 ? "bg-amber-50/30" : "",
                     ].join(" ")}
                   >
-                    <td className="px-2 py-0 overflow-hidden"><CCCell tx={tx} /></td>
+                    <td className="px-2 py-0 overflow-hidden"><CCCell tx={tx} splitsMap={splitsMap} /></td>
                     <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap">{tx.month ?? "—"}</td>
                     <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap">{tx.year ?? "—"}</td>
                     <td className="px-2 py-0 font-mono text-gray-800 overflow-hidden whitespace-nowrap">{tx.gl_code ?? "—"}</td>
