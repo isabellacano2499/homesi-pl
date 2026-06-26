@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, X } from "lucide-react";
-import type { UploadPLResponse, AddbacksUploadResponse } from "@/types";
+import type { UploadPLResponse, AddbacksUploadResponse, OffshoreAllocationsUploadResponse } from "@/types";
 
 type UploadStatus = "idle" | "uploading" | "success" | "error";
 
@@ -31,7 +31,7 @@ interface UploadSectionProps {
 function UploadSection({ endpoint, title, description, infoItems }: UploadSectionProps) {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<UploadStatus>("idle");
-  const [result, setResult] = useState<UploadPLResponse | AddbacksUploadResponse | null>(null);
+  const [result, setResult] = useState<UploadPLResponse | AddbacksUploadResponse | OffshoreAllocationsUploadResponse | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -208,7 +208,7 @@ export default function UploadPage() {
       <div>
         <h2 className="text-xl font-bold text-gray-900">Upload P&amp;L</h2>
         <p className="text-sm text-gray-500">
-          Upload GL Detail Reports or Addback files to load transactions into the system.
+          Upload GL Detail Reports, Addback, or Offshore Allocation files to load transactions into the system.
         </p>
       </div>
 
@@ -238,6 +238,22 @@ export default function UploadPage() {
             "Joins each row against GL Mapping and Branches to assign categories and region.",
             "Applies Cost Center rules to classify each transaction.",
             "Saves all transactions tagged as source = Addback.",
+          ]}
+        />
+      </div>
+
+      {/* ── Offshore Allocations ── */}
+      <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
+        <UploadSection
+          endpoint="/api/upload-offshore-allocations"
+          title="Offshore Allocations"
+          description="Pre-formatted offshore allocation file. Required columns: GL Code, Branch, Movement, Month, Year."
+          infoItems={[
+            "Reads rows directly — no normalization needed (file is already clean).",
+            "Applies sign transformation: debit = Movement value, credit = 0, movement = −Movement.",
+            "Joins each row against GL Mapping and Branches to assign categories and region.",
+            "Applies Cost Center rules to classify each transaction.",
+            "Saves all transactions tagged as source = Offshore Allocations.",
           ]}
         />
       </div>

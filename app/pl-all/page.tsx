@@ -98,7 +98,7 @@ export default function PLAllPage() {
           />
           <ReportFilter
             label="Source"
-            options={["original", "addback"]}
+            options={["original", "addback", "offshore_allocations"]}
             selected={sources}
             onChange={setSources}
           />

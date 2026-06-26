@@ -63,6 +63,7 @@ function buildParams(uploadId: string, f: FilterState, ccList: CCRef[]): URLSear
   for (const val of f.source) {
     if (val === "Original") p.append("source", "original");
     else if (val === "Addback") p.append("source", "addback");
+    else if (val === "Offshore") p.append("source", "offshore_allocations");
   }
   return p;
 }
@@ -310,7 +311,7 @@ export default function TransactionsPage() {
               </TH>
               <TH label="Source">
                 <ColumnFilter label="Source" type="categorical"
-                  options={["Original", "Addback"]} selected={filters.source}
+                  options={["Original", "Addback", "Offshore"]} selected={filters.source}
                   onChange={(v) => setFilter("source", v)} />
               </TH>
             </tr>
@@ -358,7 +359,9 @@ export default function TransactionsPage() {
                     <td className="px-2 py-0 overflow-hidden whitespace-nowrap">
                       {tx.source === "addback"
                         ? <span className="rounded bg-purple-100 px-1 py-0.5 text-[10px] font-medium text-purple-700">Addback</span>
-                        : <span className="text-gray-400 text-[10px]">Original</span>}
+                        : tx.source === "offshore_allocations"
+                          ? <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-700">Offshore</span>
+                          : <span className="text-gray-400 text-[10px]">Original</span>}
                     </td>
                   </tr>
                 ))}

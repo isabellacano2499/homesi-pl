@@ -74,7 +74,12 @@ export interface PLTransaction {
   cost_center_status: "unassigned" | "assigned" | "conflict" | null;
   cost_center_conflicts: string[] | null;
   cost_centers?: { name: string } | null;
-  source: "original" | "addback" | null;
+  source: "original" | "addback" | "offshore_allocations" | null;
+  check_description_2: string | null;
+  check_description_3: string | null;
+  category: string | null;
+  position: string | null;
+  branch_allocation: string | null;
   created_at: string;
 }
 
@@ -162,7 +167,7 @@ export interface EnrichedTransaction extends NormalizedRow {
   region: string | null;
   branch_manager: string | null;
   manual_override: false;
-  source: "original" | "addback";
+  source: "original" | "addback" | "offshore_allocations";
 }
 
 export interface EnrichResult {
@@ -188,6 +193,14 @@ export interface UploadPLResponse {
 }
 
 export interface AddbacksUploadResponse {
+  uploadId: string;
+  rowCount: number;
+  uncategorizedCount: number;
+  unknownBranchCount: number;
+  parseWarnings: number;
+}
+
+export interface OffshoreAllocationsUploadResponse {
   uploadId: string;
   rowCount: number;
   uncategorizedCount: number;
