@@ -116,6 +116,7 @@ export function parseAddbacks(
       gl_name: glName,
       check_description: checkDesc,
       loan_number: null,
+      loan_number_raw: null,
       borrower_name: null,
       journal_post_date: null,
       year: isNaN(yearRaw) ? null : yearRaw,

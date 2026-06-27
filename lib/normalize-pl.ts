@@ -34,6 +34,17 @@ function parseExcelDate(value: unknown): Date | null {
   return null;
 }
 
+// ─── Loan number extraction ───────────────────────────────────────────────────
+
+function extractLoanNumber(desc: string): string | null {
+  // Prefer 12-digit standalone number, fall back to 10-digit
+  const m12 = desc.match(/(?<!\d)\d{12}(?!\d)/);
+  if (m12) return m12[0];
+  const m10 = desc.match(/(?<!\d)\d{10}(?!\d)/);
+  if (m10) return m10[0];
+  return null;
+}
+
 // ─── Main parser ──────────────────────────────────────────────────────────────
 
 /**
@@ -112,14 +123,16 @@ export function normalizePL(buffer: Buffer): NormalizePLResult {
       const debit = toNum(col(row, GL_COL.DEBIT));
       const credit = toNum(col(row, GL_COL.CREDIT));
 
+      const checkDesc = trimStr(col(row, GL_COL.CHECK_DESCRIPTION));
       rows.push({
         gl_number_raw: glNumber,
         gl_code: glCode,
         branch,
         gl_name: trimStr(glName), // Step 9: trimmed
         // Steps 5–6: as-is / trimmed; loan/borrower reserved for later
-        check_description: trimStr(col(row, GL_COL.CHECK_DESCRIPTION)),
+        check_description: checkDesc,
         loan_number: null,
+        loan_number_raw: extractLoanNumber(checkDesc),
         borrower_name: null,
         journal_post_date: journalPostDate,
         year,

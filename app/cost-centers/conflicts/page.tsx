@@ -49,12 +49,13 @@ async function apiAssign(transactionIds: string[], costCenterId: string): Promis
 // ─── Shared AssignTab ─────────────────────────────────────────────────────────
 
 function AssignTab({
-  costCenters, endpoint, mode, branches,
+  costCenters, endpoint, mode, branches, showAllocationButtons = false,
 }: {
   costCenters: CostCenter[];
   endpoint: string;
   mode: "assign" | "override";
   branches: string[];
+  showAllocationButtons?: boolean;
 }) {
   const [groups, setGroups] = useState<AssignmentGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,13 +66,31 @@ function AssignTab({
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
+  // Allocation buttons state (only active when showAllocationButtons)
+  const [allSplits, setAllSplits] = useState<SplitEntry[]>([]);
+  const [editingTx, setEditingTx] = useState<AssignmentTx | null>(null);
+  const [txUnassigning, setTxUnassigning] = useState<string | null>(null);
+  const [txUnassignBusy, setTxUnassignBusy] = useState(false);
+  const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
+
   const load = useCallback(async () => {
     setLoading(true); setMsg("");
     try {
-      const res = await fetch(`${endpoint}${branchParams(branches)}`);
-      if (res.ok) setGroups(await res.json());
+      const fetches: Promise<void>[] = [
+        fetch(`${endpoint}${branchParams(branches)}`)
+          .then((r) => r.ok ? r.json() : null)
+          .then((d) => { if (d) setGroups(d); }),
+      ];
+      if (showAllocationButtons) {
+        fetches.push(
+          fetch("/api/cc-allocation-splits")
+            .then((r) => r.ok ? r.json() : [])
+            .then(setAllSplits)
+        );
+      }
+      await Promise.all(fetches);
     } finally { setLoading(false); }
-  }, [endpoint, branches]);
+  }, [endpoint, branches, showAllocationButtons]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -103,6 +122,23 @@ function AssignTab({
       setSelected(new Set()); setBulkCcId(""); setRowCc({});
       load();
     } finally { setSaving(false); }
+  }
+
+  const editNormVendor = editingTx?.vendor?.trim().replace(/\s+/g, " ") || null;
+  const editAssignType: "vendor" | "description3" = editNormVendor ? "vendor" : "description3";
+  const editAssignValue = editNormVendor ?? (editingTx?.check_description_3 ?? "");
+
+  async function handleTxUnassign(txId: string) {
+    setTxUnassignBusy(true);
+    try {
+      await fetch("/api/cost-center-assignment/unassign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_ids: [txId] }),
+      });
+      setTxUnassigning(null);
+      load();
+    } finally { setTxUnassignBusy(false); }
   }
 
   if (loading) return (
@@ -194,10 +230,14 @@ function AssignTab({
                     {mode === "override" && <th className="px-3 py-2 font-medium">Current CC</th>}
                     <th className="px-3 py-2 font-medium">{actionLabel} to</th>
                     <th className="w-20 px-3 py-2" />
+                    {showAllocationButtons && <th className="px-3 py-2 font-medium">Allocation</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {group.transactions.map((tx: AssignmentTx) => (
+                  {group.transactions.map((tx: AssignmentTx) => {
+                  const allocNorm = showAllocationButtons ? (tx.vendor?.trim().replace(/\s+/g, " ") || null) : null;
+                  const allocValue = allocNorm ?? (showAllocationButtons ? (tx.check_description_3 ?? "") : "");
+                  return (
                     <tr key={tx.id} className={`border-b border-gray-50 hover:bg-blue-50/20 ${selected.has(tx.id) ? "bg-blue-50/40" : ""}`}>
                       <td className="px-4 py-2">
                         <input
@@ -239,14 +279,60 @@ function AssignTab({
                           {actionLabel}
                         </button>
                       </td>
+                      {showAllocationButtons && (
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {allocValue && (
+                              <button
+                                onClick={() => setEditingTx(tx)}
+                                className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
+                              >
+                                <Percent size={10} /> Edit allocation
+                              </button>
+                            )}
+                            {txUnassigning === tx.id ? (
+                              <span className="flex items-center gap-1 text-[11px]">
+                                <span className="text-red-600 font-medium">Remove?</span>
+                                <button
+                                  onClick={() => handleTxUnassign(tx.id)}
+                                  disabled={txUnassignBusy}
+                                  className="rounded px-1.5 py-0.5 bg-red-600 text-white text-[10px] hover:bg-red-700 disabled:opacity-40"
+                                >Yes</button>
+                                <button
+                                  onClick={() => setTxUnassigning(null)}
+                                  className="rounded px-1.5 py-0.5 border border-gray-200 text-gray-500 text-[10px] hover:bg-gray-50"
+                                >No</button>
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => setTxUnassigning(tx.id)}
+                                className="rounded-lg border border-gray-100 px-2 py-1 text-[11px] text-red-400 hover:border-red-200 hover:text-red-600 whitespace-nowrap"
+                              >Unassign</button>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
-                  ))}
+                  );
+                })}
                 </tbody>
               </table>
             )}
           </div>
         );
       })}
+
+      {showAllocationButtons && editingTx && (
+        <SplitEditor
+          assignType={editAssignType}
+          assignValue={editAssignValue}
+          displayName={editAssignValue}
+          txCount={1}
+          costCenters={costCenters}
+          onClose={() => setEditingTx(null)}
+          onSaved={() => { setEditingTx(null); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -258,7 +344,7 @@ function UnassignedTab({ costCenters, branches }: { costCenters: CostCenter[]; b
 }
 
 function AssignedByRuleTab({ costCenters, branches }: { costCenters: CostCenter[]; branches: string[] }) {
-  return <AssignTab costCenters={costCenters} endpoint="/api/cost-center-assignment/assigned-by-rule" mode="override" branches={branches} />;
+  return <AssignTab costCenters={costCenters} endpoint="/api/cost-center-assignment/assigned-by-rule" mode="override" branches={branches} showAllocationButtons />;
 }
 
 // ─── Manual Assigned Tab ──────────────────────────────────────────────────────
@@ -375,8 +461,8 @@ function ManualTab({ branches, costCenters }: { branches: string[]; costCenters:
                           })()}
                         </td>
                         <td className="px-4 py-2">
-                          {assignValue ? (
-                            <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {assignValue && (
                               <button
                                 onClick={() => setEditingTx(tx)}
                                 className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
@@ -384,47 +470,44 @@ function ManualTab({ branches, costCenters }: { branches: string[]; costCenters:
                                 <Percent size={11} />
                                 Edit allocation
                               </button>
-                              {hasSplit && (
-                                unassigning === tx.id ? (
-                                  <span className="flex items-center gap-1 text-[11px]">
-                                    <span className="text-red-600 font-medium">Remove?</span>
-                                    <button
-                                      onClick={async () => {
-                                        setUnassignBusy(true);
-                                        await fetch(
-                                          `/api/cc-allocation-splits?type=${assignType}&value=${encodeURIComponent(assignValue)}`,
-                                          { method: "DELETE" }
-                                        );
-                                        setUnassignBusy(false);
-                                        setUnassigning(null);
-                                        load();
-                                      }}
-                                      disabled={unassignBusy}
-                                      className="rounded px-1.5 py-0.5 bg-red-600 text-white text-[10px] hover:bg-red-700 disabled:opacity-40"
-                                    >
-                                      Yes
-                                    </button>
-                                    <button
-                                      onClick={() => setUnassigning(null)}
-                                      className="rounded px-1.5 py-0.5 border border-gray-200 text-gray-500 text-[10px] hover:bg-gray-50"
-                                    >
-                                      No
-                                    </button>
-                                  </span>
-                                ) : (
-                                  <button
-                                    onClick={() => setUnassigning(tx.id)}
-                                    title="Remove this allocation"
-                                    className="rounded-lg border border-gray-100 px-2 py-1.5 text-[11px] text-red-400 hover:border-red-200 hover:text-red-600 whitespace-nowrap"
-                                  >
-                                    Unassign
-                                  </button>
-                                )
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-gray-300">—</span>
-                          )}
+                            )}
+                            {unassigning === tx.id ? (
+                              <span className="flex items-center gap-1 text-[11px]">
+                                <span className="text-red-600 font-medium">Remove?</span>
+                                <button
+                                  onClick={async () => {
+                                    setUnassignBusy(true);
+                                    await fetch("/api/cost-center-assignment/unassign", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ transaction_ids: [tx.id] }),
+                                    });
+                                    setUnassignBusy(false);
+                                    setUnassigning(null);
+                                    load();
+                                  }}
+                                  disabled={unassignBusy}
+                                  className="rounded px-1.5 py-0.5 bg-red-600 text-white text-[10px] hover:bg-red-700 disabled:opacity-40"
+                                >
+                                  Yes
+                                </button>
+                                <button
+                                  onClick={() => setUnassigning(null)}
+                                  className="rounded px-1.5 py-0.5 border border-gray-200 text-gray-500 text-[10px] hover:bg-gray-50"
+                                >
+                                  No
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => setUnassigning(tx.id)}
+                                title="Unassign this transaction"
+                                className="rounded-lg border border-gray-100 px-2 py-1.5 text-[11px] text-red-400 hover:border-red-200 hover:text-red-600 whitespace-nowrap"
+                              >
+                                Unassign
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

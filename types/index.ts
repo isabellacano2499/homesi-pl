@@ -45,6 +45,7 @@ export interface PLTransaction {
   gl_name: string | null;
   check_description: string | null;
   loan_number: string | null;
+  loan_number_raw: string | null;
   borrower_name: string | null;
   journal_post_date: string | null;
   year: number | null;
@@ -125,6 +126,7 @@ export interface NormalizedRow {
   gl_name: string;
   check_description: string;
   loan_number: string | null;
+  loan_number_raw: string | null;
   borrower_name: string | null;
   journal_post_date: string | null;
   year: number | null;
