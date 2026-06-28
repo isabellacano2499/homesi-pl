@@ -13,6 +13,7 @@ import {
   Globe,
   ChevronDown,
   Filter,
+  BookOpen,
   type LucideIcon,
 } from "lucide-react";
 import { useActiveBranches } from "@/components/branch-filter-provider";
@@ -30,6 +31,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "P&L All", href: "/pl-all", icon: TrendingUp },
   { label: "Vendors", href: "/vendors", icon: Store },
   { label: "Offshore Allocations", href: "/offshore-allocations", icon: Globe },
+  { label: "Loan Count", href: "/loan-count", icon: BookOpen },
   {
     label: "Cost Centers",
     icon: Target,

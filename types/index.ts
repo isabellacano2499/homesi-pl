@@ -74,6 +74,7 @@ export interface PLTransaction {
   cost_center_id: string | null;
   cost_center_status: "unassigned" | "assigned" | "conflict" | null;
   cost_center_conflicts: string[] | null;
+  loan_number_incomplete: boolean | null;
   cost_centers?: { name: string } | null;
   source: "original" | "addback" | "offshore_allocations" | null;
   check_description_2: string | null;
@@ -329,6 +330,46 @@ export type CCReportTx = PLReportTx & { category_6: string | null; year: number 
 export interface CCReportResponse {
   cost_center: CostCenter;
   transactions: PLReportTx[];
+}
+
+// ─── Loan Officials ───────────────────────────────────────────────────────────
+
+export interface LoanOfficial {
+  id: string;
+  loan_number: string;
+  borrower_name: string | null;
+  loan_officer: string | null;
+  loan_info_channel: string | null;
+  branch: string | null;
+  loan_amount: number | null;
+  loan_program: string | null;
+  loan_processor: string | null;
+  lo_assistant: string | null;
+  lo_assistant_2: string | null;
+  loan_type: string | null;
+  b2b: boolean;
+  processing: boolean;
+  support_on_demand: boolean;
+  affinity: boolean;
+  recruitment: boolean;
+  month: string | null;
+  year: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UploadLoanCountResponse {
+  rowCount: number;
+  month: string | null;
+  year: number | null;
+  warnings: number;
+  completion: {
+    processed: number;
+    completed_direct: number;
+    completed_from_10: number;
+    incomplete_no_match: number;
+    incomplete_ambiguous: number;
+  };
 }
 
 // ─── Conflict snapshots ────────────────────────────────────────────────────────

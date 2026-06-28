@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, X, Trash2, RefreshCw } from "lucide-react";
-import type { UploadPLResponse, AddbacksUploadResponse, OffshoreAllocationsUploadResponse } from "@/types";
+import type { UploadPLResponse, AddbacksUploadResponse, OffshoreAllocationsUploadResponse, UploadLoanCountResponse } from "@/types";
 import type { DuplicateInfo } from "@/lib/check-duplicate-upload";
 
 type UploadStatus = "idle" | "uploading" | "success" | "error";
@@ -297,6 +297,160 @@ function UploadSection({ endpoint, title, description, infoItems, onUploadComple
   );
 }
 
+// ─── Loan Count upload section ───────────────────────────────────────────────
+
+function LoanCountUploadSection() {
+  const [file, setFile] = useState<File | null>(null);
+  const [fileBuffer, setFileBuffer] = useState<ArrayBuffer | null>(null);
+  const [status, setStatus] = useState<UploadStatus>("idle");
+  const [result, setResult] = useState<UploadLoanCountResponse | null>(null);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function handleFile(f: File | null) {
+    if (!f) return;
+    setFile(f); setStatus("idle"); setResult(null); setErrorMsg("");
+    f.arrayBuffer().then(setFileBuffer).catch(() => setFileBuffer(null));
+  }
+
+  async function handleUpload() {
+    if (!file) return;
+    setStatus("uploading");
+    const fd = new FormData();
+    if (fileBuffer) fd.append("file", new Blob([fileBuffer], { type: file.type }), file.name);
+    else fd.append("file", file);
+    try {
+      const res = await fetch("/api/upload-loan-count", { method: "POST", body: fd });
+      const json = await res.json();
+      if (!res.ok) { setStatus("error"); setErrorMsg(json.error ?? "Unknown error"); return; }
+      setResult(json as UploadLoanCountResponse);
+      setStatus("success");
+    } catch (err) {
+      setStatus("error"); setErrorMsg(String(err));
+    }
+  }
+
+  function reset() {
+    setFile(null); setFileBuffer(null); setStatus("idle"); setResult(null); setErrorMsg("");
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-base font-semibold text-gray-900">Loan Count</h3>
+        <p className="text-sm text-gray-500">
+          Monthly loan master list (18 columns). Triggers loan number completion on all P&L transactions.
+        </p>
+      </div>
+
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0] ?? null); }}
+        onClick={() => inputRef.current?.click()}
+        className={[
+          "cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors",
+          dragging ? "border-blue-400 bg-blue-50" : "border-gray-300 bg-white hover:border-blue-300 hover:bg-gray-50",
+        ].join(" ")}
+      >
+        <input ref={inputRef} type="file" accept=".xlsx,.xls" className="hidden"
+          onChange={(e) => handleFile(e.target.files?.[0] ?? null)} />
+        <FileSpreadsheet size={36} className="mx-auto text-gray-300" />
+        <p className="mt-2 text-sm font-medium text-gray-600">{file ? file.name : "Drag here or click to select"}</p>
+        <p className="mt-1 text-xs text-gray-400">Accepted formats: .xlsx, .xls</p>
+      </div>
+
+      {file && status === "idle" && (
+        <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm">
+          <div className="flex items-center gap-2 text-gray-700">
+            <FileSpreadsheet size={16} className="text-green-500" />
+            <span className="font-medium">{file.name}</span>
+            <span className="text-gray-400">({(file.size / 1024).toFixed(1)} KB)</span>
+          </div>
+          <button onClick={(e) => { e.stopPropagation(); reset(); }} className="text-gray-400 hover:text-red-500">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {file && status !== "success" && (
+        <button onClick={handleUpload} disabled={status === "uploading"}
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+          {status === "uploading"
+            ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> Processing…</>
+            : <><Upload size={16} /> Upload &amp; process</>}
+        </button>
+      )}
+
+      {status === "success" && result && (
+        <div className="rounded-xl border border-green-200 bg-green-50 p-5 space-y-3">
+          <div className="flex items-center gap-2 font-semibold text-green-700">
+            <CheckCircle2 size={18} /> Upload complete
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-center">
+            <div className="rounded-lg border border-green-100 bg-white p-3">
+              <p className="text-2xl font-bold text-gray-900">{result.rowCount}</p>
+              <p className="text-xs text-gray-500">Loans loaded</p>
+            </div>
+            <div className="rounded-lg border border-green-100 bg-white p-3">
+              <p className="text-2xl font-bold text-gray-900">{result.month ?? "—"} {result.year ?? ""}</p>
+              <p className="text-xs text-gray-500">Period</p>
+            </div>
+          </div>
+          {result.warnings > 0 && (
+            <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              {result.warnings} row(s) skipped (invalid loan number format).
+            </p>
+          )}
+          {result.completion.processed > 0 && (
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-800 space-y-1">
+              <p className="font-semibold">Loan number completion — {result.completion.processed} P&L transactions processed:</p>
+              <ul className="space-y-0.5 pl-2">
+                <li>✓ {result.completion.completed_direct} had 12-digit loan numbers (copied directly)</li>
+                <li>✓ {result.completion.completed_from_10} 10-digit numbers completed to 12 digits</li>
+                {result.completion.incomplete_no_match > 0 && (
+                  <li className="text-amber-700">⚠ {result.completion.incomplete_no_match} 10-digit numbers with no match (loan_number_incomplete)</li>
+                )}
+                {result.completion.incomplete_ambiguous > 0 && (
+                  <li className="text-amber-700">⚠ {result.completion.incomplete_ambiguous} ambiguous (2+ possible matches, loan_number_incomplete)</li>
+                )}
+              </ul>
+            </div>
+          )}
+          <button onClick={reset}
+            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Upload another file
+          </button>
+        </div>
+      )}
+
+      {status === "error" && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-5">
+          <div className="flex items-center gap-2 font-semibold text-red-700">
+            <AlertCircle size={18} /> Processing error
+          </div>
+          <p className="mt-2 text-sm text-red-600">{errorMsg}</p>
+          <button onClick={() => setStatus("idle")}
+            className="mt-3 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Retry
+          </button>
+        </div>
+      )}
+
+      <div className="rounded-xl border border-gray-100 bg-white p-4 text-sm text-gray-500 space-y-1.5">
+        <p className="font-semibold text-gray-700">What does this upload do?</p>
+        <ol className="list-decimal list-inside space-y-1">
+          <li>Replaces existing loan data for the same month/year (safe to re-upload).</li>
+          <li>Stores branch, borrower, loan officer, loan program, loan type, and five Yes/No flags.</li>
+          <li>Runs loan number completion: 12-digit raw → copied directly; 10-digit raw → matched to unique 12-digit entry.</li>
+          <li>Marks unresolved or ambiguous loan numbers as loan_number_incomplete for audit.</li>
+        </ol>
+      </div>
+    </div>
+  );
+}
+
 // ─── Upload history ───────────────────────────────────────────────────────────
 
 type UploadRecord = {
@@ -514,6 +668,11 @@ export default function UploadPage() {
           ]}
           onUploadComplete={refreshHistory}
         />
+      </div>
+
+      {/* ── Loan Count ── */}
+      <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
+        <LoanCountUploadSection />
       </div>
 
       {/* ── Upload History ── */}
