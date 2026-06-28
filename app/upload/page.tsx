@@ -299,6 +299,8 @@ function UploadSection({ endpoint, title, description, infoItems, onUploadComple
 
 // ─── Loan Count upload section ───────────────────────────────────────────────
 
+type LoanDupeInfo = { month: string; year: number; existing_count: number };
+
 function LoanCountUploadSection() {
   const [file, setFile] = useState<File | null>(null);
   const [fileBuffer, setFileBuffer] = useState<ArrayBuffer | null>(null);
@@ -306,23 +308,30 @@ function LoanCountUploadSection() {
   const [result, setResult] = useState<UploadLoanCountResponse | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [pendingDupe, setPendingDupe] = useState<LoanDupeInfo | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   function handleFile(f: File | null) {
     if (!f) return;
-    setFile(f); setStatus("idle"); setResult(null); setErrorMsg("");
+    setFile(f); setStatus("idle"); setResult(null); setErrorMsg(""); setPendingDupe(null);
     f.arrayBuffer().then(setFileBuffer).catch(() => setFileBuffer(null));
   }
 
-  async function handleUpload() {
+  async function doUpload(url: string) {
     if (!file) return;
     setStatus("uploading");
+    setPendingDupe(null);
     const fd = new FormData();
     if (fileBuffer) fd.append("file", new Blob([fileBuffer], { type: file.type }), file.name);
     else fd.append("file", file);
     try {
-      const res = await fetch("/api/upload-loan-count", { method: "POST", body: fd });
+      const res = await fetch(url, { method: "POST", body: fd });
       const json = await res.json();
+      if (res.status === 409 && json.duplicate) {
+        setStatus("idle");
+        setPendingDupe(json.info as LoanDupeInfo);
+        return;
+      }
       if (!res.ok) { setStatus("error"); setErrorMsg(json.error ?? "Unknown error"); return; }
       setResult(json as UploadLoanCountResponse);
       setStatus("success");
@@ -331,12 +340,52 @@ function LoanCountUploadSection() {
     }
   }
 
+  function handleUpload() { doUpload("/api/upload-loan-count"); }
+
   function reset() {
-    setFile(null); setFileBuffer(null); setStatus("idle"); setResult(null); setErrorMsg("");
+    setFile(null); setFileBuffer(null); setStatus("idle"); setResult(null); setErrorMsg(""); setPendingDupe(null);
   }
 
   return (
     <div className="space-y-4">
+      {pendingDupe && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <AlertCircle size={18} className="shrink-0 text-amber-500" />
+                <h3 className="text-base font-semibold text-gray-900">Existing data found</h3>
+              </div>
+              <button onClick={() => { setPendingDupe(null); setStatus("idle"); }} className="text-gray-400 hover:text-gray-600">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 p-4 text-sm space-y-1.5">
+              <p className="font-medium text-amber-800">
+                {pendingDupe.month} {pendingDupe.year} already has {pendingDupe.existing_count.toLocaleString()} loan records.
+              </p>
+              <p className="text-amber-600 text-xs">
+                Replacing will delete all existing records for that period and load the new file.
+              </p>
+            </div>
+            <div className="mt-4 space-y-2">
+              <button
+                onClick={() => doUpload("/api/upload-loan-count?force=true")}
+                className="flex w-full items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 hover:bg-red-100 transition-colors"
+              >
+                <span>Replace existing</span>
+                <span className="text-xs font-normal text-red-500">Deletes {pendingDupe.existing_count.toLocaleString()} records first</span>
+              </button>
+              <button
+                onClick={() => { setPendingDupe(null); setStatus("idle"); }}
+                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium text-gray-500 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div>
         <h3 className="text-base font-semibold text-gray-900">Loan Count</h3>
         <p className="text-sm text-gray-500">

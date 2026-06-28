@@ -12,6 +12,9 @@ export async function POST(req: NextRequest) {
     const file = formData.get("file") as File | null;
     if (!file) return NextResponse.json({ error: "No file provided" }, { status: 400 });
 
+    const { searchParams } = new URL(req.url);
+    const force = searchParams.get("force") === "true";
+
     const buffer = Buffer.from(await file.arrayBuffer());
     const { rows, warnings } = parseLoanCount(buffer);
 
@@ -23,7 +26,23 @@ export async function POST(req: NextRequest) {
     const month = rows[0].month ?? null;
     const year = rows[0].year ?? null;
 
-    // Replace existing data for this month/year to avoid duplicates on re-upload
+    // Duplicate check: if data already exists for this month/year, warn before replacing
+    if (!force && month && year) {
+      const { count } = await supabase
+        .from("loan_officials")
+        .select("id", { count: "exact", head: true })
+        .eq("month", month)
+        .eq("year", year);
+
+      if (count && count > 0) {
+        return NextResponse.json(
+          { duplicate: true, info: { month, year, existing_count: count } },
+          { status: 409 }
+        );
+      }
+    }
+
+    // Replace existing data for this month/year
     if (month && year) {
       await supabase
         .from("loan_officials")
