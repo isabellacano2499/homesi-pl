@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseOffshoreAllocations } from "@/lib/parse-offshore-allocations";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
-import { loadAllSplitRules } from "@/lib/reevaluate-rule-assigned";
+import { loadAllSplitRules, loadLoanOfficialFields, enrichTxWithLoanOfficials } from "@/lib/reevaluate-rule-assigned";
 import { createServerClient } from "@/lib/supabase-server";
 import { INSERT_CHUNK_SIZE } from "@/lib/constants";
 import { checkDuplicateUpload, deleteUpload } from "@/lib/check-duplicate-upload";
@@ -142,12 +142,13 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 7. Apply cost center rules ────────────────────────────────────────
-    const [[{ data: ccs }, { data: ccRules }], splitRules] = await Promise.all([
+    const [[{ data: ccs }, { data: ccRules }], splitRules, loMap] = await Promise.all([
       Promise.all([
         supabase.from("cost_centers").select("*"),
         supabase.from("cost_center_rules").select("*").order("sequence"),
       ]),
       loadAllSplitRules(supabase),
+      loadLoanOfficialFields(supabase),
     ]);
     if (ccs && ccs.length > 0) {
       const rulesByCC = new Map<string, CostCenterRule[]>();
@@ -165,13 +166,15 @@ export async function POST(req: NextRequest) {
         .from("pl_transactions")
         .select(
           "id,gl_code,gl_name,branch,vendor,check_description," +
-          "ref_numb,category_5,category_6,doc_type,month,year,debit,credit,movement"
+          "ref_numb,category_5,category_6,doc_type,month,year,debit,credit,movement," +
+          "loan_number,loan_number_incomplete"
         )
         .eq("upload_id", id);
 
       if (newTxs && newTxs.length > 0) {
         const ccUpdates = newTxs.map((tx) => {
-          const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters, splitRules as SplitRuleWithDetails[]);
+          const enriched = enrichTxWithLoanOfficials(tx as unknown as Record<string, unknown>, loMap);
+          const r = evaluateCostCenterRules(enriched as unknown as PLTransaction, costCenters, splitRules as SplitRuleWithDetails[]);
           const origin = r.cost_center_status !== "assigned" ? null : r.rule_splits ? "rule_split" : "rule";
           return {
             id: (tx as unknown as { id: string }).id,

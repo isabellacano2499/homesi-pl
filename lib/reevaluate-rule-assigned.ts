@@ -20,6 +20,64 @@ import type {
 
 type SupabaseClient = ReturnType<typeof createServerClient>;
 
+// ─── Loan Officials enrichment ────────────────────────────────────────────────
+
+type LoanOfficialFields = {
+  loan_number: string;
+  b2b: boolean;
+  processing: boolean;
+  support_on_demand: boolean;
+  affinity: boolean;
+  recruitment: boolean;
+  lead_source_lo: string | null;
+  bd_owner: string | null;
+};
+
+/**
+ * Loads all loan official boolean/text fields keyed by loan_number.
+ * Used to enrich transactions before cost-center rule evaluation.
+ */
+export async function loadLoanOfficialFields(
+  supabase: SupabaseClient
+): Promise<Map<string, LoanOfficialFields>> {
+  const { data } = await supabase
+    .from("loan_officials")
+    .select("loan_number,b2b,processing,support_on_demand,affinity,recruitment,lead_source_lo,bd_owner")
+    .not("loan_number", "is", null);
+
+  const map = new Map<string, LoanOfficialFields>();
+  for (const row of (data ?? []) as LoanOfficialFields[]) {
+    map.set(row.loan_number, row);
+  }
+  return map;
+}
+
+/**
+ * Merges loan official fields onto a transaction object.
+ * If loan_number is null or loan_number_incomplete=true, returns the tx unchanged
+ * (loan official fields will be undefined → evaluator treats as no-match).
+ */
+export function enrichTxWithLoanOfficials(
+  tx: Record<string, unknown>,
+  loMap: Map<string, LoanOfficialFields>
+): Record<string, unknown> {
+  const loanNum = tx.loan_number as string | null | undefined;
+  const incomplete = tx.loan_number_incomplete as boolean | null | undefined;
+  if (!loanNum || incomplete) return tx;
+  const lo = loMap.get(loanNum);
+  if (!lo) return tx;
+  return {
+    ...tx,
+    b2b: lo.b2b,
+    processing: lo.processing,
+    support_on_demand: lo.support_on_demand,
+    affinity: lo.affinity,
+    recruitment: lo.recruitment,
+    lead_source_lo: lo.lead_source_lo,
+    bd_owner: lo.bd_owner,
+  };
+}
+
 export type ReevalStats = {
   reevaluated: number;
   reassigned: number;
@@ -29,7 +87,8 @@ export type ReevalStats = {
 
 const TX_FIELDS =
   "id,gl_code,gl_name,branch,vendor,check_description," +
-  "ref_numb,category_5,category_6,doc_type,month,year,debit,credit,movement";
+  "ref_numb,category_5,category_6,doc_type,month,year,debit,credit,movement," +
+  "loan_number,loan_number_incomplete";
 
 const UPDATE_PARALLEL = 100;
 
@@ -131,12 +190,19 @@ export async function reevaluateRuleAssigned(
   }
 
   type TxRow = { id: string } & Record<string, unknown>;
-  const txs: TxRow[] = [];
-  for (let i = 0; i < txIds.length; i += 1000) {
-    const chunk = txIds.slice(i, i + 1000);
-    const { data } = await supabase.from("pl_transactions").select(TX_FIELDS).in("id", chunk);
-    if (data) txs.push(...(data as unknown as TxRow[]));
-  }
+  const [txsRaw, loMap] = await Promise.all([
+    (async () => {
+      const result: TxRow[] = [];
+      for (let i = 0; i < txIds.length; i += 1000) {
+        const chunk = txIds.slice(i, i + 1000);
+        const { data } = await supabase.from("pl_transactions").select(TX_FIELDS).in("id", chunk);
+        if (data) result.push(...(data as unknown as TxRow[]));
+      }
+      return result;
+    })(),
+    loadLoanOfficialFields(supabase),
+  ]);
+  const txs = txsRaw.map((tx) => enrichTxWithLoanOfficials(tx, loMap) as TxRow);
 
   const toUpdate: {
     id: string;

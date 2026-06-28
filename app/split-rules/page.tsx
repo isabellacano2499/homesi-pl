@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Plus, Trash2, ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
-import { CC_FIELDS, operatorsForField, defaultOperator } from "@/lib/cost-center-constants";
+import { CC_FIELDS, operatorsForField, defaultOperator, getFieldKind, defaultValue } from "@/lib/cost-center-constants";
 import type { SplitRuleWithDetails, SplitRuleCondition, SplitRuleAllocation } from "@/types";
 
 // ─── Local draft types ─────────────────────────────────────────────────────────
@@ -32,13 +32,14 @@ function uid() {
 }
 
 function blankCondition(seq: number): DraftCondition {
+  const field = CC_FIELDS[0].value;
   return {
     key: uid(),
     sequence: seq,
     logic_connector: seq === 1 ? null : "AND",
-    field: CC_FIELDS[0].value,
-    operator: defaultOperator(CC_FIELDS[0].value),
-    value: "",
+    field,
+    operator: defaultOperator(field),
+    value: defaultValue(field),
     group_number: 0,
   };
 }
@@ -122,7 +123,7 @@ function ConditionsEditor({
                 updateCondition(cond.key, {
                   field,
                   operator: defaultOperator(field),
-                  value: "",
+                  value: defaultValue(field),
                 });
               }}
               className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-1 py-0.5 min-w-[110px]"
@@ -144,13 +145,24 @@ function ConditionsEditor({
                 </option>
               ))}
             </select>
-            <input
-              type="text"
-              value={cond.value}
-              onChange={(e) => updateCondition(cond.key, { value: e.target.value })}
-              placeholder="value"
-              className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-2 py-0.5 min-w-[100px] flex-1"
-            />
+            {getFieldKind(cond.field) === "boolean" ? (
+              <select
+                value={cond.value}
+                onChange={(e) => updateCondition(cond.key, { value: e.target.value })}
+                className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-1 py-0.5 min-w-[80px]"
+              >
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={cond.value}
+                onChange={(e) => updateCondition(cond.key, { value: e.target.value })}
+                placeholder="value"
+                className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-2 py-0.5 min-w-[100px] flex-1"
+              />
+            )}
             <button
               onClick={() => removeCondition(cond.key)}
               className="text-gray-400 hover:text-red-400 shrink-0"

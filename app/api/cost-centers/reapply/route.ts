@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
-import { loadAllSplitRules } from "@/lib/reevaluate-rule-assigned";
+import { loadAllSplitRules, loadLoanOfficialFields, enrichTxWithLoanOfficials } from "@/lib/reevaluate-rule-assigned";
 import type { PLTransaction, CostCenterWithRules, CostCenterRule, SplitRuleWithDetails } from "@/types";
 
 type TxRow = {
@@ -21,6 +21,8 @@ type TxRow = {
   credit: number;
   movement: number | null;
   assignment_origin: string | null;
+  loan_number: string | null;
+  loan_number_incomplete: boolean | null;
 };
 
 const FETCH_BATCH = 1000;
@@ -39,11 +41,13 @@ export async function POST(req: NextRequest) {
     { data: allRules, error: rulesErr },
     { data: resolvedSnapshots, error: snapErr },
     splitRules,
+    loMap,
   ] = await Promise.all([
     supabase.from("cost_centers").select("id,name,rules_last_modified_at"),
     supabase.from("cost_center_rules").select("*").order("sequence"),
     supabase.from("conflict_snapshots").select("*").eq("is_resolved", true),
     loadAllSplitRules(supabase),
+    loadLoanOfficialFields(supabase),
   ]);
 
   if (ccsErr) return NextResponse.json({ error: `Failed to load cost centers: ${ccsErr.message}` }, { status: 500 });
@@ -91,7 +95,8 @@ export async function POST(req: NextRequest) {
       .from("pl_transactions")
       .select(
         "id,gl_code,gl_name,branch,vendor,check_description," +
-        "ref_numb,category_5,category_6,doc_type,month,year,debit,credit,movement,assignment_origin"
+        "ref_numb,category_5,category_6,doc_type,month,year,debit,credit,movement,assignment_origin," +
+        "loan_number,loan_number_incomplete"
       )
       .range(offset, offset + FETCH_BATCH - 1);
     if (branches.length > 0) q = q.in("branch", branches);
@@ -134,7 +139,8 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters, splitRules as SplitRuleWithDetails[]);
+      const enriched = enrichTxWithLoanOfficials(tx as unknown as Record<string, unknown>, loMap);
+      const r = evaluateCostCenterRules(enriched as unknown as PLTransaction, costCenters, splitRules as SplitRuleWithDetails[]);
       const origin =
         r.cost_center_status !== "assigned" ? null : r.rule_splits ? "rule_split" : "rule";
       toUpdate.push({

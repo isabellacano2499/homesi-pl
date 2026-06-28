@@ -1,4 +1,4 @@
-import { NUMERIC_FIELDS } from "@/lib/cost-center-constants";
+import { NUMERIC_FIELDS, LOAN_OFFICIAL_FIELDS } from "@/lib/cost-center-constants";
 import type {
   PLTransaction,
   CostCenterWithRules,
@@ -17,8 +17,23 @@ type ConditionLike = {
 
 function matchCondition(tx: PLTransaction, cond: ConditionLike): boolean {
   const raw = (tx as unknown as Record<string, unknown>)[cond.field];
-  const fieldVal = raw != null ? String(raw) : "";
   const ruleVal = cond.value;
+
+  // Loan Official fields: if the data wasn't joined in (raw == null), never match.
+  // This covers: no loan_number, loan_number_incomplete=true, or no matching LO row.
+  if (LOAN_OFFICIAL_FIELDS.has(cond.field) && raw == null) return false;
+
+  // Boolean fields (b2b, processing, support_on_demand, affinity, recruitment)
+  if (typeof raw === "boolean") {
+    const expectTrue = ruleVal.toLowerCase() === "yes" || ruleVal.toLowerCase() === "true";
+    switch (cond.operator) {
+      case "equals":     return raw === expectTrue;
+      case "not_equals": return raw !== expectTrue;
+      default:           return false;
+    }
+  }
+
+  const fieldVal = raw != null ? String(raw) : "";
 
   if (NUMERIC_FIELDS.has(cond.field)) {
     const n = Number(fieldVal);

@@ -7,8 +7,8 @@ import {
   ArrowLeft, Plus, Trash2, ChevronUp, ChevronDown, Save, X, Pencil, Unlink,
 } from "lucide-react";
 import {
-  CC_FIELDS, TEXT_OPERATORS, NUMERIC_OPERATORS,
-  operatorsForField, defaultOperator, getFieldKind,
+  CC_FIELDS, TEXT_OPERATORS, NUMERIC_OPERATORS, BOOLEAN_OPERATORS,
+  operatorsForField, defaultOperator, getFieldKind, defaultValue,
 } from "@/lib/cost-center-constants";
 import type { CostCenter, CostCenterRule, GLMapping } from "@/types";
 
@@ -76,7 +76,7 @@ function RuleEditRow({
   function setField<K extends keyof RuleForm>(key: K, val: RuleForm[K]) {
     setForm((prev) => {
       const next = { ...prev, [key]: val };
-      if (key === "field") { next.operator = defaultOperator(val as string); next.value = ""; }
+      if (key === "field") { next.operator = defaultOperator(val as string); next.value = defaultValue(val as string); }
       return next;
     });
   }
@@ -88,9 +88,11 @@ function RuleEditRow({
     finally { setSaving(false); }
   }
 
-  const isNumeric = getFieldKind(form.field) === "numeric";
+  const fieldKind = getFieldKind(form.field);
+  const isNumeric = fieldKind === "numeric";
   const isGLCode = form.field === "gl_code";
-  const availableOps = isNumeric ? NUMERIC_OPERATORS : TEXT_OPERATORS;
+  const isBoolean = fieldKind === "boolean";
+  const availableOps = isNumeric ? NUMERIC_OPERATORS : isBoolean ? BOOLEAN_OPERATORS : TEXT_OPERATORS;
 
   return (
     <tr className="border-b border-blue-100 bg-blue-50/40">
@@ -110,7 +112,12 @@ function RuleEditRow({
         )}
       </td>
       <td className="px-4 py-2">
-        <select value={form.field} onChange={(e) => setField("field", e.target.value)}
+        <select value={form.field} onChange={(e) => {
+          const field = e.target.value;
+          setField("field", field);
+          setField("operator", defaultOperator(field));
+          setField("value", defaultValue(field));
+        }}
           className="rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:border-blue-400 focus:outline-none">
           {CC_FIELDS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
         </select>
@@ -127,6 +134,12 @@ function RuleEditRow({
             className="rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:border-blue-400 focus:outline-none min-w-[160px]">
             <option value="">Select GL Code…</option>
             {glMappings.map((m) => <option key={m.id} value={m.gl_code}>{m.gl_code} — {m.gl_name}</option>)}
+          </select>
+        ) : isBoolean ? (
+          <select value={form.value} onChange={(e) => setField("value", e.target.value)}
+            className="rounded border border-gray-200 bg-white px-2 py-1 text-xs focus:border-blue-400 focus:outline-none">
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
           </select>
         ) : (
           <input type={isNumeric ? "number" : "text"} value={form.value}
@@ -292,7 +305,7 @@ export default function CostCenterDetailPage() {
   function setFormField<K extends keyof RuleForm>(key: K, val: RuleForm[K]) {
     setForm((prev) => {
       const next = { ...prev, [key]: val };
-      if (key === "field") { next.operator = defaultOperator(val as string); next.value = ""; }
+      if (key === "field") { next.operator = defaultOperator(val as string); next.value = defaultValue(val as string); }
       return next;
     });
   }
@@ -401,9 +414,11 @@ export default function CostCenterDetailPage() {
   // ── Render helpers ──────────────────────────────────────────────────────────
 
   const isFirstRule = sorted.length === 0;
-  const isNumericField = getFieldKind(form.field) === "numeric";
+  const newFieldKind = getFieldKind(form.field);
+  const isNumericField = newFieldKind === "numeric";
   const isGLCode = form.field === "gl_code";
-  const availableOps = isNumericField ? NUMERIC_OPERATORS : TEXT_OPERATORS;
+  const isBooleanField = newFieldKind === "boolean";
+  const availableOps = isNumericField ? NUMERIC_OPERATORS : isBooleanField ? BOOLEAN_OPERATORS : TEXT_OPERATORS;
   const hasAnyGroup = sorted.some((r) => isMultiGroup(r));
 
   if (loading) return (
@@ -692,6 +707,12 @@ export default function CostCenterDetailPage() {
                     className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs focus:border-blue-400 focus:outline-none">
                     <option value="">Select GL Code…</option>
                     {glMappings.map((m) => <option key={m.id} value={m.gl_code}>{m.gl_code} — {m.gl_name}</option>)}
+                  </select>
+                ) : isBooleanField ? (
+                  <select value={form.value} onChange={(e) => setFormField("value", e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs focus:border-blue-400 focus:outline-none">
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
                   </select>
                 ) : (
                   <input type={isNumericField ? "number" : "text"} value={form.value}
