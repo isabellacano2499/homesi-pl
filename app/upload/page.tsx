@@ -435,18 +435,36 @@ function LoanCountUploadSection() {
       {status === "success" && result && (
         <div className="rounded-xl border border-green-200 bg-green-50 p-5 space-y-3">
           <div className="flex items-center gap-2 font-semibold text-green-700">
-            <CheckCircle2 size={18} /> Upload complete
+            <CheckCircle2 size={18} /> Upload complete — {result.month ?? "—"} {result.year ?? ""}
           </div>
-          <div className="grid grid-cols-2 gap-3 text-center">
-            <div className="rounded-lg border border-green-100 bg-white p-3">
-              <p className="text-2xl font-bold text-gray-900">{result.rowCount}</p>
-              <p className="text-xs text-gray-500">Loans loaded</p>
+
+          {/* Merge stats */}
+          <div className="grid grid-cols-4 gap-2 text-center text-xs">
+            <div className="rounded-lg border border-green-100 bg-white p-2.5">
+              <p className="text-lg font-bold text-gray-900">{result.merge.inserted}</p>
+              <p className="text-gray-500">New loans</p>
             </div>
-            <div className="rounded-lg border border-green-100 bg-white p-3">
-              <p className="text-2xl font-bold text-gray-900">{result.month ?? "—"} {result.year ?? ""}</p>
-              <p className="text-xs text-gray-500">Period</p>
+            <div className="rounded-lg border border-green-100 bg-white p-2.5">
+              <p className="text-lg font-bold text-gray-900">{result.merge.updated}</p>
+              <p className="text-gray-500">Updated</p>
+            </div>
+            <div className="rounded-lg border border-green-100 bg-white p-2.5">
+              <p className={`text-lg font-bold ${result.merge.preserved_fields > 0 ? "text-blue-600" : "text-gray-900"}`}>
+                {result.merge.preserved_fields}
+              </p>
+              <p className="text-gray-500">Fields preserved</p>
+            </div>
+            <div className="rounded-lg border border-green-100 bg-white p-2.5">
+              <p className="text-lg font-bold text-gray-900">{result.merge.removed}</p>
+              <p className="text-gray-500">Removed</p>
             </div>
           </div>
+
+          {result.merge.kept_historical > 0 && (
+            <p className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+              {result.merge.kept_historical} loan number{result.merge.kept_historical !== 1 ? "s" : ""} not in new file were kept because they had manual edits.
+            </p>
+          )}
           {result.warnings > 0 && (
             <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
               {result.warnings} row(s) skipped (invalid loan number format).

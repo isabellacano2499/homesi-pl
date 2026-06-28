@@ -349,6 +349,7 @@ export interface LoanOfficial {
   loan_type: string | null;
   lead_source_lo: string | null;
   bd_owner: string | null;
+  manually_edited_fields: string[];
   b2b: boolean;
   processing: boolean;
   support_on_demand: boolean;
@@ -365,6 +366,13 @@ export interface UploadLoanCountResponse {
   month: string | null;
   year: number | null;
   warnings: number;
+  merge: {
+    inserted: number;
+    updated: number;
+    preserved_fields: number;
+    removed: number;
+    kept_historical: number;
+  };
   completion: {
     processed: number;
     completed_direct: number;

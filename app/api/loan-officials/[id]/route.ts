@@ -24,9 +24,22 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   }
 
   const supabase = createServerClient();
+
+  // Fetch current manually_edited_fields so we can append to it
+  const { data: current, error: fetchErr } = await supabase
+    .from("loan_officials")
+    .select("manually_edited_fields")
+    .eq("id", id)
+    .single();
+
+  if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
+
+  const existingEdited: string[] = (current?.manually_edited_fields as string[]) ?? [];
+  const newEdited = [...new Set([...existingEdited, ...Object.keys(allowed)])];
+
   const { data, error } = await supabase
     .from("loan_officials")
-    .update({ ...allowed, updated_at: new Date().toISOString() })
+    .update({ ...allowed, manually_edited_fields: newEdited, updated_at: new Date().toISOString() })
     .eq("id", id)
     .select()
     .single();

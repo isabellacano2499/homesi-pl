@@ -4,6 +4,12 @@ import { runLoanNumberCompletion } from "@/lib/loan-number-completion";
 import { createServerClient } from "@/lib/supabase-server";
 import type { UploadLoanCountResponse } from "@/types";
 
+type ExistingRow = Record<string, unknown> & {
+  id: string;
+  loan_number: string;
+  manually_edited_fields: string[] | null;
+};
+
 export async function POST(req: NextRequest) {
   const supabase = createServerClient();
 
@@ -22,11 +28,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No valid loan rows found in file" }, { status: 422 });
     }
 
-    // Determine month/year from parsed data (use first row as representative)
     const month = rows[0].month ?? null;
     const year = rows[0].year ?? null;
 
-    // Duplicate check: if data already exists for this month/year, warn before replacing
+    // ── Duplicate check ───────────────────────────────────────────────────────
     if (!force && month && year) {
       const { count } = await supabase
         .from("loan_officials")
@@ -42,24 +47,88 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Replace existing data for this month/year
-    if (month && year) {
-      await supabase
-        .from("loan_officials")
-        .delete()
-        .eq("month", month)
-        .eq("year", year);
+    // ── Load existing rows for merge ──────────────────────────────────────────
+    const { data: existingData, error: fetchErr } = await supabase
+      .from("loan_officials")
+      .select("*")
+      .eq("month", month ?? "")
+      .eq("year", year ?? 0);
+
+    if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
+
+    const existingMap = new Map<string, ExistingRow>();
+    for (const row of (existingData ?? []) as ExistingRow[]) {
+      existingMap.set(row.loan_number, row);
     }
 
-    // Insert in chunks
-    const CHUNK = 500;
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      const chunk = rows.slice(i, i + CHUNK);
-      const { error } = await supabase.from("loan_officials").insert(chunk);
+    const newLoanNumbers = new Set(rows.map((r) => r.loan_number));
+
+    // ── Handle rows not in new file ───────────────────────────────────────────
+    // Keep rows that were manually edited; delete the rest.
+    const toDeleteIds: string[] = [];
+    let keptHistorical = 0;
+    for (const [ln, row] of existingMap) {
+      if (!newLoanNumbers.has(ln)) {
+        const hasManualEdits = (row.manually_edited_fields ?? []).length > 0;
+        if (hasManualEdits) {
+          keptHistorical++;
+        } else {
+          toDeleteIds.push(row.id);
+        }
+      }
+    }
+    if (toDeleteIds.length > 0) {
+      await supabase.from("loan_officials").delete().in("id", toDeleteIds);
+    }
+
+    // ── Merge: new rows vs existing rows ──────────────────────────────────────
+    type MergedRow = typeof rows[number] & { id?: string };
+
+    const toInsert: typeof rows = [];
+    const toUpsert: MergedRow[] = [];
+    let preservedFields = 0;
+
+    for (const newRow of rows) {
+      const existing = existingMap.get(newRow.loan_number);
+      if (!existing) {
+        toInsert.push({ ...newRow, manually_edited_fields: [] });
+      } else {
+        const editedFields: string[] = (existing.manually_edited_fields as string[]) ?? [];
+        const merged: Record<string, unknown> = {
+          ...newRow,
+          manually_edited_fields: editedFields,
+          id: existing.id,
+        };
+        // Restore manually edited values, overriding what the file says
+        for (const field of editedFields) {
+          if (field in existing) {
+            merged[field] = existing[field];
+          }
+        }
+        preservedFields += editedFields.length;
+        toUpsert.push(merged as MergedRow);
+      }
+    }
+
+    // ── Insert new loan numbers ───────────────────────────────────────────────
+    const CHUNK = 200;
+    for (let i = 0; i < toInsert.length; i += CHUNK) {
+      const { error } = await supabase.from("loan_officials").insert(toInsert.slice(i, i + CHUNK));
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Run loan number completion across all pl_transactions
+    // ── Upsert merged rows (preserves manual edits) ───────────────────────────
+    for (let i = 0; i < toUpsert.length; i += CHUNK) {
+      const { error } = await supabase.from("loan_officials").upsert(
+        toUpsert.slice(i, i + CHUNK).map((r) => ({
+          ...r,
+          updated_at: new Date().toISOString(),
+        }))
+      );
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // ── Loan number completion ────────────────────────────────────────────────
     const completion = await runLoanNumberCompletion(supabase);
 
     const response: UploadLoanCountResponse = {
@@ -67,6 +136,13 @@ export async function POST(req: NextRequest) {
       month,
       year,
       warnings: warnings.length,
+      merge: {
+        inserted: toInsert.length,
+        updated: toUpsert.length,
+        preserved_fields: preservedFields,
+        removed: toDeleteIds.length,
+        kept_historical: keptHistorical,
+      },
       completion,
     };
 
