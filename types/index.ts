@@ -347,6 +347,8 @@ export interface LoanOfficial {
   lo_assistant: string | null;
   lo_assistant_2: string | null;
   loan_type: string | null;
+  lead_source_lo: string | null;
+  bd_owner: string | null;
   b2b: boolean;
   processing: boolean;
   support_on_demand: boolean;

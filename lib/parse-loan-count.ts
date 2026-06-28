@@ -65,6 +65,8 @@ export function parseLoanCount(buffer: Buffer): {
       lo_assistant: trimStr(col(row, "Role Name - LO Assistant")) || null,
       lo_assistant_2: lo2,
       loan_type: trimStr(col(row, "Loan Type")) || null,
+      lead_source_lo: trimStr(col(row, "Lead Source LO")) || null,
+      bd_owner: trimStr(col(row, "BD Owner")) || null,
       b2b: parseYesNo(col(row, "B2B")),
       processing: parseYesNo(col(row, "Processing")),
       support_on_demand: parseYesNo(col(row, "Support on demand")),
