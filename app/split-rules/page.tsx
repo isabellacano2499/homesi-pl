@@ -211,41 +211,50 @@ function AllocationsEditor({
 
   return (
     <div className="space-y-2">
-      {allocations.map((alloc) => (
-        <div key={alloc.key} className="flex items-center gap-2">
-          <select
-            value={alloc.cost_center_id}
-            onChange={(e) => updateRow(alloc.key, { cost_center_id: e.target.value })}
-            className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-1 py-0.5 flex-1"
-          >
-            <option value="">— select cost center —</option>
-            {costCenters.map((cc) => (
-              <option key={cc.id} value={cc.id}>
-                {cc.name}
-              </option>
-            ))}
-          </select>
-          <div className="flex items-center gap-1 shrink-0">
-            <input
-              type="number"
-              min="0.01"
-              max="100"
-              step="0.01"
-              value={alloc.percentage}
-              onChange={(e) => updateRow(alloc.key, { percentage: e.target.value })}
-              placeholder="0"
-              className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-2 py-0.5 w-20 text-right"
-            />
-            <span className="text-xs text-gray-400">%</span>
+      {allocations.map((alloc) => {
+        const pctNum = Number(alloc.percentage);
+        const pctInvalid = !alloc.percentage || pctNum <= 0;
+        return (
+          <div key={alloc.key} className="flex items-center gap-2">
+            <select
+              value={alloc.cost_center_id}
+              onChange={(e) => updateRow(alloc.key, { cost_center_id: e.target.value })}
+              className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-1 py-0.5 flex-1"
+            >
+              <option value="">— select cost center —</option>
+              {costCenters.map((cc) => (
+                <option key={cc.id} value={cc.id}>
+                  {cc.name}
+                </option>
+              ))}
+            </select>
+            <div className="flex items-center gap-1 shrink-0">
+              <input
+                type="number"
+                min="0.01"
+                max="100"
+                step="0.01"
+                value={alloc.percentage}
+                onChange={(e) => updateRow(alloc.key, { percentage: e.target.value })}
+                placeholder="0"
+                className={`text-xs border rounded px-2 py-0.5 w-20 text-right ${
+                  pctInvalid
+                    ? "border-red-500 bg-gray-700 text-red-300"
+                    : "border-gray-600 bg-gray-700 text-white"
+                }`}
+              />
+              <span className="text-xs text-gray-400">%</span>
+            </div>
+            <button
+              onClick={() => removeRow(alloc.key)}
+              className="text-gray-400 hover:text-red-400 shrink-0"
+              title="Remove this allocation"
+            >
+              <X size={14} />
+            </button>
           </div>
-          <button
-            onClick={() => removeRow(alloc.key)}
-            className="text-gray-400 hover:text-red-400 shrink-0"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      ))}
+        );
+      })}
       <div className="flex items-center justify-between">
         <button
           onClick={addRow}
@@ -294,7 +303,7 @@ function RuleForm({
   });
   const [allocations, setAllocations] = useState<DraftAllocation[]>(() => {
     if (!initial || initial.allocations.length === 0)
-      return [blankAllocation(), blankAllocation()];
+      return [blankAllocation()];
     return initial.allocations
       .slice()
       .sort((a, b) => a.display_order - b.display_order)
@@ -303,11 +312,24 @@ function RuleForm({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
+  function sanitizeApiError(raw: string | undefined): string {
+    if (!raw) return "Save failed";
+    if (raw.includes("check constraint") || raw.includes("percentage_check"))
+      return "One or more allocation percentages are invalid — ensure all rows are greater than 0% and sum to 100%.";
+    if (raw.includes("violates"))
+      return "A database constraint was violated. Check that all fields are filled in correctly.";
+    return raw;
+  }
+
   async function handleSave() {
     setErr("");
     if (!name.trim()) { setErr("Name is required"); return; }
-    if (allocations.length < 2) { setErr("At least 2 allocations required"); return; }
-    if (allocations.some((a) => !a.cost_center_id)) { setErr("All allocations need a cost center"); return; }
+    if (allocations.length === 0) { setErr("At least one allocation is required"); return; }
+    if (allocations.some((a) => !a.cost_center_id)) { setErr("All allocations need a cost center selected"); return; }
+    if (allocations.some((a) => !a.percentage || Number(a.percentage) <= 0)) {
+      setErr("Remove empty rows or assign a percentage greater than 0 to each allocation");
+      return;
+    }
     const total = sumPct(allocations);
     if (Math.abs(total - 100) > 0.01) { setErr(`Allocations must sum to 100% (currently ${total.toFixed(2)}%)`); return; }
     if (conditions.some((c) => !c.value.trim())) { setErr("All conditions need a value"); return; }
@@ -355,7 +377,7 @@ function RuleForm({
           const j = await (!patchRes.ok ? patchRes : !condRes.ok ? condRes : allocRes)
             .json()
             .catch(() => ({}));
-          setErr(j.error ?? "Save failed");
+          setErr(sanitizeApiError(j.error));
           return;
         }
         const getRes = await fetch(`/api/split-rules/${initial.id}`);
@@ -368,7 +390,7 @@ function RuleForm({
           body: JSON.stringify(payload),
         });
         const json = await res.json();
-        if (!res.ok) { setErr(json.error ?? "Save failed"); return; }
+        if (!res.ok) { setErr(sanitizeApiError(json.error)); return; }
         onSave(json as SplitRuleWithDetails);
       }
     } finally {
