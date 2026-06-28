@@ -21,8 +21,8 @@ export async function POST(req: NextRequest) {
   };
 
   if (!name?.trim()) return NextResponse.json({ error: "Name is required" }, { status: 400 });
-  if (!Array.isArray(allocations) || allocations.length < 2) {
-    return NextResponse.json({ error: "At least 2 allocations required" }, { status: 400 });
+  if (!Array.isArray(allocations) || allocations.length < 1) {
+    return NextResponse.json({ error: "At least one allocation is required" }, { status: 400 });
   }
   const totalPct = allocations.reduce((s, a) => s + Number(a.percentage), 0);
   if (Math.abs(totalPct - 100) > 0.01) {

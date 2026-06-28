@@ -12,8 +12,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   const allocations: Array<{ cost_center_id: string; percentage: number; display_order?: number }> =
     Array.isArray(body) ? body : body.allocations;
 
-  if (!Array.isArray(allocations) || allocations.length < 2) {
-    return NextResponse.json({ error: "At least 2 allocations required" }, { status: 400 });
+  if (!Array.isArray(allocations) || allocations.length < 1) {
+    return NextResponse.json({ error: "At least one allocation is required" }, { status: 400 });
   }
   const total = allocations.reduce((s, a) => s + Number(a.percentage), 0);
   if (Math.abs(total - 100) > 0.01) {
