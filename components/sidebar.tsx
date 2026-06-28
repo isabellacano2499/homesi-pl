@@ -14,6 +14,7 @@ import {
   ChevronDown,
   Filter,
   BookOpen,
+  Percent,
   type LucideIcon,
 } from "lucide-react";
 import { useActiveBranches } from "@/components/branch-filter-provider";
@@ -37,6 +38,7 @@ const NAV_ITEMS: NavItem[] = [
     icon: Target,
     children: [
       { label: "Rules", href: "/cost-centers" },
+      { label: "Split Rules", href: "/split-rules", icon: Percent },
       { label: "CC Assignment", href: "/cost-centers/conflicts" },
     ],
   },

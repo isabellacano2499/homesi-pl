@@ -115,6 +115,7 @@ export interface CostCenterEvalResult {
   cost_center_id: string | null;
   cost_center_status: "assigned" | "unassigned" | "conflict";
   cost_center_conflicts: string[];
+  rule_splits?: Array<{ cost_center_id: string; percentage: number }>;
 }
 
 // ─── Normalization pipeline ───────────────────────────────────────────────────
@@ -332,6 +333,41 @@ export interface CCReportResponse {
   transactions: PLReportTx[];
 }
 
+// ─── Split Rules ─────────────────────────────────────────────────────────────
+
+export interface SplitRule {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SplitRuleCondition {
+  id: string;
+  split_rule_id: string;
+  sequence: number;
+  logic_connector: "AND" | "OR" | null;
+  field: string;
+  operator: string;
+  value: string;
+  group_number: number;
+  created_at: string;
+}
+
+export interface SplitRuleAllocation {
+  id: string;
+  split_rule_id: string;
+  cost_center_id: string;
+  percentage: number;
+  display_order: number;
+}
+
+export interface SplitRuleWithDetails extends SplitRule {
+  conditions: SplitRuleCondition[];
+  allocations: SplitRuleAllocation[];
+}
+
 // ─── Loan Officials ───────────────────────────────────────────────────────────
 
 export interface LoanOfficial {
@@ -395,6 +431,12 @@ export interface ConflictSnapshot {
   updated_at: string;
 }
 
+export interface ConflictSplitProposal {
+  split_rule_id: string;
+  split_rule_name: string;
+  allocations: Array<{ cost_center_id: string; cc_name: string; percentage: number }>;
+}
+
 export interface ConflictTx {
   id: string;
   gl_code: string | null;
@@ -410,6 +452,7 @@ export interface ConflictTx {
   credit: number;
   movement: number | null;
   conflicting_ccs: { id: string; name: string }[];
+  conflicting_split_rules?: ConflictSplitProposal[];
 }
 
 export interface ConflictGroup {

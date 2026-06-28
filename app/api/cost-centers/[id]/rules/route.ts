@@ -3,6 +3,7 @@ import { createServerClient } from "@/lib/supabase-server";
 import {
   getRuleAssignedTxIds,
   loadAllCCsWithRules,
+  loadAllSplitRules,
   reevaluateRuleAssigned,
 } from "@/lib/reevaluate-rule-assigned";
 
@@ -128,8 +129,11 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
   // Re-evaluate transactions assigned to this CC under the new grouping
   const ruleAssignedIds = await getRuleAssignedTxIds(supabase, id);
-  const allCCs = await loadAllCCsWithRules(supabase);
-  const stats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, allCCs);
+  const [allCCs, splitRules] = await Promise.all([
+    loadAllCCsWithRules(supabase),
+    loadAllSplitRules(supabase),
+  ]);
+  const stats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, allCCs, splitRules);
 
   return NextResponse.json(stats);
 }

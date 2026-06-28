@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseOffshoreAllocations } from "@/lib/parse-offshore-allocations";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
+import { loadAllSplitRules } from "@/lib/reevaluate-rule-assigned";
 import { createServerClient } from "@/lib/supabase-server";
 import { INSERT_CHUNK_SIZE } from "@/lib/constants";
 import { checkDuplicateUpload, deleteUpload } from "@/lib/check-duplicate-upload";
@@ -10,6 +11,7 @@ import type {
   PLTransaction,
   CostCenterWithRules,
   CostCenterRule,
+  SplitRuleWithDetails,
   GLMapping,
   Branch,
 } from "@/types";
@@ -140,9 +142,12 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 7. Apply cost center rules ────────────────────────────────────────
-    const [{ data: ccs }, { data: ccRules }] = await Promise.all([
-      supabase.from("cost_centers").select("*"),
-      supabase.from("cost_center_rules").select("*").order("sequence"),
+    const [[{ data: ccs }, { data: ccRules }], splitRules] = await Promise.all([
+      Promise.all([
+        supabase.from("cost_centers").select("*"),
+        supabase.from("cost_center_rules").select("*").order("sequence"),
+      ]),
+      loadAllSplitRules(supabase),
     ]);
     if (ccs && ccs.length > 0) {
       const rulesByCC = new Map<string, CostCenterRule[]>();
@@ -166,12 +171,14 @@ export async function POST(req: NextRequest) {
 
       if (newTxs && newTxs.length > 0) {
         const ccUpdates = newTxs.map((tx) => {
-          const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters);
+          const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters, splitRules as SplitRuleWithDetails[]);
+          const origin = r.cost_center_status !== "assigned" ? null : r.rule_splits ? "rule_split" : "rule";
           return {
             id: (tx as unknown as { id: string }).id,
             cost_center_id: r.cost_center_id,
             cost_center_status: r.cost_center_status,
             cost_center_conflicts: r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
+            assignment_origin: origin,
           };
         });
         for (let i = 0; i < ccUpdates.length; i += INSERT_CHUNK_SIZE) {
@@ -183,6 +190,7 @@ export async function POST(req: NextRequest) {
                   cost_center_id: u.cost_center_id,
                   cost_center_status: u.cost_center_status,
                   cost_center_conflicts: u.cost_center_conflicts,
+                  assignment_origin: u.assignment_origin,
                 })
                 .eq("id", u.id)
             )

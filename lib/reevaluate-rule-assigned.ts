@@ -1,15 +1,22 @@
 /**
  * Targeted re-evaluation of non-manual transactions.
  *
- * Used when a Cost Center is deleted or a rule condition is modified/deleted.
- * Covers assignment_origin = 'rule', NULL (legacy rows created before the column
- * existed), and any other non-'manual' value — all treated as auto-assignable.
- * Transactions with assignment_origin = 'manual' are NEVER touched here.
+ * Used when a Cost Center or Split Rule is modified/deleted.
+ * Covers assignment_origin = 'rule', 'rule_split', NULL (legacy rows), and any
+ * other non-'manual' value.  Transactions with assignment_origin = 'manual' are
+ * NEVER touched here.
  */
 
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import { createServerClient } from "@/lib/supabase-server";
-import type { PLTransaction, CostCenterWithRules, CostCenterRule } from "@/types";
+import type {
+  PLTransaction,
+  CostCenterWithRules,
+  CostCenterRule,
+  SplitRuleWithDetails,
+  SplitRuleCondition,
+  SplitRuleAllocation,
+} from "@/types";
 
 type SupabaseClient = ReturnType<typeof createServerClient>;
 
@@ -50,12 +57,40 @@ export async function loadAllCCsWithRules(supabase: SupabaseClient): Promise<Cos
 }
 
 /**
+ * Loads all split rules with their conditions and allocations from the database.
+ * Call AFTER any mutation so the result reflects the current state.
+ */
+export async function loadAllSplitRules(supabase: SupabaseClient): Promise<SplitRuleWithDetails[]> {
+  const [{ data: rules }, { data: conditions }, { data: allocations }] = await Promise.all([
+    supabase.from("split_rules").select("*"),
+    supabase.from("split_rule_conditions").select("*").order("sequence"),
+    supabase.from("split_rule_allocations").select("*").order("display_order"),
+  ]);
+
+  const condsByRule = new Map<string, SplitRuleCondition[]>();
+  for (const c of (conditions ?? []) as SplitRuleCondition[]) {
+    const arr = condsByRule.get(c.split_rule_id) ?? [];
+    arr.push(c);
+    condsByRule.set(c.split_rule_id, arr);
+  }
+
+  const allocsByRule = new Map<string, SplitRuleAllocation[]>();
+  for (const a of (allocations ?? []) as SplitRuleAllocation[]) {
+    const arr = allocsByRule.get(a.split_rule_id) ?? [];
+    arr.push(a);
+    allocsByRule.set(a.split_rule_id, arr);
+  }
+
+  return (rules ?? []).map((sr) => ({
+    ...(sr as { id: string; name: string; description: string | null; created_at: string; updated_at: string }),
+    conditions: condsByRule.get(sr.id as string) ?? [],
+    allocations: allocsByRule.get(sr.id as string) ?? [],
+  }));
+}
+
+/**
  * Fetches the IDs of all re-evaluable transactions for a given Cost Center.
- * Includes assignment_origin = 'rule', NULL (legacy), and any unrecognized value.
- * Excludes only assignment_origin = 'manual' — those are never auto-reassigned.
- *
- * NOTE: In SQL, `col != 'manual'` returns NULL for NULL values, so we must use
- * an OR with IS NULL to capture both cases.
+ * Excludes only assignment_origin = 'manual'.
  */
 export async function getRuleAssignedTxIds(
   supabase: SupabaseClient,
@@ -69,7 +104,6 @@ export async function getRuleAssignedTxIds(
       .from("pl_transactions")
       .select("id")
       .eq("cost_center_id", ccId)
-      // Captures: 'rule', 'conflict_resolved', any unknown value, AND null
       .or("assignment_origin.neq.manual,assignment_origin.is.null")
       .range(offset, offset + 999);
 
@@ -85,18 +119,17 @@ export async function getRuleAssignedTxIds(
 /**
  * Re-evaluates a specific set of transactions against the current ruleset.
  * Updates pl_transactions and syncs conflict_snapshots.
- * Returns counts of outcomes.
  */
 export async function reevaluateRuleAssigned(
   supabase: SupabaseClient,
   txIds: string[],
   costCenters: CostCenterWithRules[],
+  splitRules: SplitRuleWithDetails[] = [],
 ): Promise<ReevalStats> {
   if (txIds.length === 0) {
     return { reevaluated: 0, reassigned: 0, unassigned: 0, conflicts: 0 };
   }
 
-  // Fetch full transaction data in batches of 1000
   type TxRow = { id: string } & Record<string, unknown>;
   const txs: TxRow[] = [];
   for (let i = 0; i < txIds.length; i += 1000) {
@@ -116,24 +149,29 @@ export async function reevaluateRuleAssigned(
   const snapshotDeletes: string[] = [];
 
   for (const tx of txs) {
-    const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters);
+    const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters, splitRules);
+    const origin =
+      r.cost_center_status !== "assigned"
+        ? null
+        : r.rule_splits
+        ? "rule_split"
+        : "rule";
+
     toUpdate.push({
       id: tx.id,
       cost_center_id: r.cost_center_id,
       cost_center_status: r.cost_center_status,
       cost_center_conflicts: r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
-      assignment_origin: r.cost_center_status === "assigned" ? "rule" : null,
+      assignment_origin: origin,
     });
 
     if (r.cost_center_status === "conflict") {
       snapshotUpserts.push({ transaction_id: tx.id, conflicting_cc_ids: r.cost_center_conflicts });
     } else {
-      // Clear any stale snapshot (safe no-op if none exists)
       snapshotDeletes.push(tx.id);
     }
   }
 
-  // Batch-update transactions
   for (let i = 0; i < toUpdate.length; i += UPDATE_PARALLEL) {
     await Promise.all(
       toUpdate.slice(i, i + UPDATE_PARALLEL).map((u) =>
@@ -150,7 +188,6 @@ export async function reevaluateRuleAssigned(
     );
   }
 
-  // Sync conflict_snapshots
   const now = new Date().toISOString();
 
   if (snapshotUpserts.length > 0) {

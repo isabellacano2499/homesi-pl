@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
-import type { PLTransaction, CostCenterWithRules, CostCenterRule } from "@/types";
+import { loadAllSplitRules } from "@/lib/reevaluate-rule-assigned";
+import type { PLTransaction, CostCenterWithRules, CostCenterRule, SplitRuleWithDetails } from "@/types";
 
 type TxRow = {
   id: string;
@@ -37,10 +38,12 @@ export async function POST(req: NextRequest) {
     { data: ccs, error: ccsErr },
     { data: allRules, error: rulesErr },
     { data: resolvedSnapshots, error: snapErr },
+    splitRules,
   ] = await Promise.all([
     supabase.from("cost_centers").select("id,name,rules_last_modified_at"),
     supabase.from("cost_center_rules").select("*").order("sequence"),
     supabase.from("conflict_snapshots").select("*").eq("is_resolved", true),
+    loadAllSplitRules(supabase),
   ]);
 
   if (ccsErr) return NextResponse.json({ error: `Failed to load cost centers: ${ccsErr.message}` }, { status: 500 });
@@ -131,13 +134,15 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters);
+      const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters, splitRules as SplitRuleWithDetails[]);
+      const origin =
+        r.cost_center_status !== "assigned" ? null : r.rule_splits ? "rule_split" : "rule";
       toUpdate.push({
         id: tx.id,
         cost_center_id: r.cost_center_id,
         cost_center_status: r.cost_center_status,
         cost_center_conflicts: r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
-        assignment_origin: r.cost_center_status === "assigned" ? "rule" : null,
+        assignment_origin: origin,
       });
 
       if (r.cost_center_status === "conflict") {

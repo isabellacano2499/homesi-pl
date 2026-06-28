@@ -11,7 +11,7 @@ import { buildSplitsMap } from "@/lib/apply-splits";
 import { useActiveBranches, mergeWithGlobal } from "@/components/branch-filter-provider";
 import { SplitDisplay } from "@/components/split-display";
 import type { SplitEntry } from "@/lib/apply-splits";
-import type { CostCenter, ConflictGroup, ResolvedConflictGroup, AssignmentGroup, AssignmentTx } from "@/types";
+import type { CostCenter, ConflictGroup, ResolvedConflictGroup, AssignmentGroup, AssignmentTx, ConflictSplitProposal, ConflictTx } from "@/types";
 
 function fmt(n: number | null | undefined) {
   if (n == null) return "—";
@@ -534,6 +534,42 @@ function ManualTab({ branches, costCenters }: { branches: string[]; costCenters:
   );
 }
 
+// ─── Conflict detail cell ─────────────────────────────────────────────────────
+
+function ConflictDetailCell({ tx }: { tx: ConflictTx }) {
+  if (tx.conflicting_split_rules && tx.conflicting_split_rules.length > 0) {
+    return (
+      <div className="space-y-1.5 min-w-[200px]">
+        {tx.conflicting_split_rules.map((sr: ConflictSplitProposal) => (
+          <div key={sr.split_rule_id} className="rounded border border-purple-200 bg-purple-50 px-2 py-1.5">
+            <div className="flex items-center gap-1 mb-1">
+              <Percent size={9} className="text-purple-500 shrink-0" />
+              <span className="text-[10px] font-semibold text-purple-700 truncate">{sr.split_rule_name}</span>
+            </div>
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+              {sr.allocations.map((a) => (
+                <span key={a.cost_center_id} className="text-[10px] text-purple-600 whitespace-nowrap">
+                  <span className="font-medium">{a.percentage}%</span> {a.cc_name}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <span className="inline-flex flex-wrap gap-1">
+      {tx.conflicting_ccs.map((cc) => (
+        <span key={cc.id} className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 font-medium">
+          {cc.name}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 // ─── Conflict (Pending) Tab ───────────────────────────────────────────────────
 
 function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; branches: string[] }) {
@@ -655,7 +691,7 @@ function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; bra
                     <th className="px-3 py-2 font-medium">Check Desc 3</th>
                     <th className="px-3 py-2 font-medium">Vendor</th>
                     <th className="px-3 py-2 text-right font-medium">Movement</th>
-                    <th className="px-3 py-2 font-medium">Conflicting CCs</th>
+                    <th className="px-3 py-2 font-medium">Conflict Details</th>
                     <th className="px-3 py-2 font-medium">Assign to</th>
                     <th className="w-20 px-3 py-2" />
                   </tr>
@@ -675,11 +711,7 @@ function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; bra
                       <td className="max-w-[100px] truncate px-3 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
                       <td className={`px-3 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
                       <td className="px-3 py-2">
-                        <span className="inline-flex flex-wrap gap-1">
-                          {tx.conflicting_ccs.map((cc) => (
-                            <span key={cc.id} className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 font-medium">{cc.name}</span>
-                          ))}
-                        </span>
+                        <ConflictDetailCell tx={tx} />
                       </td>
                       <td className="px-3 py-2">
                         <select value={rowAssign[tx.id] ?? ""} onChange={(e) => setRowAssign((prev) => ({ ...prev, [tx.id]: e.target.value }))}

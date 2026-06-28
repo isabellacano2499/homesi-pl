@@ -3,6 +3,7 @@ import { createServerClient } from "@/lib/supabase-server";
 import {
   getRuleAssignedTxIds,
   loadAllCCsWithRules,
+  loadAllSplitRules,
   reevaluateRuleAssigned,
 } from "@/lib/reevaluate-rule-assigned";
 
@@ -38,8 +39,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   await bumpRulesModified(supabase, id);
 
   // Re-evaluate against the updated ruleset
-  const allCCs = await loadAllCCsWithRules(supabase);
-  const stats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, allCCs);
+  const [allCCs, splitRules] = await Promise.all([loadAllCCsWithRules(supabase), loadAllSplitRules(supabase)]);
+  const stats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, allCCs, splitRules);
 
   return NextResponse.json({ rule: data, ...stats });
 }
@@ -58,8 +59,8 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   await bumpRulesModified(supabase, id);
 
   // Re-evaluate against the ruleset minus the deleted condition
-  const allCCs = await loadAllCCsWithRules(supabase);
-  const stats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, allCCs);
+  const [allCCs, splitRules] = await Promise.all([loadAllCCsWithRules(supabase), loadAllSplitRules(supabase)]);
+  const stats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, allCCs, splitRules);
 
   return NextResponse.json({ deleted: true, ...stats });
 }
