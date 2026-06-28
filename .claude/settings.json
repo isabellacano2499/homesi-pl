@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(cd \"C:\\\\Users\\\\Isabella\\\\Desktop\\\\CECOS Homesi\"; ls node_modules | Where-Object { $_.Name -in @\\(\"dotenv\",\"@next\",\"next\"\\) } | Select-Object Name)"
+    ]
+  }
+}
