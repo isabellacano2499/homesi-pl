@@ -14,7 +14,8 @@ type DraftCondition = {
   field: string;
   operator: string;
   value: string;
-  group_number: number;
+  opens_group: boolean;
+  closes_group: boolean;
 };
 
 type DraftAllocation = {
@@ -40,7 +41,8 @@ function blankCondition(seq: number): DraftCondition {
     field,
     operator: defaultOperator(field),
     value: defaultValue(field),
-    group_number: 0,
+    opens_group: false,
+    closes_group: false,
   };
 }
 
@@ -57,18 +59,28 @@ function conditionSummary(conditions: SplitRuleCondition[]): string {
   const sorted = [...conditions].sort((a, b) => a.sequence - b.sequence);
   let out = "";
   sorted.forEach((c, i) => {
-    const gn = c.group_number ?? 0;
-    const prevGn = i > 0 ? (sorted[i - 1].group_number ?? 0) : 0;
-    const nextGn = i < sorted.length - 1 ? (sorted[i + 1].group_number ?? 0) : 0;
-    const isFirst = gn > 0 && (i === 0 || prevGn !== gn);
-    const isLast = gn > 0 && (i === sorted.length - 1 || nextGn !== gn);
     const connector = i === 0 ? "" : ` ${c.logic_connector ?? "AND"} `;
     out += connector;
-    if (isFirst) out += "(";
+    if (c.opens_group) out += "(";
     out += `${c.field} ${c.operator} "${c.value}"`;
-    if (isLast) out += ")";
+    if (c.closes_group) out += ")";
   });
   return out;
+}
+
+function validateParens(conditions: DraftCondition[]): string | null {
+  let depth = 0;
+  const sorted = [...conditions].sort((a, b) => a.sequence - b.sequence);
+  for (let i = 0; i < sorted.length; i++) {
+    const c = sorted[i];
+    if (c.opens_group) depth++;
+    if (c.closes_group) {
+      depth--;
+      if (depth < 0) return `Condition ${i + 1} closes a parenthesis that was never opened`;
+    }
+  }
+  if (depth > 0) return `${depth} opening parenthes${depth > 1 ? "es" : "is"} never closed`;
+  return null;
 }
 
 function allocationSummary(allocations: SplitRuleAllocation[], ccNames: Map<string, string>): string {
@@ -102,24 +114,24 @@ function ConditionsEditor({
     onChange(filtered.map((c, i) => ({ ...c, sequence: i + 1 })));
   }
 
-  function toggleGroup(key: string) {
-    onChange(conditions.map((c) =>
-      c.key === key ? { ...c, group_number: c.group_number > 0 ? 0 : 1 } : c
-    ));
-  }
-
   return (
     <div className="space-y-2">
       {conditions.map((cond, idx) => {
         const ops = operatorsForField(cond.field);
-        const inGroup = cond.group_number > 0;
         return (
-          <div
-            key={cond.key}
-            className={`flex items-center gap-2 flex-wrap rounded-r ${
-              inGroup ? "border-l-2 border-amber-400 bg-amber-50/50 pl-2" : ""
-            }`}
-          >
+          <div key={cond.key} className="flex items-center gap-2 flex-wrap">
+            {/* ( toggle — opens parenthesis before this condition */}
+            <button
+              onClick={() => updateCondition(cond.key, { opens_group: !cond.opens_group })}
+              title="Insert ( before this condition"
+              className={`shrink-0 w-5 text-center text-xs py-0.5 rounded font-mono transition-colors ${
+                cond.opens_group
+                  ? "text-amber-600 bg-amber-100 border border-amber-300"
+                  : "text-gray-300 hover:text-amber-500 hover:bg-amber-50 border border-transparent"
+              }`}
+            >
+              (
+            </button>
             {idx === 0 ? (
               <span className="text-xs text-gray-400 w-10 shrink-0">WHERE</span>
             ) : (
@@ -173,16 +185,17 @@ function ConditionsEditor({
                 className="text-xs border border-gray-300 bg-white text-gray-800 rounded px-2 py-0.5 min-w-[100px] flex-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
               />
             )}
+            {/* ) toggle — closes parenthesis after this condition */}
             <button
-              onClick={() => toggleGroup(cond.key)}
-              title={inGroup ? "Remove from group ( )" : "Add to group ( )"}
-              className={`shrink-0 text-xs px-1.5 py-0.5 rounded font-mono transition-colors ${
-                inGroup
-                  ? "text-amber-600 bg-amber-100 border border-amber-200"
-                  : "text-gray-400 hover:text-amber-600 hover:bg-amber-50 border border-transparent"
+              onClick={() => updateCondition(cond.key, { closes_group: !cond.closes_group })}
+              title="Insert ) after this condition"
+              className={`shrink-0 w-5 text-center text-xs py-0.5 rounded font-mono transition-colors ${
+                cond.closes_group
+                  ? "text-amber-600 bg-amber-100 border border-amber-300"
+                  : "text-gray-300 hover:text-amber-500 hover:bg-amber-50 border border-transparent"
               }`}
             >
-              ( )
+              )
             </button>
             <button
               onClick={() => removeCondition(cond.key)}
@@ -351,6 +364,8 @@ function RuleForm({
     const total = sumPct(allocations);
     if (Math.abs(total - 100) > 0.01) { setErr(`Allocations must sum to 100% (currently ${total.toFixed(2)}%)`); return; }
     if (conditions.some((c) => !c.value.trim())) { setErr("All conditions need a value"); return; }
+    const parenErr = validateParens(conditions);
+    if (parenErr) { setErr(parenErr); return; }
 
     setSaving(true);
     try {
@@ -363,7 +378,8 @@ function RuleForm({
           field: c.field,
           operator: c.operator,
           value: c.value,
-          group_number: c.group_number ?? 0,
+          opens_group: c.opens_group,
+          closes_group: c.closes_group,
         })),
         allocations: allocations.map((a, i) => ({
           cost_center_id: a.cost_center_id,
@@ -574,30 +590,18 @@ function RuleRow({
               <p className="text-xs text-gray-400 italic">No conditions — will match all transactions</p>
             ) : (
               <div className="space-y-0.5">
-                {sorted.map((c, i) => {
-                  const gn = c.group_number ?? 0;
-                  const prevGn = i > 0 ? (sorted[i - 1].group_number ?? 0) : 0;
-                  const nextGn = i < sorted.length - 1 ? (sorted[i + 1].group_number ?? 0) : 0;
-                  const isFirst = gn > 0 && (i === 0 || prevGn !== gn);
-                  const isLast = gn > 0 && (i === sorted.length - 1 || nextGn !== gn);
-                  return (
-                    <div
-                      key={c.id}
-                      className={`text-xs flex items-center gap-1.5 py-0.5 ${
-                        gn > 0 ? "border-l-2 border-amber-300 bg-amber-50/60 pl-2 rounded-r" : ""
-                      }`}
-                    >
-                      <span className="font-mono text-gray-400 w-8 shrink-0">
-                        {i === 0 ? "IF" : c.logic_connector ?? "AND"}
-                      </span>
-                      {isFirst && <span className="font-mono text-amber-600 shrink-0">(</span>}
-                      <span className="text-blue-600">{c.field}</span>
-                      <span className="text-gray-400">{c.operator}</span>
-                      <span className="text-gray-900">"{c.value}"</span>
-                      {isLast && <span className="font-mono text-amber-600 shrink-0">)</span>}
-                    </div>
-                  );
-                })}
+                {sorted.map((c, i) => (
+                  <div key={c.id} className="text-xs flex items-center gap-1.5 py-0.5">
+                    <span className="font-mono text-gray-400 w-8 shrink-0">
+                      {i === 0 ? "IF" : c.logic_connector ?? "AND"}
+                    </span>
+                    {c.opens_group && <span className="font-mono text-amber-600 shrink-0">(</span>}
+                    <span className="text-blue-600">{c.field}</span>
+                    <span className="text-gray-400">{c.operator}</span>
+                    <span className="text-gray-900">"{c.value}"</span>
+                    {c.closes_group && <span className="font-mono text-amber-600 shrink-0">)</span>}
+                  </div>
+                ))}
               </div>
             )}
           </div>

@@ -343,6 +343,8 @@ export interface SplitRuleCondition {
   operator: string;
   value: string;
   group_number: number;
+  opens_group: boolean;
+  closes_group: boolean;
   created_at: string;
 }
 

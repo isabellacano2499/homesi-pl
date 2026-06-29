@@ -8,7 +8,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   const supabase = createServerClient();
 
   const body = await req.json().catch(() => ({}));
-  const { sequence, logic_connector, field, operator, value, group_number } = body;
+  const { sequence, logic_connector, field, operator, value, opens_group, closes_group } = body;
 
   if (!field || !operator || value === undefined) {
     return NextResponse.json({ error: "field, operator, and value are required" }, { status: 400 });
@@ -23,7 +23,8 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       field,
       operator,
       value: String(value),
-      group_number: Number(group_number) || 0,
+      opens_group: !!opens_group,
+      closes_group: !!closes_group,
     })
     .select()
     .single();
@@ -44,7 +45,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     field: string;
     operator: string;
     value: string;
-    group_number: number;
+    opens_group?: boolean;
+    closes_group?: boolean;
   }> = Array.isArray(body) ? body : body.conditions;
 
   if (!Array.isArray(conditions)) {

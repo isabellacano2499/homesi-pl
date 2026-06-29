@@ -11,7 +11,8 @@ type ConditionLike = {
   field: string;
   operator: string;
   value: string;
-  group_number: number;
+  opens_group?: boolean;
+  closes_group?: boolean;
 };
 
 function matchCondition(tx: PLTransaction, cond: ConditionLike): boolean {
@@ -64,38 +65,39 @@ export function evaluateConditions(tx: PLTransaction, conditions: ConditionLike[
   const sorted = [...conditions].sort((a, b) => a.sequence - b.sequence);
   if (sorted.length === 0) return false;
 
-  const groupMap = new Map<number | string, ConditionLike[]>();
-  const groupOrder: (number | string)[] = [];
-
-  for (const cond of sorted) {
-    const key: number | string =
-      cond.group_number === 0 ? `_s${cond.sequence}` : cond.group_number;
-    if (!groupMap.has(key)) {
-      groupMap.set(key, []);
-      groupOrder.push(key);
-    }
-    groupMap.get(key)!.push(cond);
-  }
-
+  // Stack-based evaluation: each frame holds the outer accumulated result and the
+  // connector that will join it with the group result when the group closes.
+  const stack: { accumulated: boolean | null; connector: "AND" | "OR" | null }[] = [];
   let result: boolean | null = null;
 
-  for (const key of groupOrder) {
-    const group = groupMap.get(key)!;
-    const interConnector = group[0].logic_connector;
+  for (const cond of sorted) {
+    const val = matchCondition(tx, cond);
 
-    let groupResult = matchCondition(tx, group[0]);
-    for (let i = 1; i < group.length; i++) {
-      const c = group[i];
-      if (c.logic_connector === "AND") groupResult = groupResult && matchCondition(tx, c);
-      else groupResult = groupResult || matchCondition(tx, c);
+    if (cond.opens_group) {
+      // Push outer context; start a fresh inner accumulator with this condition as first item
+      stack.push({ accumulated: result, connector: cond.logic_connector ?? "AND" });
+      result = val;
+    } else {
+      // Normal accumulation (or very first condition)
+      if (result === null) {
+        result = val;
+      } else if (cond.logic_connector === "OR") {
+        result = result || val;
+      } else {
+        result = result && val;
+      }
     }
 
-    if (result === null) {
-      result = groupResult;
-    } else if (interConnector === "AND") {
-      result = result && groupResult;
-    } else {
-      result = result || groupResult;
+    // closes_group: merge the group result back into the outer context
+    if (cond.closes_group && stack.length > 0) {
+      const frame = stack.pop()!;
+      if (frame.accumulated === null) {
+        // Group started the expression — group result IS the accumulated result
+      } else if (frame.connector === "OR") {
+        result = frame.accumulated || (result ?? false);
+      } else {
+        result = frame.accumulated && (result ?? false);
+      }
     }
   }
 
