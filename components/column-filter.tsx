@@ -56,6 +56,20 @@ function CategoricalDropdown({ opts, selected, onChange }: {
           autoFocus
         />
       </div>
+      <div className="flex items-center justify-between border-b border-gray-100 px-3 py-1">
+        <button
+          onClick={() => onChange(opts)}
+          className="text-xs text-blue-600 hover:underline"
+        >
+          Select all
+        </button>
+        <button
+          onClick={() => onChange([])}
+          className="text-xs text-gray-400 hover:text-gray-600 hover:underline"
+        >
+          Deselect all
+        </button>
+      </div>
       <div className="max-h-52 overflow-y-auto py-1">
         {visible.map((v) => (
           <label key={v} className="flex cursor-pointer items-center gap-2 px-3 py-1 hover:bg-gray-50">
