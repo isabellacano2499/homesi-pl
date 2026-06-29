@@ -66,7 +66,9 @@ export async function GET(req: NextRequest) {
   const { data: txs, error: txErr } = await txQ;
   if (txErr) return NextResponse.json({ error: txErr.message }, { status: 500 });
 
-  const txMap = new Map((txs ?? []).map((t: Record<string, unknown>) => [t.id as string, t]));
+  const txMap = new Map<string, Record<string, unknown>>(
+    (txs ?? []).map((t: Record<string, unknown>) => [t.id as string, t])
+  );
 
   const groupMap = new Map<string, ResolvedConflictGroup>();
 
