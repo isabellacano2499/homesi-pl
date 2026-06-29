@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
-import type { ConflictGroup, ConflictSplitProposal } from "@/types";
+import type { ConflictGroup } from "@/types";
 
 export const dynamic = "force-dynamic";
 
@@ -11,54 +11,48 @@ export async function GET(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let q: any = supabase
     .from("pl_transactions")
-    .select("id,gl_code,gl_name,month,year,branch,check_description,check_description_2,check_description_3,vendor,debit,credit,movement,cost_center_conflicts")
+    .select(
+      "id,gl_code,gl_name,month,year,branch,check_description,check_description_2," +
+      "check_description_3,vendor,debit,credit,movement,cost_center_conflicts,conflict_type"
+    )
     .eq("cost_center_status", "conflict")
     .order("gl_code", { nullsFirst: false });
   if (branches.length > 0) q = q.in("branch", branches);
 
-  const [{ data: txs, error: txErr }, { data: ccs, error: ccErr }] = await Promise.all([
-    q,
-    supabase.from("cost_centers").select("id,name"),
-  ]);
-
+  const { data: txs, error: txErr } = await q;
   if (txErr) return NextResponse.json({ error: txErr.message }, { status: 500 });
-  if (ccErr) return NextResponse.json({ error: ccErr.message }, { status: 500 });
 
-  const ccMap = new Map<string, string>((ccs ?? []).map((c) => [c.id as string, c.name as string]));
-
-  // Collect any split rule IDs referenced in conflict arrays
-  const splitRuleIds = new Set<string>();
+  // Collect all unique rule IDs referenced in conflict arrays
+  const ruleIds = new Set<string>();
   for (const tx of txs ?? []) {
-    for (const entry of (tx.cost_center_conflicts ?? []) as string[]) {
-      if (entry.startsWith("split:")) splitRuleIds.add(entry.slice(6));
+    for (const id of (tx.cost_center_conflicts ?? []) as string[]) {
+      ruleIds.add(id);
     }
   }
 
-  // Fetch split rule names + allocations if needed
-  const splitRuleNameMap = new Map<string, string>();
-  const splitRuleAllocMap = new Map<
-    string,
-    Array<{ cost_center_id: string; percentage: number }>
-  >();
+  const ruleNameMap = new Map<string, string>();
+  const ruleAllocMap = new Map<string, Array<{ cost_center_id: string; percentage: number }>>();
+  const ccNameMap = new Map<string, string>();
 
-  if (splitRuleIds.size > 0) {
-    const ids = [...splitRuleIds];
-    const [{ data: srRows }, { data: allocRows }] = await Promise.all([
+  if (ruleIds.size > 0) {
+    const ids = [...ruleIds];
+    const [{ data: rules }, { data: allocs }, { data: ccs }] = await Promise.all([
       supabase.from("split_rules").select("id,name").in("id", ids),
       supabase
         .from("split_rule_allocations")
         .select("split_rule_id,cost_center_id,percentage,display_order")
         .in("split_rule_id", ids)
         .order("display_order"),
+      supabase.from("cost_centers").select("id,name"),
     ]);
-    for (const sr of srRows ?? []) {
-      splitRuleNameMap.set(sr.id as string, sr.name as string);
-    }
-    for (const a of allocRows ?? []) {
-      const arr = splitRuleAllocMap.get(a.split_rule_id as string) ?? [];
+
+    for (const r of rules ?? []) ruleNameMap.set(r.id as string, r.name as string);
+    for (const a of allocs ?? []) {
+      const arr = ruleAllocMap.get(a.split_rule_id as string) ?? [];
       arr.push({ cost_center_id: a.cost_center_id as string, percentage: a.percentage as number });
-      splitRuleAllocMap.set(a.split_rule_id as string, arr);
+      ruleAllocMap.set(a.split_rule_id as string, arr);
     }
+    for (const c of ccs ?? []) ccNameMap.set(c.id as string, c.name as string);
   }
 
   const groupMap = new Map<string, ConflictGroup>();
@@ -69,33 +63,23 @@ export async function GET(req: NextRequest) {
       groupMap.set(key, { gl_code: key, gl_name: tx.gl_name ?? "", transactions: [] });
     }
 
-    const conflictIds = (tx.cost_center_conflicts ?? []) as string[];
-    const isSplitConflict = conflictIds.some((id) => id.startsWith("split:"));
+    const ruleIdList = (tx.cost_center_conflicts ?? []) as string[];
+    const matchedRules = ruleIdList.map((ruleId) => {
+      const allocs = ruleAllocMap.get(ruleId) ?? [];
+      const rulePct = allocs.reduce((s, a) => s + a.percentage, 0);
+      return {
+        rule_id: ruleId,
+        rule_name: ruleNameMap.get(ruleId) ?? "(deleted rule)",
+        allocations: allocs.map((a) => ({
+          cost_center_id: a.cost_center_id,
+          cc_name: ccNameMap.get(a.cost_center_id) ?? "(deleted CC)",
+          percentage: a.percentage,
+        })),
+        rule_total_percentage: rulePct,
+      };
+    });
 
-    let conflicting_ccs: { id: string; name: string }[] = [];
-    let conflicting_split_rules: ConflictSplitProposal[] | undefined;
-
-    if (isSplitConflict) {
-      conflicting_split_rules = conflictIds
-        .filter((id) => id.startsWith("split:"))
-        .map((id) => {
-          const srId = id.slice(6);
-          return {
-            split_rule_id: srId,
-            split_rule_name: splitRuleNameMap.get(srId) ?? "(deleted rule)",
-            allocations: (splitRuleAllocMap.get(srId) ?? []).map((a) => ({
-              cost_center_id: a.cost_center_id,
-              cc_name: ccMap.get(a.cost_center_id) ?? "(deleted CC)",
-              percentage: a.percentage,
-            })),
-          };
-        });
-    } else {
-      conflicting_ccs = conflictIds.map((id) => ({
-        id,
-        name: ccMap.get(id) ?? "(deleted Cost Center)",
-      }));
-    }
+    const totalPct = matchedRules.reduce((s, r) => s + r.rule_total_percentage, 0);
 
     groupMap.get(key)!.transactions.push({
       id: tx.id,
@@ -111,8 +95,9 @@ export async function GET(req: NextRequest) {
       debit: tx.debit,
       credit: tx.credit,
       movement: tx.movement,
-      conflicting_ccs,
-      conflicting_split_rules,
+      conflict_type: (tx.conflict_type as "underassigned" | "overassigned") ?? "underassigned",
+      total_matched_percentage: totalPct,
+      matched_rules: matchedRules,
     });
   }
 

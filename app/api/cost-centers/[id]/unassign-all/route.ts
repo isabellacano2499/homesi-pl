@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
-import { loadAllCCsWithRules, reevaluateRuleAssigned } from "@/lib/reevaluate-rule-assigned";
+import { loadAllSplitRules, reevaluateRuleAssigned } from "@/lib/reevaluate-rule-assigned";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -116,12 +116,11 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
     }
   }
 
-  // ── Execute Part B re-evaluation without this CC ──────────────────────────
+  // ── Execute Part B re-evaluation ─────────────────────────────────────────
   let reevalStats = { reevaluated: 0, reassigned: 0, unassigned: 0, conflicts: 0 };
   if (conflictTxIds.length > 0) {
-    const allCCs = await loadAllCCsWithRules(supabase);
-    const ccsWithoutThis = allCCs.filter((cc) => cc.id !== id);
-    reevalStats = await reevaluateRuleAssigned(supabase, conflictTxIds, ccsWithoutThis);
+    const splitRules = await loadAllSplitRules(supabase);
+    reevalStats = await reevaluateRuleAssigned(supabase, conflictTxIds, splitRules);
   }
 
   return NextResponse.json({

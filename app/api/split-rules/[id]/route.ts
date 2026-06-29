@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
 import {
-  loadAllCCsWithRules,
   loadAllSplitRules,
   reevaluateRuleAssigned,
 } from "@/lib/reevaluate-rule-assigned";
@@ -54,12 +53,8 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const { error } = await supabase.from("split_rules").delete().eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Re-evaluate all previously rule_split-assigned transactions against the
-  // remaining rules (some may match other split rules, others become unassigned)
-  const [costCenters, splitRules] = await Promise.all([
-    loadAllCCsWithRules(supabase),
-    loadAllSplitRules(supabase),
-  ]);
+  // Re-evaluate all rule-assigned transactions against the remaining rules
+  const splitRules = await loadAllSplitRules(supabase);
 
   const txIds: string[] = [];
   let offset = 0;
@@ -67,7 +62,7 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
     const { data } = await supabase
       .from("pl_transactions")
       .select("id")
-      .eq("assignment_origin", "rule_split")
+      .in("assignment_origin", ["rule", "rule_split"])
       .range(offset, offset + 999);
     if (!data || data.length === 0) break;
     txIds.push(...(data as { id: string }[]).map((r) => r.id));
@@ -76,7 +71,7 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   }
 
   if (txIds.length > 0) {
-    await reevaluateRuleAssigned(supabase, txIds, costCenters, splitRules);
+    await reevaluateRuleAssigned(supabase, txIds, splitRules);
   }
 
   return NextResponse.json({ ok: true, reevaluated: txIds.length });

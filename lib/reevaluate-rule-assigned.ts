@@ -11,8 +11,6 @@ import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import { createServerClient } from "@/lib/supabase-server";
 import type {
   PLTransaction,
-  CostCenterWithRules,
-  CostCenterRule,
   SplitRuleWithDetails,
   SplitRuleCondition,
   SplitRuleAllocation,
@@ -93,29 +91,6 @@ const TX_FIELDS =
 const UPDATE_PARALLEL = 100;
 
 /**
- * Loads all cost centers with their rules from the database.
- * Call AFTER any mutation so the result reflects the current state.
- */
-export async function loadAllCCsWithRules(supabase: SupabaseClient): Promise<CostCenterWithRules[]> {
-  const [{ data: ccs }, { data: rules }] = await Promise.all([
-    supabase.from("cost_centers").select("id,name,description,created_at,updated_at"),
-    supabase.from("cost_center_rules").select("*").order("sequence"),
-  ]);
-
-  const rulesByCC = new Map<string, CostCenterRule[]>();
-  for (const r of (rules ?? []) as CostCenterRule[]) {
-    const arr = rulesByCC.get(r.cost_center_id) ?? [];
-    arr.push(r);
-    rulesByCC.set(r.cost_center_id, arr);
-  }
-
-  return (ccs ?? []).map((cc) => ({
-    ...(cc as { id: string; name: string; description: string | null; created_at: string; updated_at: string }),
-    rules: rulesByCC.get(cc.id as string) ?? [],
-  }));
-}
-
-/**
  * Loads all split rules with their conditions and allocations from the database.
  * Call AFTER any mutation so the result reflects the current state.
  */
@@ -182,7 +157,6 @@ export async function getRuleAssignedTxIds(
 export async function reevaluateRuleAssigned(
   supabase: SupabaseClient,
   txIds: string[],
-  costCenters: CostCenterWithRules[],
   splitRules: SplitRuleWithDetails[] = [],
 ): Promise<ReevalStats> {
   if (txIds.length === 0) {
@@ -210,18 +184,15 @@ export async function reevaluateRuleAssigned(
     cost_center_status: string;
     cost_center_conflicts: string[] | null;
     assignment_origin: string | null;
+    conflict_type: string | null;
   }[] = [];
   const snapshotUpserts: { transaction_id: string; conflicting_cc_ids: string[] }[] = [];
   const snapshotDeletes: string[] = [];
 
   for (const tx of txs) {
-    const r = evaluateCostCenterRules(tx as unknown as PLTransaction, costCenters, splitRules);
+    const r = evaluateCostCenterRules(tx as unknown as PLTransaction, splitRules);
     const origin =
-      r.cost_center_status !== "assigned"
-        ? null
-        : r.rule_splits
-        ? "rule_split"
-        : "rule";
+      r.cost_center_status !== "assigned" ? null : r.rule_splits ? "rule_split" : "rule";
 
     toUpdate.push({
       id: tx.id,
@@ -229,6 +200,7 @@ export async function reevaluateRuleAssigned(
       cost_center_status: r.cost_center_status,
       cost_center_conflicts: r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
       assignment_origin: origin,
+      conflict_type: r.conflict_type ?? null,
     });
 
     if (r.cost_center_status === "conflict") {
@@ -248,6 +220,7 @@ export async function reevaluateRuleAssigned(
             cost_center_status: u.cost_center_status,
             cost_center_conflicts: u.cost_center_conflicts,
             assignment_origin: u.assignment_origin,
+            conflict_type: u.conflict_type,
           })
           .eq("id", u.id)
       )

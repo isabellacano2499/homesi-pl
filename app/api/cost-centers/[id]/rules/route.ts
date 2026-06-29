@@ -1,139 +1,62 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
-import {
-  getRuleAssignedTxIds,
-  loadAllCCsWithRules,
-  loadAllSplitRules,
-  reevaluateRuleAssigned,
-} from "@/lib/reevaluate-rule-assigned";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+// GET /api/cost-centers/[id]/rules
+// Returns all split rules that have at least one allocation pointing to this cost center.
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = createServerClient();
-  const { data, error } = await supabase
-    .from("cost_center_rules")
-    .select("*")
+
+  // Find rule IDs that allocate to this CC
+  const { data: allocRows, error: allocErr } = await supabase
+    .from("split_rule_allocations")
+    .select("split_rule_id,percentage,display_order")
     .eq("cost_center_id", id)
-    .order("sequence");
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data ?? []);
-}
+    .order("display_order");
 
-export async function POST(req: NextRequest, { params }: Ctx) {
-  const { id } = await params;
-  const body = await req.json();
-  const { logic_connector, field, operator, value } = body;
-  if (!field || !operator || value === undefined) {
-    return NextResponse.json({ error: "field, operator, value are required" }, { status: 400 });
-  }
+  if (allocErr) return NextResponse.json({ error: allocErr.message }, { status: 500 });
 
-  const supabase = createServerClient();
+  const ruleIds = [...new Set((allocRows ?? []).map((a) => a.split_rule_id as string))];
+  if (ruleIds.length === 0) return NextResponse.json([]);
 
-  // Get max sequence and max group_number for this CC
-  const { data: existing } = await supabase
-    .from("cost_center_rules")
-    .select("sequence,group_number")
-    .eq("cost_center_id", id)
-    .order("sequence", { ascending: false });
-
-  const nextSeq = existing && existing.length > 0 ? (existing[0].sequence as number) + 1 : 1;
-  const maxGroup = existing && existing.length > 0
-    ? Math.max(...(existing as { group_number: number }[]).map((r) => r.group_number))
-    : 0;
-  // Each new condition is its own singleton group
-  const nextGroup = maxGroup + 1;
-
-  const { data, error } = await supabase
-    .from("cost_center_rules")
-    .insert({
-      cost_center_id: id,
-      sequence: nextSeq,
-      logic_connector: nextSeq === 1 ? null : (logic_connector ?? "AND"),
-      field,
-      operator,
-      value: String(value),
-      group_number: nextGroup,
-    })
-    .select()
-    .single();
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-
-  await supabase
-    .from("cost_centers")
-    .update({ rules_last_modified_at: new Date().toISOString() })
-    .eq("id", id);
-
-  return NextResponse.json(data, { status: 201 });
-}
-
-/** PATCH { action: "group" | "ungroup", rule_ids: string[] } */
-export async function PATCH(req: NextRequest, { params }: Ctx) {
-  const { id } = await params;
-  const body = await req.json().catch(() => ({}));
-  const { action, rule_ids } = body as { action: string; rule_ids: string[] };
-
-  if (!action || !Array.isArray(rule_ids) || rule_ids.length === 0) {
-    return NextResponse.json({ error: "action and rule_ids are required" }, { status: 400 });
-  }
-
-  const supabase = createServerClient();
-
-  // Load all rules for this CC to compute current max group_number
-  const { data: allForCC, error: loadErr } = await supabase
-    .from("cost_center_rules")
-    .select("id,sequence,group_number")
-    .eq("cost_center_id", id);
-
-  if (loadErr) return NextResponse.json({ error: loadErr.message }, { status: 500 });
-
-  const allRules = (allForCC ?? []) as { id: string; sequence: number; group_number: number }[];
-  const maxGroup = allRules.length > 0
-    ? Math.max(...allRules.map((r) => r.group_number))
-    : 0;
-
-  if (action === "group") {
-    // Merge all selected rules into a single new group
-    const newGroup = maxGroup + 1;
-    const { error } = await supabase
-      .from("cost_center_rules")
-      .update({ group_number: newGroup })
-      .in("id", rule_ids)
-      .eq("cost_center_id", id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-
-  } else if (action === "ungroup") {
-    // Give each selected rule its own unique group_number
-    const toUngroup = allRules
-      .filter((r) => rule_ids.includes(r.id))
-      .sort((a, b) => a.sequence - b.sequence);
-    let nextG = maxGroup + 1;
-    for (const r of toUngroup) {
-      const { error } = await supabase
-        .from("cost_center_rules")
-        .update({ group_number: nextG++ })
-        .eq("id", r.id);
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-
-  } else {
-    return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
-  }
-
-  await supabase
-    .from("cost_centers")
-    .update({ rules_last_modified_at: new Date().toISOString() })
-    .eq("id", id);
-
-  // Re-evaluate transactions assigned to this CC under the new grouping
-  const ruleAssignedIds = await getRuleAssignedTxIds(supabase, id);
-  const [allCCs, splitRules] = await Promise.all([
-    loadAllCCsWithRules(supabase),
-    loadAllSplitRules(supabase),
+  const [{ data: rules, error: ruleErr }, { data: allConditions, error: condErr }, { data: allAllocs, error: allocErr2 }] = await Promise.all([
+    supabase.from("split_rules").select("id,name,description,created_at,updated_at").in("id", ruleIds),
+    supabase.from("split_rule_conditions").select("*").in("split_rule_id", ruleIds).order("sequence"),
+    supabase.from("split_rule_allocations").select("*").in("split_rule_id", ruleIds).order("display_order"),
   ]);
-  const stats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, allCCs, splitRules);
 
-  return NextResponse.json(stats);
+  if (ruleErr) return NextResponse.json({ error: ruleErr.message }, { status: 500 });
+  if (condErr) return NextResponse.json({ error: condErr.message }, { status: 500 });
+  if (allocErr2) return NextResponse.json({ error: allocErr2.message }, { status: 500 });
+
+  const condsByRule = new Map<string, unknown[]>();
+  for (const c of allConditions ?? []) {
+    const arr = condsByRule.get(c.split_rule_id as string) ?? [];
+    arr.push(c);
+    condsByRule.set(c.split_rule_id as string, arr);
+  }
+  const allocsByRule = new Map<string, unknown[]>();
+  for (const a of allAllocs ?? []) {
+    const arr = allocsByRule.get(a.split_rule_id as string) ?? [];
+    arr.push(a);
+    allocsByRule.set(a.split_rule_id as string, arr);
+  }
+
+  const result = (rules ?? []).map((r) => ({
+    ...r,
+    conditions: condsByRule.get(r.id as string) ?? [],
+    allocations: allocsByRule.get(r.id as string) ?? [],
+  }));
+
+  return NextResponse.json(result);
+}
+
+export async function POST() {
+  return NextResponse.json({ error: "CC-level rules are deprecated. Manage rules at /split-rules." }, { status: 410 });
+}
+
+export async function PATCH() {
+  return NextResponse.json({ error: "CC-level rules are deprecated. Manage rules at /split-rules." }, { status: 410 });
 }

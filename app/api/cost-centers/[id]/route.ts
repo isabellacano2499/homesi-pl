@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
 import {
   getRuleAssignedTxIds,
-  loadAllCCsWithRules,
+  loadAllSplitRules,
   reevaluateRuleAssigned,
 } from "@/lib/reevaluate-rule-assigned";
 
@@ -133,17 +133,15 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  // ── Load remaining CCs once (post-deletion — excludes the deleted CC) ─────
+  // ── Load rules post-deletion (excludes any that referenced the deleted CC) ─
 
-  const remaining = await loadAllCCsWithRules(supabase);
+  const splitRules = await loadAllSplitRules(supabase);
 
   // ── Re-evaluate Set A (rule/null-origin direct) ───────────────────────────
-  const directStats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, remaining);
+  const directStats = await reevaluateRuleAssigned(supabase, ruleAssignedIds, splitRules);
 
   // ── Re-evaluate Set B (conflict transactions) ─────────────────────────────
-  // `remaining` already excludes the deleted CC, so transactions that were
-  // tied between this CC and one other will resolve cleanly to the other.
-  const conflictStats = await reevaluateRuleAssigned(supabase, conflictTxIds, remaining);
+  const conflictStats = await reevaluateRuleAssigned(supabase, conflictTxIds, splitRules);
 
   return NextResponse.json({
     deleted: true,

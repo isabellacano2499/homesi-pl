@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import { loadAllSplitRules, loadLoanOfficialFields, enrichTxWithLoanOfficials } from "@/lib/reevaluate-rule-assigned";
-import type { PLTransaction, CostCenterWithRules, CostCenterRule, SplitRuleWithDetails } from "@/types";
+import type { PLTransaction, SplitRuleWithDetails } from "@/types";
 
 type TxRow = {
   id: string;
@@ -37,45 +37,20 @@ export async function POST(req: NextRequest) {
   // ── 1. Load cost centers, rules, resolved snapshots ───────────────────────
 
   const [
-    { data: ccs, error: ccsErr },
-    { data: allRules, error: rulesErr },
     { data: resolvedSnapshots, error: snapErr },
     splitRules,
     loMap,
   ] = await Promise.all([
-    supabase.from("cost_centers").select("id,name,rules_last_modified_at"),
-    supabase.from("cost_center_rules").select("*").order("sequence"),
     supabase.from("conflict_snapshots").select("*").eq("is_resolved", true),
     loadAllSplitRules(supabase),
     loadLoanOfficialFields(supabase),
   ]);
 
-  if (ccsErr) return NextResponse.json({ error: `Failed to load cost centers: ${ccsErr.message}` }, { status: 500 });
-  if (rulesErr) return NextResponse.json({ error: `Failed to load rules: ${rulesErr.message}` }, { status: 500 });
   if (snapErr) console.warn("[reapply] Could not load snapshots:", snapErr.message);
 
   const resolvedByTx = new Map<string, { conflicting_cc_ids: string[]; resolved_at: string | null }>(
     (resolvedSnapshots ?? []).map((s) => [s.transaction_id, s])
   );
-
-  const ccModifiedAt = new Map<string, Date | null>(
-    (ccs ?? []).map((cc) => [cc.id, cc.rules_last_modified_at ? new Date(cc.rules_last_modified_at) : null])
-  );
-
-  const rulesByCC = new Map<string, CostCenterRule[]>();
-  (allRules ?? []).forEach((r: CostCenterRule) => {
-    const arr = rulesByCC.get(r.cost_center_id) ?? [];
-    arr.push(r);
-    rulesByCC.set(r.cost_center_id, arr);
-  });
-
-  const costCenters: CostCenterWithRules[] = (ccs ?? []).map((cc) => ({
-    ...cc,
-    description: null,
-    created_at: "",
-    updated_at: "",
-    rules: rulesByCC.get(cc.id) ?? [],
-  }));
 
   // ── 2. Paginate and evaluate ──────────────────────────────────────────────
 
@@ -113,6 +88,7 @@ export async function POST(req: NextRequest) {
       cost_center_status: string;
       cost_center_conflicts: string[] | null;
       assignment_origin: string | null;
+      conflict_type: string | null;
     }[] = [];
 
     for (const tx of rows) {
@@ -122,25 +98,10 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Resolved conflicts: skip if no CC rules changed since resolution
       const resolved = resolvedByTx.get(tx.id);
-      if (resolved && tx.assignment_origin === "conflict_resolved") {
-        const resolvedAt = resolved.resolved_at ? new Date(resolved.resolved_at) : null;
-        const anyChanged = resolvedAt
-          ? resolved.conflicting_cc_ids.some((ccId) => {
-              const modAt = ccModifiedAt.get(ccId);
-              return modAt != null && modAt > resolvedAt;
-            })
-          : true;
-
-        if (!anyChanged) {
-          totalSkipped++;
-          continue;
-        }
-      }
 
       const enriched = enrichTxWithLoanOfficials(tx as unknown as Record<string, unknown>, loMap);
-      const r = evaluateCostCenterRules(enriched as unknown as PLTransaction, costCenters, splitRules as SplitRuleWithDetails[]);
+      const r = evaluateCostCenterRules(enriched as unknown as PLTransaction, splitRules as SplitRuleWithDetails[]);
       const origin =
         r.cost_center_status !== "assigned" ? null : r.rule_splits ? "rule_split" : "rule";
       toUpdate.push({
@@ -149,6 +110,7 @@ export async function POST(req: NextRequest) {
         cost_center_status: r.cost_center_status,
         cost_center_conflicts: r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
         assignment_origin: origin,
+        conflict_type: r.conflict_type ?? null,
       });
 
       if (r.cost_center_status === "conflict") {
@@ -171,6 +133,7 @@ export async function POST(req: NextRequest) {
               cost_center_status: u.cost_center_status,
               cost_center_conflicts: u.cost_center_conflicts,
               assignment_origin: u.assignment_origin,
+              conflict_type: u.conflict_type,
             })
             .eq("id", u.id)
         )

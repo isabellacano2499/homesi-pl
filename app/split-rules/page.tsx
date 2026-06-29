@@ -657,9 +657,9 @@ export default function SplitRulesPage() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Split Rules</h1>
+          <h1 className="text-2xl font-bold text-white">Rules</h1>
           <p className="text-sm text-gray-400 mt-0.5">
-            Rules that split transaction cost across multiple cost centers by percentage.
+            All cost center assignment rules — single or split across multiple cost centers.
           </p>
         </div>
         <div className="flex items-center gap-2">

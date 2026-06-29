@@ -11,7 +11,7 @@ import { buildSplitsMap } from "@/lib/apply-splits";
 import { useActiveBranches, mergeWithGlobal } from "@/components/branch-filter-provider";
 import { SplitDisplay } from "@/components/split-display";
 import type { SplitEntry } from "@/lib/apply-splits";
-import type { CostCenter, ConflictGroup, ResolvedConflictGroup, AssignmentGroup, AssignmentTx, ConflictSplitProposal, ConflictTx } from "@/types";
+import type { CostCenter, ConflictGroup, ResolvedConflictGroup, AssignmentGroup, AssignmentTx, ConflictTx, MatchedRuleProposal } from "@/types";
 
 function fmt(n: number | null | undefined) {
   if (n == null) return "—";
@@ -537,36 +537,35 @@ function ManualTab({ branches, costCenters }: { branches: string[]; costCenters:
 // ─── Conflict detail cell ─────────────────────────────────────────────────────
 
 function ConflictDetailCell({ tx }: { tx: ConflictTx }) {
-  if (tx.conflicting_split_rules && tx.conflicting_split_rules.length > 0) {
-    return (
-      <div className="space-y-1.5 min-w-[200px]">
-        {tx.conflicting_split_rules.map((sr: ConflictSplitProposal) => (
-          <div key={sr.split_rule_id} className="rounded border border-purple-200 bg-purple-50 px-2 py-1.5">
-            <div className="flex items-center gap-1 mb-1">
-              <Percent size={9} className="text-purple-500 shrink-0" />
-              <span className="text-[10px] font-semibold text-purple-700 truncate">{sr.split_rule_name}</span>
-            </div>
-            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
-              {sr.allocations.map((a) => (
-                <span key={a.cost_center_id} className="text-[10px] text-purple-600 whitespace-nowrap">
-                  <span className="font-medium">{a.percentage}%</span> {a.cc_name}
-                </span>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  }
+  const typeColor = tx.conflict_type === "overassigned"
+    ? "bg-red-50 border-red-200 text-red-700"
+    : "bg-amber-50 border-amber-200 text-amber-700";
+  const typeLabel = tx.conflict_type === "overassigned"
+    ? `Overassigned (${tx.total_matched_percentage.toFixed(0)}%)`
+    : `Underassigned (${tx.total_matched_percentage.toFixed(0)}%)`;
 
   return (
-    <span className="inline-flex flex-wrap gap-1">
-      {tx.conflicting_ccs.map((cc) => (
-        <span key={cc.id} className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 font-medium">
-          {cc.name}
-        </span>
+    <div className="space-y-1.5 min-w-[200px]">
+      <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-semibold ${typeColor}`}>
+        {typeLabel}
+      </span>
+      {tx.matched_rules.map((mr: MatchedRuleProposal) => (
+        <div key={mr.rule_id} className="rounded border border-purple-200 bg-purple-50 px-2 py-1.5">
+          <div className="flex items-center gap-1 mb-1">
+            <Percent size={9} className="text-purple-500 shrink-0" />
+            <span className="text-[10px] font-semibold text-purple-700 truncate">{mr.rule_name}</span>
+            <span className="text-[10px] text-purple-400 ml-auto">{mr.rule_total_percentage}%</span>
+          </div>
+          <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+            {mr.allocations.map((a) => (
+              <span key={a.cost_center_id} className="text-[10px] text-purple-600 whitespace-nowrap">
+                <span className="font-medium">{a.percentage}%</span> {a.cc_name}
+              </span>
+            ))}
+          </div>
+        </div>
       ))}
-    </span>
+    </div>
   );
 }
 
@@ -581,6 +580,7 @@ function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; bra
   const [bulkCcId, setBulkCcId] = useState("");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
+  const [conflictFilter, setConflictFilter] = useState<"all" | "underassigned" | "overassigned">("all");
 
   const load = useCallback(async () => {
     setLoading(true); setMsg("");
@@ -593,6 +593,18 @@ function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; bra
   useEffect(() => { load(); }, [load]);
 
   const totalCount = groups.reduce((s, g) => s + g.transactions.length, 0);
+
+  const filteredGroups: ConflictGroup[] = conflictFilter === "all"
+    ? groups
+    : groups.map((g) => ({
+        ...g,
+        transactions: g.transactions.filter((t) => t.conflict_type === conflictFilter),
+      })).filter((g) => g.transactions.length > 0);
+
+  const filteredCount = filteredGroups.reduce((s, g) => s + g.transactions.length, 0);
+
+  const underCount = groups.reduce((s, g) => s + g.transactions.filter((t) => t.conflict_type === "underassigned").length, 0);
+  const overCount = groups.reduce((s, g) => s + g.transactions.filter((t) => t.conflict_type === "overassigned").length, 0);
 
   function toggleGroup(key: string) {
     setCollapsedGroups((prev) => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
@@ -641,10 +653,27 @@ function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; bra
 
   return (
     <div className="space-y-4">
+      {/* Sub-filter: All / Underassigned / Overassigned */}
+      <div className="flex gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 w-fit">
+        {(["all", "underassigned", "overassigned"] as const).map((f) => {
+          const count = f === "all" ? totalCount : f === "underassigned" ? underCount : overCount;
+          return (
+            <button key={f} onClick={() => { setConflictFilter(f); setSelected(new Set()); }}
+              className={[
+                "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                conflictFilter === f ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700",
+              ].join(" ")}>
+              {f === "all" ? "All" : f === "underassigned" ? "Underassigned" : "Overassigned"}{" "}
+              <span className="ml-0.5 text-gray-400">({count})</span>
+            </button>
+          );
+        })}
+      </div>
+
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
         <AlertTriangle size={14} className="shrink-0 text-amber-500" />
         <span className="text-xs text-amber-700 font-medium">
-          {totalCount} conflict{totalCount !== 1 ? "s" : ""}{selected.size > 0 && ` · ${selected.size} selected`}
+          {filteredCount} conflict{filteredCount !== 1 ? "s" : ""}{selected.size > 0 && ` · ${selected.size} selected`}
         </span>
         {selected.size > 0 && (
           <>
@@ -663,7 +692,7 @@ function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; bra
 
       {msg && <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">{msg}</p>}
 
-      {groups.map((group) => {
+      {filteredGroups.map((group) => {
         const key = group.gl_code;
         const isCollapsed = collapsedGroups.has(key);
         const groupIds = group.transactions.map((t) => t.id);
@@ -764,9 +793,7 @@ function ConflictResolvedTab({
         setGroups(data);
         const initial: Record<string, string> = {};
         for (const g of data) for (const tx of g.transactions) {
-          if ((tx as ResolvedConflictGroup["transactions"][number] & { cost_center_id?: string }).cost_center_id) {
-            initial[tx.id] = (tx as ResolvedConflictGroup["transactions"][number] & { cost_center_id?: string }).cost_center_id!;
-          }
+          if (tx.cost_center_id) initial[tx.id] = tx.cost_center_id;
         }
         setRowCcId(initial);
       }
@@ -856,9 +883,8 @@ function ConflictResolvedTab({
                 </thead>
                 <tbody>
                   {group.transactions.map((tx) => {
-                    const txWithCcId = tx as typeof tx & { cost_center_id?: string | null };
-                    const currentCcId = rowCcId[tx.id] ?? txWithCcId.cost_center_id ?? "";
-                    const resolvedCcId = txWithCcId.cost_center_id ?? "";
+                    const currentCcId = rowCcId[tx.id] ?? tx.cost_center_id ?? "";
+                    const resolvedCcId = tx.cost_center_id ?? "";
                     const isDirty = currentCcId !== resolvedCcId && currentCcId !== "";
 
                     return (
@@ -871,11 +897,18 @@ function ConflictResolvedTab({
                         <td className="max-w-[90px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
                         <td className={`px-4 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
                         <td className="px-4 py-2">
-                          <span className="inline-flex flex-wrap gap-1">
-                            {tx.conflicting_ccs.map((cc) => (
-                              <span key={cc.id} className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 text-[10px]">{cc.name}</span>
-                            ))}
-                          </span>
+                          {tx.matched_rules.length > 0 ? (
+                            <div className="space-y-0.5">
+                              {tx.matched_rules.map((mr) => (
+                                <div key={mr.rule_id} className="text-[10px] text-purple-700">
+                                  <span className="font-medium">{mr.rule_name}</span>
+                                  <span className="text-purple-400 ml-1">({mr.rule_total_percentage}%)</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-gray-400">Legacy snapshot</span>
+                          )}
                         </td>
 
                         <td className="px-4 py-2">

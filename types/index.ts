@@ -95,26 +95,11 @@ export interface CostCenter {
   updated_at: string;
 }
 
-export interface CostCenterRule {
-  id: string;
-  cost_center_id: string;
-  sequence: number;
-  logic_connector: "AND" | "OR" | null;
-  field: string;
-  operator: string;
-  value: string;
-  group_number: number;
-  created_at: string;
-}
-
-export interface CostCenterWithRules extends CostCenter {
-  rules: CostCenterRule[];
-}
-
 export interface CostCenterEvalResult {
   cost_center_id: string | null;
   cost_center_status: "assigned" | "unassigned" | "conflict";
-  cost_center_conflicts: string[];
+  cost_center_conflicts: string[];  // unified rule IDs that matched (conflicts only)
+  conflict_type?: "underassigned" | "overassigned";
   rule_splits?: Array<{ cost_center_id: string; percentage: number }>;
 }
 
@@ -431,10 +416,11 @@ export interface ConflictSnapshot {
   updated_at: string;
 }
 
-export interface ConflictSplitProposal {
-  split_rule_id: string;
-  split_rule_name: string;
+export interface MatchedRuleProposal {
+  rule_id: string;
+  rule_name: string;
   allocations: Array<{ cost_center_id: string; cc_name: string; percentage: number }>;
+  rule_total_percentage: number;
 }
 
 export interface ConflictTx {
@@ -451,8 +437,9 @@ export interface ConflictTx {
   debit: number;
   credit: number;
   movement: number | null;
-  conflicting_ccs: { id: string; name: string }[];
-  conflicting_split_rules?: ConflictSplitProposal[];
+  conflict_type: "underassigned" | "overassigned";
+  total_matched_percentage: number;
+  matched_rules: MatchedRuleProposal[];
 }
 
 export interface ConflictGroup {
@@ -465,6 +452,7 @@ export interface ResolvedConflictTx extends ConflictTx {
   cost_center_id: string | null;
   resolved_cc: { id: string; name: string } | null;
   resolved_at: string | null;
+  // matched_rules may be empty for pre-migration snapshots (old format)
 }
 
 export interface ResolvedConflictGroup {

@@ -1,7 +1,6 @@
 import { NUMERIC_FIELDS, LOAN_OFFICIAL_FIELDS } from "@/lib/cost-center-constants";
 import type {
   PLTransaction,
-  CostCenterWithRules,
   CostCenterEvalResult,
   SplitRuleWithDetails,
 } from "@/types";
@@ -20,7 +19,6 @@ function matchCondition(tx: PLTransaction, cond: ConditionLike): boolean {
   const ruleVal = cond.value;
 
   // Loan Official fields: if the data wasn't joined in (raw == null), never match.
-  // This covers: no loan_number, loan_number_incomplete=true, or no matching LO row.
   if (LOAN_OFFICIAL_FIELDS.has(cond.field) && raw == null) return false;
 
   // Boolean fields (b2b, processing, support_on_demand, affinity, recruitment)
@@ -66,8 +64,6 @@ export function evaluateConditions(tx: PLTransaction, conditions: ConditionLike[
   const sorted = [...conditions].sort((a, b) => a.sequence - b.sequence);
   if (sorted.length === 0) return false;
 
-  // group_number=0 → each condition is its own singleton group (pre-grouping rows)
-  // group_number>0 → conditions share a group
   const groupMap = new Map<number | string, ConditionLike[]>();
   const groupOrder: (number | string)[] = [];
 
@@ -108,63 +104,56 @@ export function evaluateConditions(tx: PLTransaction, conditions: ConditionLike[
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+/**
+ * Unified evaluation: matches tx against ALL rules, sums their allocations.
+ * - sum = 0%  (no rules matched)  → unassigned
+ * - sum ≈ 100%                    → assigned (split if multiple CCs)
+ * - sum < 100%                    → conflict / underassigned
+ * - sum > 100%                    → conflict / overassigned
+ */
 export function evaluateCostCenterRules(
   tx: PLTransaction,
-  costCenters: CostCenterWithRules[],
-  splitRules: SplitRuleWithDetails[] = []
+  unifiedRules: SplitRuleWithDetails[]
 ): CostCenterEvalResult {
-  const simpleMatched = costCenters.filter((cc) =>
-    evaluateConditions(tx, cc.rules)
-  );
-  const splitMatched = splitRules.filter((sr) =>
-    evaluateConditions(tx, sr.conditions)
+  const matched = unifiedRules.filter(
+    (r) => r.conditions.length > 0 && evaluateConditions(tx, r.conditions)
   );
 
-  // Any mix of simple + split → conflict
-  if (splitMatched.length > 0 && simpleMatched.length > 0) {
-    return {
-      cost_center_id: null,
-      cost_center_status: "conflict",
-      cost_center_conflicts: simpleMatched.map((cc) => cc.id),
-    };
-  }
-
-  // Multiple split rules → conflict (conservative)
-  // Encode split rule IDs with "split:" prefix so the UI can distinguish
-  // split+split conflicts from CC+CC conflicts and show enriched proposals.
-  if (splitMatched.length > 1) {
-    return {
-      cost_center_id: null,
-      cost_center_status: "conflict",
-      cost_center_conflicts: splitMatched.map((sr) => `split:${sr.id}`),
-    };
-  }
-
-  // Exactly one split rule, no simple matches
-  if (splitMatched.length === 1) {
-    const sr = splitMatched[0];
-    const primary = [...sr.allocations].sort((a, b) => b.percentage - a.percentage)[0];
-    return {
-      cost_center_id: primary?.cost_center_id ?? null,
-      cost_center_status: "assigned",
-      cost_center_conflicts: [],
-      rule_splits: sr.allocations.map((a) => ({
-        cost_center_id: a.cost_center_id,
-        percentage: a.percentage,
-      })),
-    };
-  }
-
-  // Pure simple rules (original logic)
-  if (simpleMatched.length === 0) {
+  if (matched.length === 0) {
     return { cost_center_id: null, cost_center_status: "unassigned", cost_center_conflicts: [] };
   }
-  if (simpleMatched.length === 1) {
-    return { cost_center_id: simpleMatched[0].id, cost_center_status: "assigned", cost_center_conflicts: [] };
+
+  // Aggregate allocations across all matched rules, merging same-CC entries
+  const ccTotals = new Map<string, number>();
+  let grandTotal = 0;
+  for (const rule of matched) {
+    for (const alloc of rule.allocations) {
+      ccTotals.set(alloc.cost_center_id, (ccTotals.get(alloc.cost_center_id) ?? 0) + alloc.percentage);
+      grandTotal += alloc.percentage;
+    }
   }
+
+  if (Math.abs(grandTotal - 100) <= 0.01) {
+    // Primary CC = highest accumulated percentage
+    let primaryCcId: string | null = null;
+    let maxPct = -1;
+    for (const [ccId, pct] of ccTotals) {
+      if (pct > maxPct) { maxPct = pct; primaryCcId = ccId; }
+    }
+    return {
+      cost_center_id: primaryCcId,
+      cost_center_status: "assigned",
+      cost_center_conflicts: [],
+      rule_splits: ccTotals.size > 1
+        ? [...ccTotals.entries()].map(([cost_center_id, percentage]) => ({ cost_center_id, percentage }))
+        : undefined,
+    };
+  }
+
   return {
     cost_center_id: null,
     cost_center_status: "conflict",
-    cost_center_conflicts: simpleMatched.map((cc) => cc.id),
+    cost_center_conflicts: matched.map((r) => r.id),
+    conflict_type: grandTotal < 100 ? "underassigned" : "overassigned",
   };
 }

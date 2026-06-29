@@ -37,8 +37,8 @@ const NAV_ITEMS: NavItem[] = [
     label: "Cost Centers",
     icon: Target,
     children: [
-      { label: "Rules", href: "/cost-centers" },
-      { label: "Split Rules", href: "/split-rules", icon: Percent },
+      { label: "Cost Centers", href: "/cost-centers" },
+      { label: "Rules", href: "/split-rules", icon: Percent },
       { label: "CC Assignment", href: "/cost-centers/conflicts" },
     ],
   },
