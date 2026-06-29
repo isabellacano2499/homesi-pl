@@ -7,6 +7,25 @@ import { ArrowLeft, ExternalLink, Pencil, Save, X, Unlink } from "lucide-react";
 import { CC_FIELDS, operatorsForField } from "@/lib/cost-center-constants";
 import type { CostCenter, SplitRuleWithDetails } from "@/types";
 
+// ─── Color accents (mirrors cost-centers list page) ──────────────────────────
+
+const ACCENT_COLORS = [
+  { dot: "bg-blue-300",    leftBar: "border-l-blue-300",    badge: "bg-blue-50 border-blue-200 text-blue-700"    },
+  { dot: "bg-indigo-300",  leftBar: "border-l-indigo-300",  badge: "bg-indigo-50 border-indigo-200 text-indigo-700"  },
+  { dot: "bg-violet-300",  leftBar: "border-l-violet-300",  badge: "bg-violet-50 border-violet-200 text-violet-700"  },
+  { dot: "bg-teal-300",    leftBar: "border-l-teal-300",    badge: "bg-teal-50 border-teal-200 text-teal-700"    },
+  { dot: "bg-amber-300",   leftBar: "border-l-amber-300",   badge: "bg-amber-50 border-amber-200 text-amber-700"   },
+  { dot: "bg-emerald-300", leftBar: "border-l-emerald-300", badge: "bg-emerald-50 border-emerald-200 text-emerald-700" },
+  { dot: "bg-rose-300",    leftBar: "border-l-rose-300",    badge: "bg-rose-50 border-rose-200 text-rose-700"    },
+  { dot: "bg-orange-300",  leftBar: "border-l-orange-300",  badge: "bg-orange-50 border-orange-200 text-orange-700"  },
+];
+
+function ccColorIndex(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return Math.abs(h) % ACCENT_COLORS.length;
+}
+
 function fieldLabel(field: string) {
   return CC_FIELDS.find((f) => f.value === field)?.label ?? field;
 }
@@ -97,11 +116,13 @@ export default function CostCenterDetailPage() {
   );
   if (!cc) return <p className="text-sm text-red-600">Cost center not found.</p>;
 
+  const color = ACCENT_COLORS[ccColorIndex(id)];
+
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div>
-        <Link href="/cost-centers" className="mb-3 flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700">
+      <div className={`border-l-4 pl-4 ${color.leftBar}`}>
+        <Link href="/cost-centers" className="mb-2 flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600">
           <ArrowLeft size={13} /> Back to Cost Centers
         </Link>
 
@@ -130,7 +151,7 @@ export default function CostCenterDetailPage() {
             </button>
           </div>
         )}
-        {cc.description && <p className="text-sm text-gray-500">{cc.description}</p>}
+        {cc.description && <p className="mt-0.5 text-sm text-gray-500">{cc.description}</p>}
       </div>
 
       {/* Rules card */}
@@ -141,7 +162,7 @@ export default function CostCenterDetailPage() {
           </span>
           <Link href="/split-rules"
             className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800">
-            <ExternalLink size={12} /> Manage in Rules
+            <ExternalLink size={12} /> Open Rule Builder
           </Link>
         </div>
 
@@ -159,22 +180,17 @@ export default function CostCenterDetailPage() {
               return (
                 <div key={rule.id} className="px-4 py-4 space-y-2">
                   {/* Rule name + allocation badge */}
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-gray-800">{rule.name}</span>
-                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
-                        {pct}% to this CC
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-block h-2 w-2 rounded-full ${color.dot} shrink-0`} />
+                    <span className="text-sm font-semibold text-gray-800">{rule.name}</span>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${color.badge}`}>
+                      {pct}% to this CC
+                    </span>
+                    {rule.allocations.length > 1 && (
+                      <span className="text-[10px] text-gray-400">
+                        split: {rule.allocations.map((a) => `${a.percentage}%`).join(" + ")}
                       </span>
-                      {rule.allocations.length > 1 && (
-                        <span className="text-[10px] text-gray-400">
-                          (split: {rule.allocations.map((a) => `${a.percentage}%`).join(" + ")})
-                        </span>
-                      )}
-                    </div>
-                    <Link href="/split-rules"
-                      className="text-[10px] text-gray-400 hover:text-blue-600 flex items-center gap-0.5">
-                      <Pencil size={10} /> Edit rule
-                    </Link>
+                    )}
                   </div>
 
                   {/* Conditions */}

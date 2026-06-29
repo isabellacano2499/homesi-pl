@@ -11,12 +11,9 @@ type Ctx = { params: Promise<{ id: string }> };
 export async function GET(_req: NextRequest, { params }: Ctx) {
   const { id } = await params;
   const supabase = createServerClient();
-  const [{ data: cc }, { data: rules }] = await Promise.all([
-    supabase.from("cost_centers").select("*").eq("id", id).single(),
-    supabase.from("cost_center_rules").select("*").eq("cost_center_id", id).order("sequence"),
-  ]);
-  if (!cc) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json({ ...cc, rules: rules ?? [] });
+  const { data: cc, error } = await supabase.from("cost_centers").select("*").eq("id", id).single();
+  if (error || !cc) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json(cc);
 }
 
 export async function PUT(req: NextRequest, { params }: Ctx) {

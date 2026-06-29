@@ -3,18 +3,21 @@ import { createServerClient } from "@/lib/supabase-server";
 
 export async function GET() {
   const supabase = createServerClient();
-  const [{ data: ccs }, { data: rules }] = await Promise.all([
+  const [{ data: ccs }, { data: allocs }] = await Promise.all([
     supabase.from("cost_centers").select("*").order("name"),
-    supabase.from("cost_center_rules").select("cost_center_id"),
+    // Count distinct unified rules that allocate to each CC
+    supabase.from("split_rule_allocations").select("cost_center_id,split_rule_id"),
   ]);
 
-  const countByCC = new Map<string, number>();
-  (rules ?? []).forEach((r) =>
-    countByCC.set(r.cost_center_id, (countByCC.get(r.cost_center_id) ?? 0) + 1)
-  );
+  const countByCC = new Map<string, Set<string>>();
+  for (const a of allocs ?? []) {
+    const set = countByCC.get(a.cost_center_id as string) ?? new Set<string>();
+    set.add(a.split_rule_id as string);
+    countByCC.set(a.cost_center_id as string, set);
+  }
 
   return NextResponse.json(
-    (ccs ?? []).map((cc) => ({ ...cc, rule_count: countByCC.get(cc.id) ?? 0 }))
+    (ccs ?? []).map((cc) => ({ ...cc, rule_count: countByCC.get(cc.id as string)?.size ?? 0 }))
   );
 }
 

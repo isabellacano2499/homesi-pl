@@ -659,7 +659,7 @@ export default function SplitRulesPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Rules</h1>
           <p className="text-sm text-gray-400 mt-0.5">
-            All cost center assignment rules — single or split across multiple cost centers.
+            Create and manage the rules that assign transactions to cost centers.
           </p>
         </div>
         <div className="flex items-center gap-2">

@@ -8,6 +8,31 @@ import type { CostCenter } from "@/types";
 
 type CCWithCount = CostCenter & { rule_count: number };
 
+// ─── Color accents ────────────────────────────────────────────────────────────
+
+const ACCENT_COLORS = [
+  { dot: "bg-blue-300",    border: "border-l-blue-300",    text: "text-blue-700"    },
+  { dot: "bg-indigo-300",  border: "border-l-indigo-300",  text: "text-indigo-700"  },
+  { dot: "bg-violet-300",  border: "border-l-violet-300",  text: "text-violet-700"  },
+  { dot: "bg-teal-300",    border: "border-l-teal-300",    text: "text-teal-700"    },
+  { dot: "bg-amber-300",   border: "border-l-amber-300",   text: "text-amber-700"   },
+  { dot: "bg-emerald-300", border: "border-l-emerald-300", text: "text-emerald-700" },
+  { dot: "bg-rose-300",    border: "border-l-rose-300",    text: "text-rose-700"    },
+  { dot: "bg-orange-300",  border: "border-l-orange-300",  text: "text-orange-700"  },
+];
+
+function ccColorIndex(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return Math.abs(h) % ACCENT_COLORS.length;
+}
+
+export function useCCColor(id: string) {
+  return ACCENT_COLORS[ccColorIndex(id)];
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function CostCentersPage() {
   const { activeBranches } = useActiveBranches();
   const [records, setRecords] = useState<CCWithCount[]>([]);
@@ -65,7 +90,7 @@ export default function CostCentersPage() {
   }
 
   async function handleDelete(id: string, name: string) {
-    if (!confirm(`Delete "${name}"? Its rules will be deleted and any rule-assigned transactions will be re-evaluated.`)) return;
+    if (!confirm(`Delete "${name}"? Any rule-assigned transactions will be re-evaluated against the remaining rules.`)) return;
     setDeletingId(id);
     setDeleteErr("");
     setDeleteErrId(null);
@@ -104,7 +129,7 @@ export default function CostCentersPage() {
     const scopeMsg = activeBranches.length > 0
       ? ` (restricted to: ${activeBranches.join(", ")})`
       : " (all branches)";
-    if (!confirm(`Re-apply all cost center rules${scopeMsg}? This may take a few seconds.`)) return;
+    if (!confirm(`Re-apply all rules to transactions${scopeMsg}? This may take a few seconds.`)) return;
     setReapplying(true);
     setReapplyMsg("");
     try {
@@ -127,9 +152,7 @@ export default function CostCentersPage() {
         const a = Number(json.assigned ?? 0).toLocaleString();
         const u = Number(json.unassigned ?? 0).toLocaleString();
         const c = Number(json.conflicts ?? 0).toLocaleString();
-        setReapplyMsg(
-          `Done — ${p} processed: ${a} assigned, ${u} unassigned, ${c} conflicts.`
-        );
+        setReapplyMsg(`Done — ${p} processed: ${a} assigned, ${u} unassigned, ${c} conflicts.`);
       }
     } catch (err) {
       setReapplyMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -141,19 +164,25 @@ export default function CostCentersPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Cost Centers</h2>
-          <p className="text-sm text-gray-500">{records.length} cost centers</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            View your cost centers and the rules that apply to each.{" "}
+            <Link href="/split-rules" className="text-blue-600 hover:underline">
+              Go to Rules
+            </Link>{" "}
+            to create or edit rules.
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={handleReapply}
             disabled={reapplying}
             className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
           >
             <RefreshCw size={14} className={reapplying ? "animate-spin" : ""} />
-            Re-apply All Rules
+            Re-apply Rules
           </button>
           <button
             onClick={() => { setAdding(true); setSaveErr(""); }}
@@ -185,9 +214,9 @@ export default function CostCentersPage() {
                 href={`/cost-centers/${deleteErrId}`}
                 className="inline-flex items-center gap-1 font-medium underline hover:text-red-900"
               >
-                <Unlink size={11} /> Open cost center detail → Unassign all transactions
-              </Link>
-              {" "}to clear them before deleting.
+                <Unlink size={11} /> Open cost center → Unassign all
+              </Link>{" "}
+              to clear transactions before deleting.
             </p>
           )}
         </div>
@@ -201,9 +230,7 @@ export default function CostCentersPage() {
             <div>
               <label className="mb-1 block text-xs text-gray-500">Name *</label>
               <input
-                autoFocus
-                type="text"
-                value={newName}
+                autoFocus type="text" value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleAdd()}
                 placeholder="e.g. Margin"
@@ -213,8 +240,7 @@ export default function CostCentersPage() {
             <div>
               <label className="mb-1 block text-xs text-gray-500">Description</label>
               <input
-                type="text"
-                value={newDesc}
+                type="text" value={newDesc}
                 onChange={(e) => setNewDesc(e.target.value)}
                 placeholder="Optional"
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
@@ -223,17 +249,12 @@ export default function CostCentersPage() {
           </div>
           {saveErr && <p className="text-xs text-red-600">{saveErr}</p>}
           <div className="flex gap-2">
-            <button
-              onClick={handleAdd}
-              disabled={saving}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
+            <button onClick={handleAdd} disabled={saving}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
               {saving ? "Saving…" : "Save"}
             </button>
-            <button
-              onClick={() => { setAdding(false); setNewName(""); setNewDesc(""); setSaveErr(""); }}
-              className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
-            >
+            <button onClick={() => { setAdding(false); setNewName(""); setNewDesc(""); setSaveErr(""); }}
+              className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">
               Cancel
             </button>
           </div>
@@ -264,52 +285,68 @@ export default function CostCentersPage() {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
-                <th className="px-4 py-3 font-medium">Cost Center Name</th>
+                <th className="px-4 py-3 font-medium">Cost Center</th>
                 <th className="px-4 py-3 font-medium">Description</th>
-                <th className="px-4 py-3 font-medium text-center">Rules</th>
+                <th className="px-4 py-3 font-medium text-center">Matching Rules</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody>
-              {filtered.map((cc) => (
-                <tr
-                  key={cc.id}
-                  className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer"
-                  onClick={() => window.location.href = `/cost-centers/${cc.id}`}
-                >
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/cost-centers/${cc.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="font-medium text-blue-700 hover:underline"
-                    >
-                      {cc.name}
-                    </Link>
-                  </td>
-                  <td className="max-w-[300px] truncate px-4 py-3 text-gray-500">
-                    {cc.description ?? <span className="text-gray-300">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-center text-gray-600">{cc.rule_count}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-3">
-                      <Link
-                        href={`/cost-centers/${cc.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex items-center gap-1 text-blue-600 hover:underline"
-                      >
-                        Manage Rules <ChevronRight size={12} />
-                      </Link>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleDelete(cc.id, cc.name); }}
-                        disabled={deletingId === cc.id}
-                        className="text-gray-400 hover:text-red-600 disabled:opacity-40"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((cc) => {
+                const color = ACCENT_COLORS[ccColorIndex(cc.id)];
+                return (
+                  <tr
+                    key={cc.id}
+                    className="border-b border-gray-50 hover:bg-gray-50/80 cursor-pointer"
+                    onClick={() => (window.location.href = `/cost-centers/${cc.id}`)}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-block h-2 w-2 rounded-full ${color.dot} shrink-0`} />
+                        <Link
+                          href={`/cost-centers/${cc.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-medium text-gray-800 hover:text-blue-700"
+                        >
+                          {cc.name}
+                        </Link>
+                      </div>
+                    </td>
+                    <td className="max-w-[300px] truncate px-4 py-3 text-gray-500">
+                      {cc.description ?? <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-center text-gray-600">
+                      {cc.rule_count > 0 ? (
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${color.dot} bg-opacity-30 ${color.text}`}>
+                          {cc.rule_count}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300">0</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-3">
+                        <Link
+                          href={`/cost-centers/${cc.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center gap-0.5 text-gray-400 hover:text-blue-600"
+                          title="View rules"
+                        >
+                          <ChevronRight size={14} />
+                        </Link>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDelete(cc.id, cc.name); }}
+                          disabled={deletingId === cc.id}
+                          className="text-gray-400 hover:text-red-600 disabled:opacity-40"
+                          title="Delete cost center"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
