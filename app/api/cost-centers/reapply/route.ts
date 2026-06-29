@@ -74,6 +74,9 @@ export async function POST(req: NextRequest) {
   const snapshotUpserts: { transaction_id: string; conflicting_cc_ids: string[] }[] = [];
   const snapshotDeletes: string[] = [];
 
+  // Index rules by ID so we can compare updated_at against resolved_at
+  const splitRulesById = new Map(splitRules.map((r) => [r.id, r]));
+
   while (true) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q: any = supabase
@@ -112,6 +115,23 @@ export async function POST(req: NextRequest) {
 
       const enriched = enrichTxWithLoanOfficials(tx as unknown as Record<string, unknown>, loMap);
       const r = evaluateCostCenterRules(enriched as unknown as PLTransaction, splitRules as SplitRuleWithDetails[]);
+
+      // Protect resolved conflicts: only re-open if at least one of the currently-
+      // conflicting rules was modified AFTER the conflict was resolved. If no rule
+      // changed since resolution, the manual resolution decision stands.
+      if (r.cost_center_status === "conflict" && resolved?.resolved_at) {
+        const resolvedAt = new Date(resolved.resolved_at);
+        const anyRuleChangedAfter = r.cost_center_conflicts.some((ruleId) => {
+          const rule = splitRulesById.get(ruleId);
+          // If the rule no longer exists it was deleted → treat as changed (re-open)
+          return !rule || new Date(rule.updated_at) > resolvedAt;
+        });
+        if (!anyRuleChangedAfter) {
+          totalSkipped++;
+          continue; // Keep the manual resolution intact — skip all updates for this tx
+        }
+      }
+
       const origin =
         r.cost_center_status !== "assigned" ? null : r.rule_splits ? "rule_split" : "rule";
       toUpdate.push({

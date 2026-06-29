@@ -59,7 +59,14 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     .eq("split_rule_id", split_rule_id);
   if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
 
-  if (conditions.length === 0) return NextResponse.json([]);
+  if (conditions.length === 0) {
+    // Touch parent rule's updated_at so the reapply protection detects this change
+    await supabase
+      .from("split_rules")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", split_rule_id);
+    return NextResponse.json([]);
+  }
 
   const { data, error: insErr } = await supabase
     .from("split_rule_conditions")
@@ -67,5 +74,12 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     .select();
 
   if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
+
+  // Touch parent rule's updated_at so the reapply protection detects this change
+  await supabase
+    .from("split_rules")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", split_rule_id);
+
   return NextResponse.json(data);
 }

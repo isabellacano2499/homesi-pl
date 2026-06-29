@@ -39,5 +39,12 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     .select();
 
   if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
+
+  // Touch parent rule's updated_at so the reapply protection detects this change
+  await supabase
+    .from("split_rules")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", split_rule_id);
+
   return NextResponse.json(data);
 }
