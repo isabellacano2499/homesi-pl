@@ -657,10 +657,14 @@ export default function SplitRulesPage() {
     setReapplying(true);
     setReapplyMsg("");
     try {
+      const settingsRes = await fetch("/api/app-settings");
+      const settings = await settingsRes.json().catch(() => ({}));
+      const branches: string[] = Array.isArray(settings?.active_branches) ? settings.active_branches : [];
+
       const res = await fetch("/api/cost-centers/reapply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branches: [] }),
+        body: JSON.stringify({ branches }),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -670,7 +674,8 @@ export default function SplitRulesPage() {
         const a = Number(json.assigned ?? 0).toLocaleString();
         const u = Number(json.unassigned ?? 0).toLocaleString();
         const c = Number(json.conflicts ?? 0).toLocaleString();
-        setReapplyMsg(`Done — ${p} processed: ${a} assigned, ${u} unassigned, ${c} conflicts.`);
+        const branchLabel = branches.length > 0 ? ` (branches: ${branches.join(", ")})` : " (all branches)";
+        setReapplyMsg(`Done${branchLabel} — ${p} processed: ${a} assigned, ${u} unassigned, ${c} conflicts.`);
       }
     } catch (err) {
       setReapplyMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);

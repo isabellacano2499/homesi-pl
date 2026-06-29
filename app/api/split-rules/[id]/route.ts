@@ -53,17 +53,27 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const { error } = await supabase.from("split_rules").delete().eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Re-evaluate all rule-assigned transactions against the remaining rules
-  const splitRules = await loadAllSplitRules(supabase);
+  // Re-evaluate all rule-assigned transactions against the remaining rules,
+  // restricted to the globally active branches from Settings
+  const [splitRules, settingsResult] = await Promise.all([
+    loadAllSplitRules(supabase),
+    supabase.from("app_settings").select("active_branches").limit(1).single(),
+  ]);
+  const activeBranches: string[] = Array.isArray(settingsResult.data?.active_branches)
+    ? settingsResult.data.active_branches
+    : [];
 
   const txIds: string[] = [];
   let offset = 0;
   while (true) {
-    const { data } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q: any = supabase
       .from("pl_transactions")
       .select("id")
       .in("assignment_origin", ["rule", "rule_split"])
       .range(offset, offset + 999);
+    if (activeBranches.length > 0) q = q.in("branch", activeBranches);
+    const { data } = await q;
     if (!data || data.length === 0) break;
     txIds.push(...(data as { id: string }[]).map((r) => r.id));
     if (data.length < 1000) break;

@@ -30,9 +30,19 @@ const UPDATE_PARALLEL = 100;
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const branches: string[] = Array.isArray(body?.branches) ? body.branches : [];
+  let branches: string[] = Array.isArray(body?.branches) ? body.branches : [];
 
   const supabase = createServerClient();
+
+  // If no branches supplied, fall back to the global active_branches setting
+  if (branches.length === 0) {
+    const { data: settings } = await supabase
+      .from("app_settings")
+      .select("active_branches")
+      .limit(1)
+      .single();
+    branches = Array.isArray(settings?.active_branches) ? settings.active_branches : [];
+  }
 
   // ── 1. Load cost centers, rules, resolved snapshots ───────────────────────
 
