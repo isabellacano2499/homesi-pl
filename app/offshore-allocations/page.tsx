@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, RefreshCw, AlertTriangle, Percent } from "lucide-react";
+import { Download, RefreshCw, AlertTriangle, Percent, Search, X } from "lucide-react";
 import { downloadCSV } from "@/lib/csv";
 import { ReportFilter } from "@/components/report-filter";
 import { SplitEditor } from "@/components/split-editor";
@@ -22,10 +22,30 @@ function rowVisible(
   filterYears: string[],
   filterMonths: string[],
   filterBranches: string[],
+  filterCategories: string[],
+  filterPositions: string[],
+  filterVendors: string[],
+  search: string,
 ): boolean {
   if (filterYears.length > 0 && !filterYears.some((y) => row.years.includes(Number(y)))) return false;
   if (filterMonths.length > 0 && !filterMonths.some((m) => row.months.includes(m))) return false;
   if (filterBranches.length > 0 && !filterBranches.some((b) => row.branches.includes(b))) return false;
+  if (filterCategories.length > 0 && !filterCategories.includes(row.category ?? "")) return false;
+  if (filterPositions.length > 0 && !filterPositions.includes(row.position ?? "")) return false;
+  if (filterVendors.length > 0 && !filterVendors.includes(row.vendor ?? "")) return false;
+  if (search) {
+    const q = search.toLowerCase();
+    const match = [
+      row.check_description_3,
+      row.category,
+      row.position,
+      row.vendor,
+      row.branch_allocation,
+      ...row.branches,
+      ...(row.raw_cd2s ?? []),
+    ].some((v) => v?.toLowerCase().includes(q));
+    if (!match) return false;
+  }
   return true;
 }
 
@@ -75,6 +95,10 @@ interface BlockTableProps {
   filterYears: string[];
   filterMonths: string[];
   filterBranches: string[];
+  filterCategories: string[];
+  filterPositions: string[];
+  filterVendors: string[];
+  search: string;
   splitsMap: Map<string, SplitEntry[]>;
   unassigning: string | null;
   unassignBusy: boolean;
@@ -85,12 +109,13 @@ interface BlockTableProps {
 }
 
 function BlockTable({
-  block, costCenters, filterYears, filterMonths, filterBranches, splitsMap,
-  unassigning, unassignBusy, onEditAllocation, onUnassign, onUnassignConfirm, onUnassignCancel,
+  block, costCenters, filterYears, filterMonths, filterBranches,
+  filterCategories, filterPositions, filterVendors, search,
+  splitsMap, unassigning, unassignBusy, onEditAllocation, onUnassign, onUnassignConfirm, onUnassignCancel,
 }: BlockTableProps) {
   const visibleRows = useMemo(
-    () => block.rows.filter((r) => rowVisible(r, filterYears, filterMonths, filterBranches)),
-    [block.rows, filterYears, filterMonths, filterBranches],
+    () => block.rows.filter((r) => rowVisible(r, filterYears, filterMonths, filterBranches, filterCategories, filterPositions, filterVendors, search)),
+    [block.rows, filterYears, filterMonths, filterBranches, filterCategories, filterPositions, filterVendors, search],
   );
 
   if (visibleRows.length === 0) return null;
@@ -241,9 +266,13 @@ export default function OffshoreAllocationsPage() {
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState("");
 
-  const [filterYears, setFilterYears]       = useState<string[]>([]);
-  const [filterMonths, setFilterMonths]     = useState<string[]>([]);
-  const [filterBranches, setFilterBranches] = useState<string[]>([]);
+  const [filterYears, setFilterYears]           = useState<string[]>([]);
+  const [filterMonths, setFilterMonths]         = useState<string[]>([]);
+  const [filterBranches, setFilterBranches]     = useState<string[]>([]);
+  const [filterCategories, setFilterCategories] = useState<string[]>([]);
+  const [filterPositions, setFilterPositions]   = useState<string[]>([]);
+  const [filterVendors, setFilterVendors]       = useState<string[]>([]);
+  const [search, setSearch]                     = useState("");
 
   const [editingRow, setEditingRow]     = useState<OAGroupRow | null>(null);
   const [unassigning, setUnassigning]   = useState<string | null>(null); // group_key being confirmed
@@ -297,6 +326,24 @@ export default function OffshoreAllocationsPage() {
     return [...s].sort();
   }, [blocks]);
 
+  const allCategories = useMemo(() => {
+    const s = new Set<string>();
+    blocks.forEach((b) => b.rows.forEach((r) => { if (r.category) s.add(r.category); }));
+    return [...s].sort();
+  }, [blocks]);
+
+  const allPositions = useMemo(() => {
+    const s = new Set<string>();
+    blocks.forEach((b) => b.rows.forEach((r) => { if (r.position) s.add(r.position); }));
+    return [...s].sort();
+  }, [blocks]);
+
+  const allVendors = useMemo(() => {
+    const s = new Set<string>();
+    blocks.forEach((b) => b.rows.forEach((r) => { if (r.vendor) s.add(r.vendor); }));
+    return [...s].sort();
+  }, [blocks]);
+
   const totalTx = useMemo(
     () => blocks.reduce((sum, b) => sum + b.rows.reduce((s, r) => s + r.tx_count, 0), 0),
     [blocks],
@@ -304,12 +351,13 @@ export default function OffshoreAllocationsPage() {
 
   const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
 
-  const hasFilters = filterYears.length > 0 || filterMonths.length > 0 || filterBranches.length > 0;
+  const hasFilters = filterYears.length > 0 || filterMonths.length > 0 || filterBranches.length > 0
+    || filterCategories.length > 0 || filterPositions.length > 0 || filterVendors.length > 0 || search.length > 0;
 
   function handleExport() {
     const visibleRows = blocks.flatMap((block) =>
       block.rows
-        .filter((r) => rowVisible(r, filterYears, filterMonths, filterBranches))
+        .filter((r) => rowVisible(r, filterYears, filterMonths, filterBranches, filterCategories, filterPositions, filterVendors, search))
         .map((r) => ({
           block:               block.block_key,
           check_description_3: r.check_description_3 ?? "",
@@ -372,20 +420,40 @@ export default function OffshoreAllocationsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2 shrink-0">
-        <ReportFilter label="Year"   options={allYears}    selected={filterYears}    onChange={setFilterYears} />
-        <ReportFilter label="Month"  options={allMonths}   selected={filterMonths}   onChange={setFilterMonths} />
-        <ReportFilter label="Branch" options={allBranches} selected={filterBranches} onChange={setFilterBranches} />
+      <div className="flex flex-col gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <ReportFilter label="Year"     options={allYears}      selected={filterYears}      onChange={setFilterYears} />
+          <ReportFilter label="Month"    options={allMonths}     selected={filterMonths}     onChange={setFilterMonths} />
+          <ReportFilter label="Branch"   options={allBranches}   selected={filterBranches}   onChange={setFilterBranches} />
+          <ReportFilter label="Category" options={allCategories} selected={filterCategories} onChange={setFilterCategories} />
+          <ReportFilter label="Position" options={allPositions}  selected={filterPositions}  onChange={setFilterPositions} />
+          <ReportFilter label="Vendor"   options={allVendors}    selected={filterVendors}    onChange={setFilterVendors} />
+          <div className="relative">
+            <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search description, vendor, position…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="rounded-lg border border-gray-200 bg-white pl-7 pr-7 py-1.5 text-sm text-gray-700 focus:border-blue-400 focus:outline-none min-w-[260px]"
+            />
+            {search && (
+              <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                <X size={12} />
+              </button>
+            )}
+          </div>
+          {hasFilters && (
+            <button
+              onClick={() => { setFilterYears([]); setFilterMonths([]); setFilterBranches([]); setFilterCategories([]); setFilterPositions([]); setFilterVendors([]); setSearch(""); }}
+              className="text-xs text-gray-400 hover:text-gray-600 underline"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
         {hasFilters && (
-          <button
-            onClick={() => { setFilterYears([]); setFilterMonths([]); setFilterBranches([]); }}
-            className="text-xs text-gray-400 hover:text-gray-600 underline"
-          >
-            Clear filters
-          </button>
-        )}
-        {hasFilters && (
-          <span className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-0.5 border border-amber-100">
+          <span className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-0.5 border border-amber-100 w-fit">
             Filters affect display only — allocations apply globally to all historical data
           </span>
         )}
@@ -417,6 +485,10 @@ export default function OffshoreAllocationsPage() {
               filterYears={filterYears}
               filterMonths={filterMonths}
               filterBranches={filterBranches}
+              filterCategories={filterCategories}
+              filterPositions={filterPositions}
+              filterVendors={filterVendors}
+              search={search}
               splitsMap={splitsMap}
               unassigning={unassigning}
               unassignBusy={unassignBusy}
