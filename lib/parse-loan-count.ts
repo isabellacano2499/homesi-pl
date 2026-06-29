@@ -28,10 +28,11 @@ export function parseLoanCount(buffer: Buffer): {
   if (raw.length < 2) return { rows: [], warnings: [] };
 
   const headers = (raw[0] as unknown[]).map(trimStr);
+  const headersLower = headers.map((h) => h.toLowerCase());
   const dataRows = raw.slice(1) as unknown[][];
 
   function col(row: unknown[], key: string): unknown {
-    const idx = headers.indexOf(key);
+    const idx = headersLower.indexOf(key.toLowerCase());
     return idx >= 0 ? row[idx] : undefined;
   }
 

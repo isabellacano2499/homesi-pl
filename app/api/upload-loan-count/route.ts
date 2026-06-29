@@ -31,6 +31,20 @@ export async function POST(req: NextRequest) {
     const month = rows[0].month ?? null;
     const year = rows[0].year ?? null;
 
+    // Fail fast if the file has no recognizable Month/Year columns — prevents
+    // silent bypass of the duplicate check and deduplication merge.
+    if (!month || year == null) {
+      return NextResponse.json(
+        {
+          error:
+            "Could not determine month/year from the file. " +
+            "Expected column headers 'Month' and 'Year' (case-insensitive). " +
+            `Got month=${JSON.stringify(month)}, year=${JSON.stringify(year)}.`,
+        },
+        { status: 422 }
+      );
+    }
+
     // ── Duplicate check ───────────────────────────────────────────────────────
     if (!force && month && year) {
       const { count } = await supabase
