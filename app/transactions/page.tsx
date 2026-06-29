@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, AlertTriangle } from "lucide-react";
 import { ColumnFilter } from "@/components/column-filter";
 import { buildSplitsMap } from "@/lib/apply-splits";
 import { SplitDisplay } from "@/components/split-display";
@@ -122,7 +122,15 @@ function CCCell({ tx, splitsMap }: { tx: PLTransaction; splitsMap: Map<string, S
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-const COL_COUNT = 13;
+const COL_COUNT = 15;
+
+const LOAN_TAG_LABELS: Record<string, string> = {
+  b2b: "B2B",
+  processing: "Processing",
+  support_on_demand: "On Demand",
+  affinity: "Affinity",
+  recruitment: "Recruitment",
+};
 
 export default function TransactionsPage() {
   const { activeBranches } = useActiveBranches();
@@ -265,8 +273,8 @@ export default function TransactionsPage() {
       >
         <table className="w-full text-xs table-fixed border-collapse">
           <colgroup>
-            {/* CC | Month | Year | GL Code | GL Name | Branch | Desc | CD2 | CD3 | Vendor | Ref | Movement | Source */}
-            {["150px","68px","44px","62px","120px","55px",undefined,"90px","90px","110px","65px","88px","62px"].map((w, i) => (
+            {/* CC | Month | Year | GL Code | GL Name | Branch | Desc | CD2 | CD3 | Vendor | Ref | Movement | Loan# | Loan Tags | Source */}
+            {["150px","68px","44px","62px","120px","55px",undefined,"90px","90px","110px","65px","88px","95px","110px","62px"].map((w, i) => (
               <col key={i} style={w ? { width: w } : undefined} />
             ))}
           </colgroup>
@@ -332,6 +340,8 @@ export default function TransactionsPage() {
                   min={filters.movement_min} max={filters.movement_max}
                   onChange={(min, max) => { setFilter("movement_min", min); setFilter("movement_max", max); }} />
               </TH>
+              <TH label="Loan #" />
+              <TH label="Loan Tags" />
               <TH label="Source">
                 <ColumnFilter label="Source" type="categorical"
                   options={["Original", "Addback", "Offshore"]} selected={filters.source}
@@ -379,6 +389,32 @@ export default function TransactionsPage() {
                     <td className="px-2 py-0 text-gray-600 overflow-hidden whitespace-nowrap truncate">{tx.vendor ?? "—"}</td>
                     <td className="px-2 py-0 font-mono text-gray-600 overflow-hidden whitespace-nowrap">{tx.ref_numb ?? "—"}</td>
                     <td className={`px-2 py-0 text-right font-mono overflow-hidden whitespace-nowrap ${mvColor(tx.movement)}`}>{fmt(tx.movement)}</td>
+                    <td className="px-2 py-0 overflow-hidden whitespace-nowrap font-mono">
+                      {tx.loan_number ? (
+                        tx.loan_number_incomplete ? (
+                          <span className="flex items-center gap-1 text-amber-600">
+                            <AlertTriangle size={10} className="shrink-0" />
+                            {tx.loan_number}
+                          </span>
+                        ) : (
+                          <span className="text-gray-700">{tx.loan_number}</span>
+                        )
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-0 overflow-hidden whitespace-nowrap">
+                      {(() => {
+                        const active = (["b2b","processing","support_on_demand","affinity","recruitment"] as const)
+                          .filter((k) => tx[k] === true)
+                          .map((k) => LOAN_TAG_LABELS[k]);
+                        return active.length > 0
+                          ? <span className="text-[10px] text-indigo-700">{active.join(", ")}</span>
+                          : tx.loan_number && !tx.loan_number_incomplete
+                            ? <span className="text-gray-300">—</span>
+                            : <span className="text-gray-200 text-[10px]">no loan</span>;
+                      })()}
+                    </td>
                     <td className="px-2 py-0 overflow-hidden whitespace-nowrap">
                       {tx.source === "addback"
                         ? <span className="rounded bg-purple-100 px-1 py-0.5 text-[10px] font-medium text-purple-700">Addback</span>

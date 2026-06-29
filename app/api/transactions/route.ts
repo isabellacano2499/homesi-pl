@@ -8,7 +8,39 @@ const SELECT_DATA =
   "id,journal_post_date,gl_code,gl_name,branch,vendor,ref_numb," +
   "check_description,check_description_2,check_description_3,debit,credit,movement," +
   "category_1,category_5,category_6,upload_id,year,month," +
-  "cost_center_id,cost_center_status,cost_centers(name),source";
+  "cost_center_id,cost_center_status,cost_centers(name),source," +
+  "loan_number,loan_number_incomplete";
+
+type LoanTags = { b2b: boolean; processing: boolean; support_on_demand: boolean; affinity: boolean; recruitment: boolean };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function enrichWithLoanTags(supabase: ReturnType<typeof createServerClient>, rows: any[]): Promise<any[]> {
+  const loanNumbers = [...new Set(rows.map((r) => r.loan_number as string | null).filter((n): n is string => !!n))];
+  if (loanNumbers.length === 0) return rows;
+
+  const { data: officials } = await supabase
+    .from("loan_officials")
+    .select("loan_number,b2b,processing,support_on_demand,affinity,recruitment")
+    .in("loan_number", loanNumbers);
+
+  const tagMap = new Map<string, LoanTags>();
+  for (const lo of officials ?? []) {
+    tagMap.set(lo.loan_number as string, {
+      b2b: lo.b2b as boolean,
+      processing: lo.processing as boolean,
+      support_on_demand: lo.support_on_demand as boolean,
+      affinity: lo.affinity as boolean,
+      recruitment: lo.recruitment as boolean,
+    });
+  }
+
+  return rows.map((r) => {
+    const ln = r.loan_number as string | null;
+    if (!ln || r.loan_number_incomplete) return r;
+    const tags = tagMap.get(ln);
+    return tags ? { ...r, ...tags } : r;
+  });
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function withFilters(query: any, f: TransactionFilters): any {
@@ -98,8 +130,9 @@ export async function GET(req: NextRequest) {
       if (data.length < 1000) break;
       offset += 1000;
     }
-    const totals = sumTotals(allRows);
-    return NextResponse.json({ data: allRows, count: allRows.length, totals } satisfies TransactionsResponse);
+    const enriched = await enrichWithLoanTags(supabase, allRows);
+    const totals = sumTotals(enriched);
+    return NextResponse.json({ data: enriched, count: enriched.length, totals } satisfies TransactionsResponse);
   }
 
   // ── Paginated mode (legacy / fallback) ────────────────────────────────────

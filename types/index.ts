@@ -83,6 +83,12 @@ export interface PLTransaction {
   position: string | null;
   branch_allocation: string | null;
   created_at: string;
+  // Loan Officials tags — populated by Transaction Review API (not stored on pl_transactions)
+  b2b?: boolean | null;
+  processing?: boolean | null;
+  support_on_demand?: boolean | null;
+  affinity?: boolean | null;
+  recruitment?: boolean | null;
 }
 
 // ─── Cost Centers ──────────────────────────────────────────────────────────────
