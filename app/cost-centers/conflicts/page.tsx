@@ -216,21 +216,22 @@ function AssignTab({
             </div>
 
             {!isCollapsed && (
+              <div className="overflow-auto max-h-[500px]">
               <table className="w-full text-xs">
-                <thead>
+                <thead className="sticky top-0 z-10 bg-gray-50">
                   <tr className="border-b border-gray-100 bg-gray-50/50 text-left text-gray-400">
-                    <th className="w-8 px-4 py-2" />
-                    <th className="px-3 py-2 font-medium">Month</th>
-                    <th className="px-3 py-2 font-medium">Branch</th>
-                    <th className="px-3 py-2 font-medium">Description</th>
-                    <th className="px-3 py-2 font-medium">Check Desc 2</th>
-                    <th className="px-3 py-2 font-medium">Check Desc 3</th>
-                    <th className="px-3 py-2 font-medium">Vendor</th>
-                    <th className="px-3 py-2 text-right font-medium">Movement</th>
-                    {mode === "override" && <th className="px-3 py-2 font-medium">Current CC</th>}
-                    <th className="px-3 py-2 font-medium">{actionLabel} to</th>
-                    <th className="w-20 px-3 py-2" />
-                    {showAllocationButtons && <th className="px-3 py-2 font-medium">Allocation</th>}
+                    <th className="w-7 px-2 py-1" />
+                    <th className="px-2 py-1 font-medium">Month</th>
+                    <th className="px-2 py-1 font-medium">Branch</th>
+                    <th className="px-2 py-1 font-medium">Description</th>
+                    <th className="px-2 py-1 font-medium">Check Desc 2</th>
+                    <th className="px-2 py-1 font-medium">Check Desc 3</th>
+                    <th className="px-2 py-1 font-medium">Vendor</th>
+                    <th className="px-2 py-1 text-right font-medium">Movement</th>
+                    {mode === "override" && <th className="px-2 py-1 font-medium">Current CC</th>}
+                    <th className="px-2 py-1 font-medium">{actionLabel} to</th>
+                    <th className="w-16 px-2 py-1" />
+                    {showAllocationButtons && <th className="px-2 py-1 font-medium">Allocation</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -239,59 +240,59 @@ function AssignTab({
                   const allocValue = allocNorm ?? (showAllocationButtons ? (tx.check_description_3 ?? "") : "");
                   return (
                     <tr key={tx.id} className={`border-b border-gray-50 hover:bg-blue-50/20 ${selected.has(tx.id) ? "bg-blue-50/40" : ""}`}>
-                      <td className="px-4 py-2">
+                      <td className="px-2 py-1">
                         <input
                           type="checkbox" checked={selected.has(tx.id)}
                           onChange={() => toggleRow(tx.id)}
                           className="h-3.5 w-3.5 accent-blue-600 rounded"
                         />
                       </td>
-                      <td className="px-3 py-2 text-gray-700">{tx.month ?? "—"}</td>
-                      <td className="px-3 py-2 text-gray-700">{tx.branch ?? "—"}</td>
-                      <td className="max-w-[140px] truncate px-3 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
-                      <td className="max-w-[90px] truncate px-3 py-2"><CD2Cell v={tx.check_description_2} /></td>
-                      <td className="max-w-[90px] truncate px-3 py-2"><CD3Cell v={tx.check_description_3} /></td>
-                      <td className="max-w-[100px] truncate px-3 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
-                      <td className={`px-3 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
+                      <td className="px-2 py-1 text-gray-700 whitespace-nowrap">{tx.month ?? "—"}</td>
+                      <td className="px-2 py-1 text-gray-700 whitespace-nowrap">{tx.branch ?? "—"}</td>
+                      <td className="max-w-[140px] truncate px-2 py-1 text-gray-600" title={tx.check_description ?? ""}>{tx.check_description ?? "—"}</td>
+                      <td className="max-w-[90px] truncate px-2 py-1"><CD2Cell v={tx.check_description_2} /></td>
+                      <td className="max-w-[90px] truncate px-2 py-1"><CD3Cell v={tx.check_description_3} /></td>
+                      <td className="max-w-[100px] truncate px-2 py-1 text-gray-600" title={tx.vendor ?? ""}>{tx.vendor ?? "—"}</td>
+                      <td className={`px-2 py-1 text-right font-mono whitespace-nowrap ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
                       {mode === "override" && (
-                        <td className="px-3 py-2">
+                        <td className="px-2 py-1">
                           {tx.cost_center_name
                             ? <span className="rounded bg-blue-100 px-1.5 py-0.5 text-blue-800 text-[10px] font-medium">{tx.cost_center_name}</span>
                             : <span className="text-gray-400">—</span>}
                         </td>
                       )}
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-1">
                         <select
                           value={rowCc[tx.id] ?? ""}
                           onChange={(e) => setRowCc((prev) => ({ ...prev, [tx.id]: e.target.value }))}
-                          className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+                          className="rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
                         >
                           <option value="">Choose…</option>
                           {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
                         </select>
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-1">
                         <button
                           onClick={() => assign([tx.id], rowCc[tx.id] ?? "")}
                           disabled={!rowCc[tx.id] || saving}
-                          className="rounded-lg bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-30"
+                          className="rounded-lg bg-blue-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-30"
                         >
                           {actionLabel}
                         </button>
                       </td>
                       {showAllocationButtons && (
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-1.5 flex-wrap">
+                        <td className="px-2 py-1">
+                          <div className="flex items-center gap-1.5">
                             {allocValue && (
                               <button
                                 onClick={() => setEditingTx(tx)}
-                                className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
+                                className="flex items-center gap-1 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
                               >
-                                <Percent size={10} /> Edit allocation
+                                <Percent size={9} /> Edit alloc.
                               </button>
                             )}
                             {txUnassigning === tx.id ? (
-                              <span className="flex items-center gap-1 text-[11px]">
+                              <span className="flex items-center gap-1 text-[10px]">
                                 <span className="text-red-600 font-medium">Remove?</span>
                                 <button
                                   onClick={() => handleTxUnassign(tx.id)}
@@ -306,7 +307,7 @@ function AssignTab({
                             ) : (
                               <button
                                 onClick={() => setTxUnassigning(tx.id)}
-                                className="rounded-lg border border-gray-100 px-2 py-1 text-[11px] text-red-400 hover:border-red-200 hover:text-red-600 whitespace-nowrap"
+                                className="rounded border border-gray-100 px-1.5 py-0.5 text-[10px] text-red-400 hover:border-red-200 hover:text-red-600 whitespace-nowrap"
                               >Unassign</button>
                             )}
                           </div>
@@ -317,6 +318,7 @@ function AssignTab({
                 })}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         );
@@ -416,38 +418,35 @@ function ManualTab({ branches, costCenters }: { branches: string[]; costCenters:
             </div>
 
             {!isCollapsed && (
+              <div className="overflow-auto max-h-[500px]">
               <table className="w-full text-xs">
-                <thead>
+                <thead className="sticky top-0 z-10 bg-gray-50">
                   <tr className="border-b border-gray-100 bg-gray-50/50 text-left text-gray-400">
-                    <th className="px-4 py-2 font-medium">Month</th>
-                    <th className="px-4 py-2 font-medium">Branch</th>
-                    <th className="px-4 py-2 font-medium">Description</th>
-                    <th className="px-4 py-2 font-medium">Check Desc 2</th>
-                    <th className="px-4 py-2 font-medium">Check Desc 3</th>
-                    <th className="px-4 py-2 font-medium">Vendor</th>
-                    <th className="px-4 py-2 text-right font-medium">Movement</th>
-                    <th className="px-4 py-2 font-medium">Assigned to</th>
-                    <th className="px-4 py-2 font-medium">Allocation</th>
+                    <th className="px-3 py-1 font-medium">Month</th>
+                    <th className="px-3 py-1 font-medium">Branch</th>
+                    <th className="px-3 py-1 font-medium">Description</th>
+                    <th className="px-3 py-1 font-medium">Check Desc 2</th>
+                    <th className="px-3 py-1 font-medium">Check Desc 3</th>
+                    <th className="px-3 py-1 font-medium">Vendor</th>
+                    <th className="px-3 py-1 text-right font-medium">Movement</th>
+                    <th className="px-3 py-1 font-medium">Assigned to</th>
+                    <th className="px-3 py-1 font-medium">Allocation</th>
                   </tr>
                 </thead>
                 <tbody>
                   {group.transactions.map((tx: AssignmentTx) => {
                     const normVendor = tx.vendor?.trim().replace(/\s+/g, " ") || null;
-                    const assignType: "vendor" | "description3" = normVendor ? "vendor" : "description3";
                     const assignValue = normVendor ?? (tx.check_description_3 ?? "");
-                    const splitKey = assignValue ? `${assignType}:${assignValue}` : null;
-                    const hasSplit = splitKey ? !!splitsMap.get(splitKey) : false;
-
                     return (
                       <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50">
-                        <td className="px-4 py-2 text-gray-700">{tx.month ?? "—"}</td>
-                        <td className="px-4 py-2 text-gray-700">{tx.branch ?? "—"}</td>
-                        <td className="max-w-[160px] truncate px-4 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
-                        <td className="max-w-[90px] truncate px-4 py-2"><CD2Cell v={tx.check_description_2} /></td>
-                        <td className="max-w-[90px] truncate px-4 py-2"><CD3Cell v={tx.check_description_3} /></td>
-                        <td className="max-w-[120px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
-                        <td className={`px-4 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
-                        <td className="px-4 py-2">
+                        <td className="px-3 py-1 text-gray-700 whitespace-nowrap">{tx.month ?? "—"}</td>
+                        <td className="px-3 py-1 text-gray-700 whitespace-nowrap">{tx.branch ?? "—"}</td>
+                        <td className="max-w-[160px] truncate px-3 py-1 text-gray-600" title={tx.check_description ?? ""}>{tx.check_description ?? "—"}</td>
+                        <td className="max-w-[90px] truncate px-3 py-1"><CD2Cell v={tx.check_description_2} /></td>
+                        <td className="max-w-[90px] truncate px-3 py-1"><CD3Cell v={tx.check_description_3} /></td>
+                        <td className="max-w-[120px] truncate px-3 py-1 text-gray-600" title={tx.vendor ?? ""}>{tx.vendor ?? "—"}</td>
+                        <td className={`px-3 py-1 text-right font-mono whitespace-nowrap ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
+                        <td className="px-3 py-1">
                           {(() => {
                             const splits =
                               (normVendor ? splitsMap.get(`vendor:${normVendor}`) : undefined) ??
@@ -460,19 +459,19 @@ function ManualTab({ branches, costCenters }: { branches: string[]; costCenters:
                               : <span className="text-gray-400">—</span>;
                           })()}
                         </td>
-                        <td className="px-4 py-2">
-                          <div className="flex items-center gap-1.5 flex-wrap">
+                        <td className="px-3 py-1">
+                          <div className="flex items-center gap-1.5">
                             {assignValue && (
                               <button
                                 onClick={() => setEditingTx(tx)}
-                                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
+                                className="flex items-center gap-1 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 whitespace-nowrap"
                               >
-                                <Percent size={11} />
-                                Edit allocation
+                                <Percent size={9} />
+                                Edit alloc.
                               </button>
                             )}
                             {unassigning === tx.id ? (
-                              <span className="flex items-center gap-1 text-[11px]">
+                              <span className="flex items-center gap-1 text-[10px]">
                                 <span className="text-red-600 font-medium">Remove?</span>
                                 <button
                                   onClick={async () => {
@@ -488,24 +487,18 @@ function ManualTab({ branches, costCenters }: { branches: string[]; costCenters:
                                   }}
                                   disabled={unassignBusy}
                                   className="rounded px-1.5 py-0.5 bg-red-600 text-white text-[10px] hover:bg-red-700 disabled:opacity-40"
-                                >
-                                  Yes
-                                </button>
+                                >Yes</button>
                                 <button
                                   onClick={() => setUnassigning(null)}
                                   className="rounded px-1.5 py-0.5 border border-gray-200 text-gray-500 text-[10px] hover:bg-gray-50"
-                                >
-                                  No
-                                </button>
+                                >No</button>
                               </span>
                             ) : (
                               <button
                                 onClick={() => setUnassigning(tx.id)}
                                 title="Unassign this transaction"
-                                className="rounded-lg border border-gray-100 px-2 py-1.5 text-[11px] text-red-400 hover:border-red-200 hover:text-red-600 whitespace-nowrap"
-                              >
-                                Unassign
-                              </button>
+                                className="rounded border border-gray-100 px-1.5 py-0.5 text-[10px] text-red-400 hover:border-red-200 hover:text-red-600 whitespace-nowrap"
+                              >Unassign</button>
                             )}
                           </div>
                         </td>
@@ -514,6 +507,7 @@ function ManualTab({ branches, costCenters }: { branches: string[]; costCenters:
                   })}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         );
@@ -709,50 +703,51 @@ function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; bra
               <span className="ml-auto text-xs text-amber-600 font-medium">{group.transactions.length} conflict{group.transactions.length !== 1 ? "s" : ""}</span>
             </div>
             {!isCollapsed && (
+              <div className="overflow-auto max-h-[500px]">
               <table className="w-full text-xs">
-                <thead>
+                <thead className="sticky top-0 z-10 bg-gray-50">
                   <tr className="border-b border-gray-100 bg-gray-50/50 text-left text-gray-400">
-                    <th className="w-8 px-4 py-2" />
-                    <th className="px-3 py-2 font-medium">Month</th>
-                    <th className="px-3 py-2 font-medium">Branch</th>
-                    <th className="px-3 py-2 font-medium">Description</th>
-                    <th className="px-3 py-2 font-medium">Check Desc 2</th>
-                    <th className="px-3 py-2 font-medium">Check Desc 3</th>
-                    <th className="px-3 py-2 font-medium">Vendor</th>
-                    <th className="px-3 py-2 text-right font-medium">Movement</th>
-                    <th className="px-3 py-2 font-medium">Conflict Details</th>
-                    <th className="px-3 py-2 font-medium">Assign to</th>
-                    <th className="w-20 px-3 py-2" />
+                    <th className="w-7 px-2 py-1" />
+                    <th className="px-2 py-1 font-medium">Month</th>
+                    <th className="px-2 py-1 font-medium">Branch</th>
+                    <th className="px-2 py-1 font-medium">Description</th>
+                    <th className="px-2 py-1 font-medium">Check Desc 2</th>
+                    <th className="px-2 py-1 font-medium">Check Desc 3</th>
+                    <th className="px-2 py-1 font-medium">Vendor</th>
+                    <th className="px-2 py-1 text-right font-medium">Movement</th>
+                    <th className="px-2 py-1 font-medium">Conflict Details</th>
+                    <th className="px-2 py-1 font-medium">Assign to</th>
+                    <th className="w-16 px-2 py-1" />
                   </tr>
                 </thead>
                 <tbody>
                   {group.transactions.map((tx) => (
                     <tr key={tx.id} className={`border-b border-gray-50 hover:bg-amber-50/30 ${selected.has(tx.id) ? "bg-blue-50/40" : ""}`}>
-                      <td className="px-4 py-2">
+                      <td className="px-2 py-1">
                         <input type="checkbox" checked={selected.has(tx.id)} onChange={() => toggleRow(tx.id)}
                           className="h-3.5 w-3.5 accent-blue-600 rounded" />
                       </td>
-                      <td className="px-3 py-2 text-gray-700">{tx.month ?? "—"}</td>
-                      <td className="px-3 py-2 text-gray-700">{tx.branch ?? "—"}</td>
-                      <td className="max-w-[130px] truncate px-3 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
-                      <td className="max-w-[90px] truncate px-3 py-2"><CD2Cell v={tx.check_description_2} /></td>
-                      <td className="max-w-[90px] truncate px-3 py-2"><CD3Cell v={tx.check_description_3} /></td>
-                      <td className="max-w-[100px] truncate px-3 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
-                      <td className={`px-3 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-1 text-gray-700 whitespace-nowrap">{tx.month ?? "—"}</td>
+                      <td className="px-2 py-1 text-gray-700 whitespace-nowrap">{tx.branch ?? "—"}</td>
+                      <td className="max-w-[130px] truncate px-2 py-1 text-gray-600" title={tx.check_description ?? ""}>{tx.check_description ?? "—"}</td>
+                      <td className="max-w-[90px] truncate px-2 py-1"><CD2Cell v={tx.check_description_2} /></td>
+                      <td className="max-w-[90px] truncate px-2 py-1"><CD3Cell v={tx.check_description_3} /></td>
+                      <td className="max-w-[100px] truncate px-2 py-1 text-gray-600" title={tx.vendor ?? ""}>{tx.vendor ?? "—"}</td>
+                      <td className={`px-2 py-1 text-right font-mono whitespace-nowrap ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
+                      <td className="px-2 py-1">
                         <ConflictDetailCell tx={tx} />
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-1">
                         <select value={rowAssign[tx.id] ?? ""} onChange={(e) => setRowAssign((prev) => ({ ...prev, [tx.id]: e.target.value }))}
-                          className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none">
+                          className="rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-700 focus:border-blue-400 focus:outline-none">
                           <option value="">Choose…</option>
                           {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
                         </select>
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-2 py-1">
                         <button onClick={() => resolveRows([tx.id], rowAssign[tx.id] ?? "")}
                           disabled={!rowAssign[tx.id] || saving}
-                          className="rounded-lg bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-30">
+                          className="rounded-lg bg-blue-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-30">
                           Assign
                         </button>
                       </td>
@@ -760,6 +755,7 @@ function ConflictTab({ costCenters, branches }: { costCenters: CostCenter[]; bra
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         );
@@ -865,20 +861,21 @@ function ConflictResolvedTab({
             </div>
 
             {!isCollapsed && (
+              <div className="overflow-auto max-h-[500px]">
               <table className="w-full text-xs">
-                <thead>
+                <thead className="sticky top-0 z-10 bg-gray-50">
                   <tr className="border-b border-gray-100 bg-gray-50/50 text-left text-gray-400">
-                    <th className="px-4 py-2 font-medium">Month</th>
-                    <th className="px-4 py-2 font-medium">Branch</th>
-                    <th className="px-4 py-2 font-medium">Description</th>
-                    <th className="px-4 py-2 font-medium">Check Desc 2</th>
-                    <th className="px-4 py-2 font-medium">Check Desc 3</th>
-                    <th className="px-4 py-2 font-medium">Vendor</th>
-                    <th className="px-4 py-2 text-right font-medium">Movement</th>
-                    <th className="px-4 py-2 font-medium">Was conflicting</th>
-                    <th className="px-4 py-2 font-medium">Assigned CC</th>
-                    <th className="px-4 py-2 font-medium">Resolved at</th>
-                    <th className="px-4 py-2" />
+                    <th className="px-3 py-1 font-medium">Month</th>
+                    <th className="px-3 py-1 font-medium">Branch</th>
+                    <th className="px-3 py-1 font-medium">Description</th>
+                    <th className="px-3 py-1 font-medium">Check Desc 2</th>
+                    <th className="px-3 py-1 font-medium">Check Desc 3</th>
+                    <th className="px-3 py-1 font-medium">Vendor</th>
+                    <th className="px-3 py-1 text-right font-medium">Movement</th>
+                    <th className="px-3 py-1 font-medium">Was conflicting</th>
+                    <th className="px-3 py-1 font-medium">Assigned CC</th>
+                    <th className="px-3 py-1 font-medium">Resolved at</th>
+                    <th className="px-3 py-1" />
                   </tr>
                 </thead>
                 <tbody>
@@ -889,14 +886,14 @@ function ConflictResolvedTab({
 
                     return (
                       <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50">
-                        <td className="px-4 py-2 text-gray-700">{tx.month ?? "—"}</td>
-                        <td className="px-4 py-2 text-gray-700">{tx.branch ?? "—"}</td>
-                        <td className="max-w-[120px] truncate px-4 py-2 text-gray-600">{tx.check_description ?? "—"}</td>
-                        <td className="max-w-[80px] truncate px-4 py-2"><CD2Cell v={tx.check_description_2} /></td>
-                        <td className="max-w-[80px] truncate px-4 py-2"><CD3Cell v={tx.check_description_3} /></td>
-                        <td className="max-w-[90px] truncate px-4 py-2 text-gray-600">{tx.vendor ?? "—"}</td>
-                        <td className={`px-4 py-2 text-right font-mono ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
-                        <td className="px-4 py-2">
+                        <td className="px-3 py-1 text-gray-700 whitespace-nowrap">{tx.month ?? "—"}</td>
+                        <td className="px-3 py-1 text-gray-700 whitespace-nowrap">{tx.branch ?? "—"}</td>
+                        <td className="max-w-[120px] truncate px-3 py-1 text-gray-600" title={tx.check_description ?? ""}>{tx.check_description ?? "—"}</td>
+                        <td className="max-w-[80px] truncate px-3 py-1"><CD2Cell v={tx.check_description_2} /></td>
+                        <td className="max-w-[80px] truncate px-3 py-1"><CD3Cell v={tx.check_description_3} /></td>
+                        <td className="max-w-[90px] truncate px-3 py-1 text-gray-600" title={tx.vendor ?? ""}>{tx.vendor ?? "—"}</td>
+                        <td className={`px-3 py-1 text-right font-mono whitespace-nowrap ${mvCls(tx.movement)}`}>{fmt(tx.movement)}</td>
+                        <td className="px-3 py-1">
                           {tx.matched_rules.length > 0 ? (
                             <div className="space-y-0.5">
                               {tx.matched_rules.map((mr) => (
@@ -910,13 +907,12 @@ function ConflictResolvedTab({
                             <span className="text-[10px] text-gray-400">Legacy snapshot</span>
                           )}
                         </td>
-
-                        <td className="px-4 py-2">
+                        <td className="px-3 py-1">
                           <div className="flex items-center gap-1.5">
                             <select
                               value={currentCcId}
                               onChange={(e) => setRowCcId((prev) => ({ ...prev, [tx.id]: e.target.value }))}
-                              className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none max-w-[130px]"
+                              className="rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-700 focus:border-blue-400 focus:outline-none max-w-[130px]"
                               disabled={reassigning === tx.id}
                             >
                               <option value="">Choose…</option>
@@ -928,23 +924,22 @@ function ConflictResolvedTab({
                               <button
                                 onClick={() => handleReassign(tx.id, currentCcId)}
                                 disabled={reassigning === tx.id}
-                                className="rounded-lg bg-blue-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-blue-700 disabled:opacity-40 whitespace-nowrap"
+                                className="rounded-lg bg-blue-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-blue-700 disabled:opacity-40 whitespace-nowrap"
                               >
                                 {reassigning === tx.id ? "…" : "Save"}
                               </button>
                             )}
                           </div>
                         </td>
-
-                        <td className="px-4 py-2 text-gray-400">
+                        <td className="px-3 py-1 text-gray-400 whitespace-nowrap">
                           {tx.resolved_at ? new Date(tx.resolved_at).toLocaleDateString() : "—"}
                         </td>
-                        <td className="px-4 py-2">
+                        <td className="px-3 py-1">
                           <button
                             onClick={() => handleReopen(tx.id)}
                             disabled={reopening === tx.id}
                             title="Reopen conflict"
-                            className="flex items-center gap-1 rounded px-2 py-1 text-[10px] text-gray-500 hover:text-amber-700 hover:bg-amber-50 disabled:opacity-40"
+                            className="flex items-center gap-1 rounded px-2 py-0.5 text-[10px] text-gray-500 hover:text-amber-700 hover:bg-amber-50 disabled:opacity-40"
                           >
                             <RotateCcw size={11} /> Reopen
                           </button>
@@ -954,6 +949,7 @@ function ConflictResolvedTab({
                   })}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         );

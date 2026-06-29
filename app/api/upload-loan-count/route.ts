@@ -63,26 +63,24 @@ export async function POST(req: NextRequest) {
 
     const newLoanNumbers = new Set(rows.map((r) => r.loan_number));
 
-    // ── Handle rows not in new file ───────────────────────────────────────────
-    // Keep rows that were manually edited; delete the rest.
-    const toDeleteIds: string[] = [];
+    // ── Merge: new rows vs existing rows ──────────────────────────────────────
+    type MergedRow = typeof rows[number] & { id?: string };
+
+    // Track which existing ids to keep so we can delete everything else
+    // (including any orphan duplicates that slipped in from previous buggy uploads)
+    const keptIds = new Set<string>();
     let keptHistorical = 0;
+
+    // Rows not in the new file: keep if manually edited, otherwise mark for deletion
     for (const [ln, row] of existingMap) {
       if (!newLoanNumbers.has(ln)) {
         const hasManualEdits = (row.manually_edited_fields ?? []).length > 0;
         if (hasManualEdits) {
           keptHistorical++;
-        } else {
-          toDeleteIds.push(row.id);
+          keptIds.add(row.id);
         }
       }
     }
-    if (toDeleteIds.length > 0) {
-      await supabase.from("loan_officials").delete().in("id", toDeleteIds);
-    }
-
-    // ── Merge: new rows vs existing rows ──────────────────────────────────────
-    type MergedRow = typeof rows[number] & { id?: string };
 
     const toInsert: typeof rows = [];
     const toUpsert: MergedRow[] = [];
@@ -106,8 +104,19 @@ export async function POST(req: NextRequest) {
           }
         }
         preservedFields += editedFields.length;
+        keptIds.add(existing.id);
         toUpsert.push(merged as MergedRow);
       }
+    }
+
+    // Delete any existing row for this period not being kept — includes rows
+    // not in the new file AND any orphan duplicates (same loan_number, multiple rows)
+    const toDeleteIds = (existingData ?? [])
+      .map((r) => (r as ExistingRow).id)
+      .filter((id) => !keptIds.has(id));
+
+    if (toDeleteIds.length > 0) {
+      await supabase.from("loan_officials").delete().in("id", toDeleteIds);
     }
 
     // ── Insert new loan numbers ───────────────────────────────────────────────

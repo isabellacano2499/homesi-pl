@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { RefreshCw, AlertTriangle } from "lucide-react";
+import { createPortal } from "react-dom";
+import { RefreshCw, AlertTriangle, Download, Search, X } from "lucide-react";
+import { downloadCSV } from "@/lib/csv";
 import { ColumnFilter } from "@/components/column-filter";
 import { buildSplitsMap } from "@/lib/apply-splits";
 import { SplitDisplay } from "@/components/split-display";
@@ -14,25 +16,37 @@ import type { PLTransaction, FilterOptionsResponse, TransactionTotals } from "@/
 const ROW_H = 38;
 const OVERSCAN = 25;
 
-// ─── Filter state ─────────────────────────────────────────────────────────────
+// ─── Server-side filter state (sent to API) ───────────────────────────────────
 
-type FilterState = {
-  month: string[];
-  year: string[];
-  gl_code: string[];
-  gl_name: string[];
-  branch: string[];
-  vendor: string[];
-  ref_numb: string[];
-  cost_center: string[];
-  source: string[];
+type ServerFilters = {
+  month: string[]; year: string[]; gl_code: string[]; gl_name: string[];
+  branch: string[]; vendor: string[]; ref_numb: string[];
+  cost_center: string[]; source: string[];
   description: string;
-  check_description_2: string[];
-  check_description_3: string[];
+  check_description_2: string[]; check_description_3: string[];
   movement_min: string; movement_max: string;
 };
 
-const emptyFilters = (): FilterState => ({
+// ─── Client-side filter state (applied in browser, no re-fetch) ───────────────
+
+type LoanNumStatus = "all" | "has_loan" | "no_loan" | "incomplete";
+
+type ClientFilters = {
+  loan_number_status: LoanNumStatus;
+  loan_tags: string[];
+};
+
+const LOAN_TAG_OPTIONS = ["B2B", "Processing", "On Demand", "Affinity", "Recruitment"];
+
+const TAG_KEY_MAP: Record<string, keyof PLTransaction> = {
+  "B2B": "b2b",
+  "Processing": "processing",
+  "On Demand": "support_on_demand",
+  "Affinity": "affinity",
+  "Recruitment": "recruitment",
+};
+
+const emptyServer = (): ServerFilters => ({
   month: [], year: [], gl_code: [], gl_name: [], branch: [], vendor: [],
   ref_numb: [], cost_center: [], source: [],
   description: "",
@@ -40,9 +54,11 @@ const emptyFilters = (): FilterState => ({
   movement_min: "", movement_max: "",
 });
 
+const emptyClient = (): ClientFilters => ({ loan_number_status: "all", loan_tags: [] });
+
 type CCRef = { id: string; name: string };
 
-function buildParams(uploadId: string, f: FilterState, ccList: CCRef[], globalBranches: string[] = []): URLSearchParams {
+function buildParams(uploadId: string, f: ServerFilters, ccList: CCRef[], globalBranches: string[] = []): URLSearchParams {
   const p = new URLSearchParams({ all: "true" });
   if (uploadId) p.set("uploadId", uploadId);
   const effectiveBranches = mergeWithGlobal(globalBranches, f.branch);
@@ -120,10 +136,6 @@ function CCCell({ tx, splitsMap }: { tx: PLTransaction; splitsMap: Map<string, S
   return <span className="text-gray-300">—</span>;
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
-const COL_COUNT = 15;
-
 const LOAN_TAG_LABELS: Record<string, string> = {
   b2b: "B2B",
   processing: "Processing",
@@ -132,8 +144,260 @@ const LOAN_TAG_LABELS: Record<string, string> = {
   recruitment: "Recruitment",
 };
 
+function LoanTagsCell({ tx }: { tx: PLTransaction }) {
+  const active = (["b2b", "processing", "support_on_demand", "affinity", "recruitment"] as const)
+    .filter((k) => tx[k] === true)
+    .map((k) => LOAN_TAG_LABELS[k]);
+  return (
+    <td
+      className="px-2 py-0 overflow-hidden whitespace-nowrap"
+      title={active.length > 0 ? active.join(", ") : undefined}
+    >
+      {active.length > 0 ? (
+        <span className="text-[10px] text-indigo-700">{active.join(", ")}</span>
+      ) : tx.loan_number && !tx.loan_number_incomplete ? (
+        <span className="text-gray-300">—</span>
+      ) : (
+        <span className="text-gray-200 text-[10px]">no loan</span>
+      )}
+    </td>
+  );
+}
+
+// Inline loan # status picker (4-way: All / Has Loan / No Loan / Incomplete)
+function LoanNumStatusPicker({ value, onChange }: { value: LoanNumStatus; onChange: (v: LoanNumStatus) => void }) {
+  const opts: { v: LoanNumStatus; label: string; activeClass: string }[] = [
+    { v: "all",        label: "All",   activeClass: "bg-blue-600 text-white" },
+    { v: "has_loan",   label: "Loan ✓", activeClass: "bg-green-600 text-white" },
+    { v: "no_loan",    label: "No Loan", activeClass: "bg-gray-500 text-white" },
+    { v: "incomplete", label: "⚠ Incomplete", activeClass: "bg-amber-500 text-white" },
+  ];
+  return (
+    <span className="ml-1 inline-flex items-center rounded border border-gray-200 bg-white overflow-hidden shrink-0">
+      {opts.map((o) => (
+        <button
+          key={o.v}
+          onClick={() => onChange(o.v)}
+          className={`px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+            value === o.v ? o.activeClass : "text-gray-400 hover:text-gray-600"
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+// ─── Loan number resolution picker ───────────────────────────────────────────
+
+type LoanSearchResult = {
+  loan_number: string;
+  borrower_name: string | null;
+  loan_officer: string | null;
+  month: string | null;
+  year: number | null;
+};
+
+function LoanResolvePicker({
+  tx,
+  anchorEl,
+  onResolved,
+  onClose,
+}: {
+  tx: PLTransaction;
+  anchorEl: HTMLElement;
+  onResolved: (id: string, loanNumber: string) => void;
+  onClose: () => void;
+}) {
+  const [candidates, setCandidates] = useState<LoanSearchResult[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<LoanSearchResult[]>([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(true);
+  const [loadingSearch, setLoadingSearch] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Position portal relative to button
+  const rect = anchorEl.getBoundingClientRect();
+  const top = rect.bottom + window.scrollY + 4;
+  const left = Math.max(8, Math.min(rect.left + window.scrollX, window.innerWidth - 340));
+
+  // Load prefix candidates on mount
+  useEffect(() => {
+    const prefix = tx.loan_number ?? "";
+    if (!prefix) { setLoadingCandidates(false); return; }
+    fetch(`/api/loan-officials/search?prefix=${encodeURIComponent(prefix)}&limit=10`)
+      .then((r) => r.json())
+      .then((d: LoanSearchResult[]) => { setCandidates(Array.isArray(d) ? d : []); })
+      .catch(() => setCandidates([]))
+      .finally(() => setLoadingCandidates(false));
+  }, [tx.loan_number]);
+
+  // Debounced search
+  useEffect(() => {
+    if (!searchQuery) { setSearchResults([]); return; }
+    setLoadingSearch(true);
+    const t = setTimeout(() => {
+      fetch(`/api/loan-officials/search?q=${encodeURIComponent(searchQuery)}&limit=12`)
+        .then((r) => r.json())
+        .then((d: LoanSearchResult[]) => setSearchResults(Array.isArray(d) ? d : []))
+        .catch(() => setSearchResults([]))
+        .finally(() => setLoadingSearch(false));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  // Close on outside click
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      const target = e.target as Node;
+      if (!document.getElementById("loan-resolve-picker")?.contains(target)) onClose();
+    }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [onClose]);
+
+  // Focus search input when picker opens
+  useEffect(() => {
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }, []);
+
+  async function resolve(loanNumber: string) {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/transactions/${tx.id}/resolve-loan`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loan_number: loanNumber }),
+      });
+      if (!res.ok) return;
+      onResolved(tx.id, loanNumber);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const displayList = searchQuery ? searchResults : candidates;
+  const isCandidate = !searchQuery && candidates.length > 0;
+
+  return createPortal(
+    <div
+      id="loan-resolve-picker"
+      className="fixed z-[9999] w-80 rounded-xl border border-gray-200 bg-white shadow-xl"
+      style={{ top, left }}
+    >
+      <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
+        <span className="text-[11px] font-semibold text-gray-700">
+          Resolve loan #{" "}
+          <span className="font-mono text-amber-600">{tx.loan_number}</span>
+        </span>
+        <button onClick={onClose} className="text-gray-300 hover:text-gray-600"><X size={13} /></button>
+      </div>
+
+      {/* Candidates section */}
+      {!searchQuery && (
+        <div className="px-3 pt-2.5">
+          {loadingCandidates ? (
+            <p className="text-[11px] text-gray-400 pb-1">Looking up candidates…</p>
+          ) : isCandidate ? (
+            <>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+                Prefix matches ({candidates.length})
+              </p>
+              <div className="space-y-1">
+                {candidates.map((c) => (
+                  <button
+                    key={c.loan_number}
+                    onClick={() => resolve(c.loan_number)}
+                    disabled={saving}
+                    className="flex w-full items-start justify-between gap-2 rounded-lg border border-gray-100 px-2.5 py-2 text-left hover:border-blue-300 hover:bg-blue-50 disabled:opacity-40"
+                  >
+                    <span className="font-mono text-[12px] text-gray-800">{c.loan_number}</span>
+                    <span className="text-right text-[10px] text-gray-400 leading-tight">
+                      {c.borrower_name && <span className="block">{c.borrower_name}</span>}
+                      {c.month && <span className="block">{c.month} {c.year}</span>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="text-[11px] text-gray-400 pb-1">No prefix matches — search below.</p>
+          )}
+        </div>
+      )}
+
+      {/* Search */}
+      <div className="px-3 pb-1 pt-2">
+        {!searchQuery && <div className="my-2 border-t border-gray-100" />}
+        <div className="relative">
+          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder="Search loan # or borrower name…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 bg-gray-50 py-1.5 pl-7 pr-3 text-[11px] focus:border-blue-400 focus:bg-white focus:outline-none"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500"
+            >
+              <X size={11} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Search results */}
+      {searchQuery && (
+        <div className="max-h-52 overflow-y-auto px-3 pb-2">
+          {loadingSearch ? (
+            <p className="py-2 text-center text-[11px] text-gray-400">Searching…</p>
+          ) : searchResults.length === 0 ? (
+            <p className="py-2 text-center text-[11px] text-gray-400">No results.</p>
+          ) : (
+            <div className="space-y-1 pt-1">
+              {searchResults.map((c) => (
+                <button
+                  key={c.loan_number}
+                  onClick={() => resolve(c.loan_number)}
+                  disabled={saving}
+                  className="flex w-full items-start justify-between gap-2 rounded-lg border border-gray-100 px-2.5 py-2 text-left hover:border-blue-300 hover:bg-blue-50 disabled:opacity-40"
+                >
+                  <span className="font-mono text-[12px] text-gray-800">{c.loan_number}</span>
+                  <span className="text-right text-[10px] text-gray-400 leading-tight">
+                    {c.borrower_name && <span className="block">{c.borrower_name}</span>}
+                    {c.month && <span className="block">{c.month} {c.year}</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="border-t border-gray-100 px-3 py-2">
+        <p className="text-[10px] text-gray-400">
+          {saving ? "Saving…" : "Click a loan to confirm. This updates loan_number and clears the incomplete flag."}
+        </p>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+const COL_COUNT = 15;
+
 export default function TransactionsPage() {
-  const { activeBranches } = useActiveBranches();
+  const { activeBranches, isLoaded: branchFilterLoaded } = useActiveBranches();
+
   const [uploads, setUploads] = useState<{ id: string; file_name: string }[]>([]);
   const [selectedUpload, setSelectedUpload] = useState("");
   const [filterOpts, setFilterOpts] = useState<FilterOptionsResponse>({
@@ -142,13 +406,39 @@ export default function TransactionsPage() {
     check_description_2: [], check_description_3: [],
     costCenters: [],
   });
-  const [filters, setFilters] = useState<FilterState>(emptyFilters());
+
+  // Keep filterOpts in a ref so fetchAll doesn't have it as a reactive dependency.
+  // Prevents filter-options loading from triggering a redundant second server fetch.
+  const filterOptsRef = useRef<FilterOptionsResponse>(filterOpts);
+
+  const [serverFilters, setServerFilters] = useState<ServerFilters>(emptyServer());
+  const [clientFilters, setClientFilters] = useState<ClientFilters>(emptyClient());
 
   const [rows, setRows] = useState<PLTransaction[]>([]);
   const [totals, setTotals] = useState<TransactionTotals>({ debit: 0, credit: 0, movement: 0 });
+
+  // Loan resolution picker state
+  const [resolvingTx, setResolvingTx] = useState<PLTransaction | null>(null);
+  const [resolveAnchor, setResolveAnchor] = useState<HTMLElement | null>(null);
+
+  function handleLoanResolved(id: string, loanNumber: string) {
+    setRows((prev) => prev.map((r) =>
+      r.id === id ? { ...r, loan_number: loanNumber, loan_number_raw: loanNumber, loan_number_incomplete: false } : r
+    ));
+  }
+
+  function openResolvePicker(e: React.MouseEvent, tx: PLTransaction) {
+    e.stopPropagation();
+    setResolvingTx(tx);
+    setResolveAnchor(e.currentTarget as HTMLElement);
+  }
   const [allSplits, setAllSplits] = useState<SplitEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Version counter: only the latest fetch's results are applied.
+  // Prevents a slow earlier fetch from overwriting results from a newer one.
+  const fetchSeq = useRef(0);
 
   // ── Virtual scroll ──────────────────────────────────────────────────────────
   const containerRef = useRef<HTMLDivElement>(null);
@@ -165,16 +455,46 @@ export default function TransactionsPage() {
 
   function onScroll(e: React.UIEvent<HTMLDivElement>) {
     setScrollTop(e.currentTarget.scrollTop);
+    if (resolvingTx) { setResolvingTx(null); setResolveAnchor(null); }
   }
 
-  const N = rows.length;
+  // ── Client-side row filtering (loan # status + loan tags) ──────────────────
+  const displayedRows = useMemo(() => {
+    let out = rows;
+
+    if (clientFilters.loan_number_status !== "all") {
+      const s = clientFilters.loan_number_status;
+      out = out.filter((tx) => {
+        if (s === "has_loan")   return !!tx.loan_number && !tx.loan_number_incomplete;
+        if (s === "no_loan")    return !tx.loan_number;
+        if (s === "incomplete") return tx.loan_number_incomplete === true;
+        return true;
+      });
+    }
+
+    if (clientFilters.loan_tags.length > 0) {
+      out = out.filter((tx) =>
+        clientFilters.loan_tags.some((tag) => {
+          const key = TAG_KEY_MAP[tag];
+          return key && tx[key] === true;
+        })
+      );
+    }
+
+    return out;
+  }, [rows, clientFilters]);
+
+  const N = displayedRows.length;
   const firstV = Math.floor(scrollTop / ROW_H);
   const lastV = Math.ceil((scrollTop + containerH) / ROW_H);
   const renderFrom = Math.max(0, firstV - OVERSCAN);
   const renderTo = Math.min(N, lastV + OVERSCAN);
-  const visibleRows = rows.slice(renderFrom, renderTo);
+  const visibleRows = displayedRows.slice(renderFrom, renderTo);
   const topPad = renderFrom * ROW_H;
   const botPad = Math.max(0, (N - renderTo) * ROW_H);
+
+  const clientFiltersActive =
+    clientFilters.loan_number_status !== "all" || clientFilters.loan_tags.length > 0;
 
   // ── Data loading ────────────────────────────────────────────────────────────
 
@@ -191,40 +511,89 @@ export default function TransactionsPage() {
       .catch(console.error);
   }, []);
 
+  // Filter-options: only re-fetch when selectedUpload changes.
+  // Sync to ref immediately so the next fetchAll has correct costCenters.
   useEffect(() => {
     const params = selectedUpload ? `?uploadId=${selectedUpload}` : "";
     fetch(`/api/transactions/filter-options${params}`)
       .then((r) => r.json())
-      .then((v: FilterOptionsResponse) => setFilterOpts(v))
+      .then((v: FilterOptionsResponse) => {
+        filterOptsRef.current = v;
+        setFilterOpts(v);
+      })
       .catch(console.error);
   }, [selectedUpload]);
 
+  // fetchAll only depends on server-side params — NOT on filterOpts (uses ref instead).
   const fetchAll = useCallback(async () => {
+    const seq = ++fetchSeq.current;
     setLoading(true);
     setError("");
     if (containerRef.current) { containerRef.current.scrollTop = 0; setScrollTop(0); }
     try {
-      const p = buildParams(selectedUpload, filters, filterOpts.costCenters, activeBranches);
+      const p = buildParams(selectedUpload, serverFilters, filterOptsRef.current.costCenters, activeBranches);
       const res = await fetch(`/api/transactions?${p}`);
+      if (seq !== fetchSeq.current) return; // stale — a newer fetch is in flight
       if (!res.ok) { const j = await res.json(); setError(j.error ?? "Request failed"); return; }
       const json = await res.json() as { data: PLTransaction[]; totals: TransactionTotals };
+      if (seq !== fetchSeq.current) return; // stale
       setRows(json.data);
       setTotals(json.totals);
     } catch (err) {
-      setError(String(err));
+      if (seq === fetchSeq.current) setError(String(err));
     } finally {
-      setLoading(false);
+      if (seq === fetchSeq.current) setLoading(false);
     }
-  }, [selectedUpload, filters, filterOpts.costCenters, activeBranches]);
+  // filterOptsRef is a ref (not reactive) — intentionally excluded from deps.
+  // activeBranches is a dep so global branch changes trigger a re-fetch.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUpload, serverFilters, activeBranches]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  // Only run auto-fetch once the branch filter has resolved its initial state.
+  // Without this guard, fetchAll fires with activeBranches=[] on mount, then
+  // again when branches load — causing two simultaneous fetches that race.
+  useEffect(() => {
+    if (!branchFilterLoaded) return;
+    fetchAll();
+  }, [branchFilterLoaded, fetchAll]);
 
-  function setFilter<K extends keyof FilterState>(key: K, value: FilterState[K]) {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+  function setSF<K extends keyof ServerFilters>(key: K, value: ServerFilters[K]) {
+    setServerFilters((prev) => ({ ...prev, [key]: value }));
+  }
+  function setCF<K extends keyof ClientFilters>(key: K, value: ClientFilters[K]) {
+    setClientFilters((prev) => ({ ...prev, [key]: value }));
   }
 
   const ccFilterOptions = ["Unassigned", "Conflict", ...filterOpts.costCenters.map((cc) => cc.name)];
   const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
+
+  function handleExport() {
+    const data = displayedRows.map((r) => ({
+      ...r,
+      cost_center_name: (r.cost_centers as { name: string } | null)?.name ?? "",
+    })) as Record<string, unknown>[];
+    downloadCSV("transactions.csv", data, [
+      { key: "journal_post_date", label: "Date" },
+      { key: "month",             label: "Month" },
+      { key: "branch",            label: "Branch" },
+      { key: "gl_code",           label: "GL Code" },
+      { key: "gl_name",           label: "GL Name" },
+      { key: "vendor",            label: "Vendor" },
+      { key: "check_description", label: "Description" },
+      { key: "check_description_2", label: "CD2" },
+      { key: "check_description_3", label: "CD3" },
+      { key: "ref_numb",          label: "Ref #" },
+      { key: "loan_number",       label: "Loan #" },
+      { key: "loan_number_raw",   label: "Loan # Raw" },
+      { key: "loan_number_incomplete", label: "Loan # Incomplete" },
+      { key: "debit",             label: "Debit" },
+      { key: "credit",            label: "Credit" },
+      { key: "movement",          label: "Movement" },
+      { key: "source",            label: "Source" },
+      { key: "cost_center_name",  label: "Cost Center" },
+      { key: "cost_center_status",label: "CC Status" },
+    ]);
+  }
 
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-32px)]">
@@ -233,13 +602,21 @@ export default function TransactionsPage() {
         <div>
           <h2 className="text-xl font-bold text-gray-900">Transaction Review</h2>
           <p className="text-sm text-gray-500">
-            {loading ? "Loading…" : `${N.toLocaleString()} rows`}
+            {loading
+              ? "Loading…"
+              : clientFiltersActive
+                ? `${N.toLocaleString()} of ${rows.length.toLocaleString()} rows`
+                : `${rows.length.toLocaleString()} rows`}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <select
             value={selectedUpload}
-            onChange={(e) => { setSelectedUpload(e.target.value); setFilters(emptyFilters()); }}
+            onChange={(e) => {
+              setSelectedUpload(e.target.value);
+              setServerFilters(emptyServer());
+              setClientFilters(emptyClient());
+            }}
             className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:border-blue-400 focus:outline-none"
           >
             <option value="">All uploads</option>
@@ -252,10 +629,18 @@ export default function TransactionsPage() {
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
             Refresh
           </button>
+          {rows.length > 0 && (
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+            >
+              <Download size={14} /> Export CSV
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Totals — only movement shown */}
+      {/* Totals */}
       <div className="grid grid-cols-1 gap-3 shrink-0 max-w-xs">
         <TotalCard label="Net movement" value={totals.movement}
           colorClass={totals.movement >= 0 ? "text-green-700" : "text-red-700"} />
@@ -271,81 +656,90 @@ export default function TransactionsPage() {
         className="flex-1 overflow-auto rounded-xl border border-gray-200 bg-white shadow-sm min-h-0"
         onScroll={onScroll}
       >
-        <table className="w-full text-xs table-fixed border-collapse">
+        <table className="text-xs table-fixed border-collapse" style={{ minWidth: "100%", width: "max-content" }}>
           <colgroup>
             {/* CC | Month | Year | GL Code | GL Name | Branch | Desc | CD2 | CD3 | Vendor | Ref | Movement | Loan# | Loan Tags | Source */}
-            {["150px","68px","44px","62px","120px","55px",undefined,"90px","90px","110px","65px","88px","95px","110px","62px"].map((w, i) => (
-              <col key={i} style={w ? { width: w } : undefined} />
+            {["160px","72px","52px","80px","150px","72px","230px","120px","120px","130px","80px","100px","140px","160px","72px"].map((w, i) => (
+              <col key={i} style={{ width: w }} />
             ))}
           </colgroup>
           <thead className="sticky top-0 z-20 bg-gray-50">
             <tr className="border-b border-gray-200 text-gray-500">
               <TH label="Cost Center">
                 <ColumnFilter label="Cost Center" type="categorical"
-                  options={ccFilterOptions} selected={filters.cost_center}
-                  onChange={(v) => setFilter("cost_center", v)} />
+                  options={ccFilterOptions} selected={serverFilters.cost_center}
+                  onChange={(v) => setSF("cost_center", v)} />
               </TH>
               <TH label="Month">
                 <ColumnFilter label="Month" type="categorical"
-                  options={filterOpts.month} selected={filters.month}
-                  onChange={(v) => setFilter("month", v)} />
+                  options={filterOpts.month} selected={serverFilters.month}
+                  onChange={(v) => setSF("month", v)} />
               </TH>
               <TH label="Year">
                 <ColumnFilter label="Year" type="categorical"
-                  options={filterOpts.year} selected={filters.year}
-                  onChange={(v) => setFilter("year", v)} />
+                  options={filterOpts.year} selected={serverFilters.year}
+                  onChange={(v) => setSF("year", v)} />
               </TH>
               <TH label="GL Code">
                 <ColumnFilter label="GL Code" type="categorical"
-                  options={filterOpts.gl_code} selected={filters.gl_code}
-                  onChange={(v) => setFilter("gl_code", v)} />
+                  options={filterOpts.gl_code} selected={serverFilters.gl_code}
+                  onChange={(v) => setSF("gl_code", v)} />
               </TH>
               <TH label="GL Name">
                 <ColumnFilter label="GL Name" type="categorical"
-                  options={filterOpts.gl_name} selected={filters.gl_name}
-                  onChange={(v) => setFilter("gl_name", v)} />
+                  options={filterOpts.gl_name} selected={serverFilters.gl_name}
+                  onChange={(v) => setSF("gl_name", v)} />
               </TH>
               <TH label="Branch">
                 <ColumnFilter label="Branch" type="categorical"
-                  options={filterOpts.branch} selected={filters.branch}
-                  onChange={(v) => setFilter("branch", v)} />
+                  options={filterOpts.branch} selected={serverFilters.branch}
+                  onChange={(v) => setSF("branch", v)} />
               </TH>
               <TH label="Description">
                 <ColumnFilter label="Description" type="text"
-                  value={filters.description}
-                  onChange={(v) => setFilter("description", v)} />
+                  value={serverFilters.description}
+                  onChange={(v) => setSF("description", v)} />
               </TH>
               <TH label="Check Desc 2">
                 <ColumnFilter label="Check Desc 2" type="categorical"
-                  options={filterOpts.check_description_2 ?? []} selected={filters.check_description_2}
-                  onChange={(v) => setFilter("check_description_2", v)} />
+                  options={filterOpts.check_description_2 ?? []} selected={serverFilters.check_description_2}
+                  onChange={(v) => setSF("check_description_2", v)} />
               </TH>
               <TH label="Check Desc 3">
                 <ColumnFilter label="Check Desc 3" type="categorical"
-                  options={filterOpts.check_description_3 ?? []} selected={filters.check_description_3}
-                  onChange={(v) => setFilter("check_description_3", v)} />
+                  options={filterOpts.check_description_3 ?? []} selected={serverFilters.check_description_3}
+                  onChange={(v) => setSF("check_description_3", v)} />
               </TH>
               <TH label="Vendor">
                 <ColumnFilter label="Vendor" type="categorical"
-                  options={filterOpts.vendor} selected={filters.vendor}
-                  onChange={(v) => setFilter("vendor", v)} />
+                  options={filterOpts.vendor} selected={serverFilters.vendor}
+                  onChange={(v) => setSF("vendor", v)} />
               </TH>
               <TH label="Ref Numb">
                 <ColumnFilter label="Ref Numb" type="categorical"
-                  options={filterOpts.ref_numb} selected={filters.ref_numb}
-                  onChange={(v) => setFilter("ref_numb", v)} />
+                  options={filterOpts.ref_numb} selected={serverFilters.ref_numb}
+                  onChange={(v) => setSF("ref_numb", v)} />
               </TH>
               <TH label="Movement" className="text-right">
                 <ColumnFilter label="Movement" type="numeric"
-                  min={filters.movement_min} max={filters.movement_max}
-                  onChange={(min, max) => { setFilter("movement_min", min); setFilter("movement_max", max); }} />
+                  min={serverFilters.movement_min} max={serverFilters.movement_max}
+                  onChange={(min, max) => { setSF("movement_min", min); setSF("movement_max", max); }} />
               </TH>
-              <TH label="Loan #" />
-              <TH label="Loan Tags" />
+              <TH label="Loan #">
+                <LoanNumStatusPicker
+                  value={clientFilters.loan_number_status}
+                  onChange={(v) => setCF("loan_number_status", v)}
+                />
+              </TH>
+              <TH label="Loan Tags">
+                <ColumnFilter label="Loan Tags" type="categorical"
+                  options={LOAN_TAG_OPTIONS} selected={clientFilters.loan_tags}
+                  onChange={(v) => setCF("loan_tags", v)} />
+              </TH>
               <TH label="Source">
                 <ColumnFilter label="Source" type="categorical"
-                  options={["Original", "Addback", "Offshore"]} selected={filters.source}
-                  onChange={(v) => setFilter("source", v)} />
+                  options={["Original", "Addback", "Offshore"]} selected={serverFilters.source}
+                  onChange={(v) => setSF("source", v)} />
               </TH>
             </tr>
           </thead>
@@ -381,20 +775,27 @@ export default function TransactionsPage() {
                     <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap">{tx.month ?? "—"}</td>
                     <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap">{tx.year ?? "—"}</td>
                     <td className="px-2 py-0 font-mono text-gray-800 overflow-hidden whitespace-nowrap">{tx.gl_code ?? "—"}</td>
-                    <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap truncate">{tx.gl_name ?? "—"}</td>
+                    <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap truncate" title={tx.gl_name ?? ""}>{tx.gl_name ?? "—"}</td>
                     <td className="px-2 py-0 text-gray-700 overflow-hidden whitespace-nowrap">{tx.branch ?? "—"}</td>
-                    <td className="px-2 py-0 text-gray-600 overflow-hidden whitespace-nowrap truncate">{tx.check_description ?? "—"}</td>
-                    <td className="px-2 py-0 text-sky-700 overflow-hidden whitespace-nowrap truncate">{tx.check_description_2 ?? <span className="text-gray-300">—</span>}</td>
-                    <td className="px-2 py-0 text-sky-600 overflow-hidden whitespace-nowrap truncate">{tx.check_description_3 ?? <span className="text-gray-300">—</span>}</td>
-                    <td className="px-2 py-0 text-gray-600 overflow-hidden whitespace-nowrap truncate">{tx.vendor ?? "—"}</td>
+                    <td className="px-2 py-0 text-gray-600 overflow-hidden whitespace-nowrap truncate" title={tx.check_description ?? ""}>{tx.check_description ?? "—"}</td>
+                    <td className="px-2 py-0 text-sky-700 overflow-hidden whitespace-nowrap truncate" title={tx.check_description_2 ?? ""}>{tx.check_description_2 ?? <span className="text-gray-300">—</span>}</td>
+                    <td className="px-2 py-0 text-sky-600 overflow-hidden whitespace-nowrap truncate" title={tx.check_description_3 ?? ""}>{tx.check_description_3 ?? <span className="text-gray-300">—</span>}</td>
+                    <td className="px-2 py-0 text-gray-600 overflow-hidden whitespace-nowrap truncate" title={tx.vendor ?? ""}>{tx.vendor ?? "—"}</td>
                     <td className="px-2 py-0 font-mono text-gray-600 overflow-hidden whitespace-nowrap">{tx.ref_numb ?? "—"}</td>
                     <td className={`px-2 py-0 text-right font-mono overflow-hidden whitespace-nowrap ${mvColor(tx.movement)}`}>{fmt(tx.movement)}</td>
                     <td className="px-2 py-0 overflow-hidden whitespace-nowrap font-mono">
                       {tx.loan_number ? (
                         tx.loan_number_incomplete ? (
-                          <span className="flex items-center gap-1 text-amber-600">
-                            <AlertTriangle size={10} className="shrink-0" />
-                            {tx.loan_number}
+                          <span className="flex items-center gap-1">
+                            <AlertTriangle size={10} className="shrink-0 text-amber-500" />
+                            <span className="text-amber-600 text-[10px]">{tx.loan_number}</span>
+                            <button
+                              onClick={(e) => openResolvePicker(e, tx)}
+                              className="ml-0.5 rounded px-1 py-px text-[9px] font-semibold bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-200 whitespace-nowrap"
+                              title="Assign correct loan number"
+                            >
+                              Resolve
+                            </button>
                           </span>
                         ) : (
                           <span className="text-gray-700">{tx.loan_number}</span>
@@ -403,18 +804,7 @@ export default function TransactionsPage() {
                         <span className="text-gray-300">—</span>
                       )}
                     </td>
-                    <td className="px-2 py-0 overflow-hidden whitespace-nowrap">
-                      {(() => {
-                        const active = (["b2b","processing","support_on_demand","affinity","recruitment"] as const)
-                          .filter((k) => tx[k] === true)
-                          .map((k) => LOAN_TAG_LABELS[k]);
-                        return active.length > 0
-                          ? <span className="text-[10px] text-indigo-700">{active.join(", ")}</span>
-                          : tx.loan_number && !tx.loan_number_incomplete
-                            ? <span className="text-gray-300">—</span>
-                            : <span className="text-gray-200 text-[10px]">no loan</span>;
-                      })()}
-                    </td>
+                    <LoanTagsCell tx={tx} />
                     <td className="px-2 py-0 overflow-hidden whitespace-nowrap">
                       {tx.source === "addback"
                         ? <span className="rounded bg-purple-100 px-1 py-0.5 text-[10px] font-medium text-purple-700">Addback</span>
@@ -432,6 +822,16 @@ export default function TransactionsPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Loan number resolution picker — portal rendered, stays above virtual scroll */}
+      {resolvingTx && resolveAnchor && (
+        <LoanResolvePicker
+          tx={resolvingTx}
+          anchorEl={resolveAnchor}
+          onResolved={handleLoanResolved}
+          onClose={() => { setResolvingTx(null); setResolveAnchor(null); }}
+        />
+      )}
     </div>
   );
 }

@@ -404,6 +404,7 @@ export interface UploadLoanCountResponse {
     processed: number;
     completed_direct: number;
     completed_from_10: number;
+    completed_from_9: number;
     incomplete_no_match: number;
     incomplete_ambiguous: number;
   };

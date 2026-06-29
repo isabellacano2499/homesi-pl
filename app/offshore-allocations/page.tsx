@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, AlertTriangle, Percent } from "lucide-react";
+import { Download, RefreshCw, AlertTriangle, Percent } from "lucide-react";
+import { downloadCSV } from "@/lib/csv";
 import { ReportFilter } from "@/components/report-filter";
 import { SplitEditor } from "@/components/split-editor";
 import { buildSplitsMap } from "@/lib/apply-splits";
@@ -305,6 +306,41 @@ export default function OffshoreAllocationsPage() {
 
   const hasFilters = filterYears.length > 0 || filterMonths.length > 0 || filterBranches.length > 0;
 
+  function handleExport() {
+    const visibleRows = blocks.flatMap((block) =>
+      block.rows
+        .filter((r) => rowVisible(r, filterYears, filterMonths, filterBranches))
+        .map((r) => ({
+          block:               block.block_key,
+          check_description_3: r.check_description_3 ?? "",
+          branches:            r.branches.join(", "),
+          years:               r.years.join(", "),
+          months:              r.months.join(", "),
+          category:            r.category ?? "",
+          position:            r.position ?? "",
+          vendor:              r.vendor ?? "",
+          branch_allocation:   r.branch_allocation ?? "",
+          cc_labels:           r.cc_labels.join(", "),
+          tx_count:            r.tx_count,
+          tx_count_unassigned: r.tx_count_unassigned,
+        }))
+    );
+    downloadCSV("offshore_allocations.csv", visibleRows, [
+      { key: "block",               label: "Block" },
+      { key: "check_description_3", label: "Description 3" },
+      { key: "branches",            label: "Branches" },
+      { key: "years",               label: "Years" },
+      { key: "months",              label: "Months" },
+      { key: "category",            label: "Category" },
+      { key: "position",            label: "Position" },
+      { key: "vendor",              label: "Vendor" },
+      { key: "branch_allocation",   label: "Branch Allocation" },
+      { key: "cc_labels",           label: "Cost Centers" },
+      { key: "tx_count",            label: "Total Tx" },
+      { key: "tx_count_unassigned", label: "Unassigned Tx" },
+    ]);
+  }
+
   return (
     <div className="flex flex-col gap-5 h-[calc(100vh-32px)]">
       {/* Header */}
@@ -315,13 +351,24 @@ export default function OffshoreAllocationsPage() {
             {loading ? "Loading…" : `${totalTx.toLocaleString()} transactions`}
           </p>
         </div>
-        <button
-          onClick={fetchData}
-          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
-        >
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {!loading && blocks.length > 0 && (
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+            >
+              <Download size={14} />
+              Export CSV
+            </button>
+          )}
+          <button
+            onClick={fetchData}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Filters */}

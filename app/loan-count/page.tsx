@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Download } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
+import { downloadCSV } from "@/lib/csv";
 import type { LoanOfficial } from "@/types";
 
 const BOOL_FIELDS: { key: keyof LoanOfficial; label: string }[] = [
@@ -12,10 +14,67 @@ const BOOL_FIELDS: { key: keyof LoanOfficial; label: string }[] = [
   { key: "recruitment",       label: "Recruitment" },
 ];
 
+const CSV_COLUMNS = [
+  { key: "month",             label: "Month" },
+  { key: "year",              label: "Year" },
+  { key: "loan_number",       label: "Loan Number" },
+  { key: "borrower_name",     label: "Borrower Name" },
+  { key: "loan_officer",      label: "Loan Officer" },
+  { key: "lead_source_lo",    label: "Lead Source LO" },
+  { key: "loan_info_channel", label: "Loan Info Channel" },
+  { key: "branch",            label: "Branch" },
+  { key: "loan_amount",       label: "Loan Amount" },
+  { key: "bd_owner",          label: "BD Owner" },
+  { key: "b2b",               label: "B2B" },
+  { key: "processing",        label: "Processing" },
+  { key: "support_on_demand", label: "Support on Demand" },
+  { key: "affinity",          label: "Affinity" },
+  { key: "recruitment",       label: "Recruitment" },
+];
+
 function fmt(n: number | null | undefined) {
   if (n == null) return "—";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
 }
+
+// ─── Bool filter toggle (All / Yes / No) ──────────────────────────────────────
+
+type BoolFilter = "all" | "yes" | "no";
+
+function BoolFilterToggle({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: BoolFilter;
+  onChange: (v: BoolFilter) => void;
+}) {
+  return (
+    <div className="flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white px-1.5 py-0.5 h-7">
+      <span className="text-[11px] text-gray-500 pr-1 border-r border-gray-200 mr-1">{label}</span>
+      {(["all", "yes", "no"] as BoolFilter[]).map((v) => (
+        <button
+          key={v}
+          onClick={() => onChange(v)}
+          className={`rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors ${
+            value === v
+              ? v === "yes"
+                ? "bg-green-600 text-white"
+                : v === "no"
+                ? "bg-red-500 text-white"
+                : "bg-blue-600 text-white"
+              : "text-gray-400 hover:text-gray-700"
+          }`}
+        >
+          {v === "all" ? "All" : v === "yes" ? "Yes" : "No"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Editable bool toggle ─────────────────────────────────────────────────────
 
 function BoolToggle({
   value,
@@ -45,6 +104,8 @@ function BoolToggle({
     </button>
   );
 }
+
+// ─── Inline text editor ───────────────────────────────────────────────────────
 
 function TextCell({
   value,
@@ -101,6 +162,8 @@ function TextCell({
   );
 }
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function LoanCountPage() {
   const [loans, setLoans] = useState<LoanOfficial[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,6 +173,16 @@ export default function LoanCountPage() {
   const [selYears, setSelYears] = useState<string[]>([]);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [saveErr, setSaveErr] = useState("");
+
+  // Column filters
+  const [filterBranches,  setFilterBranches]  = useState<string[]>([]);
+  const [filterLOs,       setFilterLOs]       = useState<string[]>([]);
+  const [filterChannels,  setFilterChannels]  = useState<string[]>([]);
+  const [filterB2B,       setFilterB2B]       = useState<BoolFilter>("all");
+  const [filterAffinity,  setFilterAffinity]  = useState<BoolFilter>("all");
+  const [filterProcessing,setFilterProcessing]= useState<BoolFilter>("all");
+  const [filterOnDemand,  setFilterOnDemand]  = useState<BoolFilter>("all");
+  const [filterRecruit,   setFilterRecruit]   = useState<BoolFilter>("all");
 
   useEffect(() => {
     fetch("/api/loan-officials/filter-options")
@@ -155,17 +228,78 @@ export default function LoanCountPage() {
 
   const yearOptions = useMemo(() => allYears.map(String), [allYears]);
 
+  // Column filter option lists derived from loaded data
+  const branchOptions  = useMemo(() => [...new Set(loans.map(l => l.branch).filter(Boolean) as string[])].sort(), [loans]);
+  const loOptions      = useMemo(() => [...new Set(loans.map(l => l.loan_officer).filter(Boolean) as string[])].sort(), [loans]);
+  const channelOptions = useMemo(() => [...new Set(loans.map(l => l.loan_info_channel).filter(Boolean) as string[])].sort(), [loans]);
+
+  const hasColumnFilters =
+    filterBranches.length > 0 || filterLOs.length > 0 || filterChannels.length > 0 ||
+    filterB2B !== "all" || filterAffinity !== "all" || filterProcessing !== "all" ||
+    filterOnDemand !== "all" || filterRecruit !== "all";
+
+  // Apply column filters to the loaded loans
+  const displayedLoans = useMemo(() => {
+    let out = loans;
+    if (filterBranches.length)  out = out.filter(l => l.branch           && filterBranches.includes(l.branch));
+    if (filterLOs.length)       out = out.filter(l => l.loan_officer      && filterLOs.includes(l.loan_officer));
+    if (filterChannels.length)  out = out.filter(l => l.loan_info_channel && filterChannels.includes(l.loan_info_channel));
+    const applyBool = (arr: LoanOfficial[], f: BoolFilter, key: keyof LoanOfficial) =>
+      f === "all" ? arr : arr.filter(l => f === "yes" ? l[key] : !l[key]);
+    out = applyBool(out, filterB2B,        "b2b");
+    out = applyBool(out, filterAffinity,   "affinity");
+    out = applyBool(out, filterProcessing, "processing");
+    out = applyBool(out, filterOnDemand,   "support_on_demand");
+    out = applyBool(out, filterRecruit,    "recruitment");
+    return out;
+  }, [loans, filterBranches, filterLOs, filterChannels, filterB2B, filterAffinity, filterProcessing, filterOnDemand, filterRecruit]);
+
+  // Dashboard metrics computed from the full loaded set (before column filters)
+  const metrics = useMemo(() => ({
+    total:            loans.length,
+    banked:           loans.filter(l => l.loan_info_channel === "Banked - Retail").length,
+    brokered:         loans.filter(l => l.loan_info_channel === "Brokered").length,
+    other:            loans.filter(l => l.loan_info_channel && l.loan_info_channel !== "Banked - Retail" && l.loan_info_channel !== "Brokered").length,
+    b2b:              loans.filter(l => l.b2b).length,
+    processing:       loans.filter(l => l.processing).length,
+    support_on_demand:loans.filter(l => l.support_on_demand).length,
+    affinity:         loans.filter(l => l.affinity).length,
+    recruitment:      loans.filter(l => l.recruitment).length,
+  }), [loans]);
+
+  function clearColumnFilters() {
+    setFilterBranches([]); setFilterLOs([]); setFilterChannels([]);
+    setFilterB2B("all"); setFilterAffinity("all"); setFilterProcessing("all");
+    setFilterOnDemand("all"); setFilterRecruit("all");
+  }
+
+  function handleExport() {
+    downloadCSV("loan_count.csv", displayedLoans as unknown as Record<string, unknown>[], CSV_COLUMNS);
+  }
+
   return (
-    <div className="space-y-5">
-      <div>
-        <h2 className="text-xl font-bold text-gray-900">Loan Count</h2>
-        <p className="text-sm text-gray-500">Master loan list — upload via Upload P&L → Loan Count.</p>
+    <div className="flex flex-col gap-4 h-[calc(100vh-32px)]">
+      {/* Title + export */}
+      <div className="flex items-start justify-between shrink-0">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">Loan Count</h2>
+          <p className="text-sm text-gray-500">Master loan list — upload via Upload P&L → Loan Count.</p>
+        </div>
+        {loans.length > 0 && (
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 shadow-sm"
+          >
+            <Download size={13} /> Export CSV
+          </button>
+        )}
       </div>
 
-      <div className="flex items-center gap-3 flex-wrap">
+      {/* Month/Year filters */}
+      <div className="flex items-center gap-3 flex-wrap shrink-0">
         <span className="text-xs text-gray-500 font-medium">Filter:</span>
-        <ReportFilter label="Month" options={allMonths} selected={selMonths} onChange={setSelMonths} />
-        <ReportFilter label="Year" options={yearOptions} selected={selYears} onChange={setSelYears} />
+        <ReportFilter label="Month" options={allMonths}   selected={selMonths} onChange={setSelMonths} />
+        <ReportFilter label="Year"  options={yearOptions} selected={selYears}  onChange={setSelYears} />
         {(selMonths.length > 0 || selYears.length > 0) && (
           <button
             onClick={() => { setSelMonths([]); setSelYears([]); }}
@@ -175,20 +309,70 @@ export default function LoanCountPage() {
           </button>
         )}
         <span className="ml-auto text-xs text-gray-400">
-          {loading ? "Loading…" : `${loans.length} loan${loans.length !== 1 ? "s" : ""}`}
+          {loading ? "Loading…" : `${displayedLoans.length.toLocaleString()}${hasColumnFilters ? ` of ${loans.length.toLocaleString()}` : ""} loan${loans.length !== 1 ? "s" : ""}`}
         </span>
       </div>
 
-      {saveErr && (
-        <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">{saveErr}</p>
+      {/* Metrics panel */}
+      {!loading && loans.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm overflow-x-auto shrink-0">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Overview</div>
+          <div className="flex items-center gap-6 min-w-max">
+            <div className="flex items-end gap-4">
+              <MetricCard label="Total"    value={metrics.total}    accent="gray" />
+              <MetricCard label="Banked"   value={metrics.banked}   accent="blue" />
+              <MetricCard label="Brokered" value={metrics.brokered} accent="indigo" />
+              {metrics.other > 0 && <MetricCard label="Other" value={metrics.other} accent="orange" />}
+            </div>
+            {(metrics.b2b + metrics.processing + metrics.support_on_demand + metrics.affinity + metrics.recruitment > 0) && (
+              <>
+                <div className="h-10 w-px self-stretch bg-gray-100" />
+                <div className="flex flex-wrap gap-1.5">
+                  {metrics.b2b > 0              && <TagPill label="B2B"         value={metrics.b2b} />}
+                  {metrics.processing > 0        && <TagPill label="Processing"  value={metrics.processing} />}
+                  {metrics.support_on_demand > 0 && <TagPill label="On Demand"   value={metrics.support_on_demand} />}
+                  {metrics.affinity > 0          && <TagPill label="Affinity"    value={metrics.affinity} />}
+                  {metrics.recruitment > 0       && <TagPill label="Recruitment" value={metrics.recruitment} />}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
 
+      {saveErr && (
+        <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600 shrink-0">{saveErr}</p>
+      )}
+
+      {/* Column filters */}
+      {!loading && loans.length > 0 && (
+        <div className="overflow-x-auto shrink-0">
+          <div className="flex items-center gap-2 min-w-max">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mr-1">Column filters</span>
+            <ReportFilter label="Branch"   options={branchOptions}  selected={filterBranches} onChange={setFilterBranches} />
+            <ReportFilter label="LO"       options={loOptions}      selected={filterLOs}      onChange={setFilterLOs} />
+            <ReportFilter label="Channel"  options={channelOptions} selected={filterChannels} onChange={setFilterChannels} />
+            <BoolFilterToggle label="B2B"         value={filterB2B}        onChange={setFilterB2B} />
+            <BoolFilterToggle label="Affinity"    value={filterAffinity}   onChange={setFilterAffinity} />
+            <BoolFilterToggle label="Processing"  value={filterProcessing} onChange={setFilterProcessing} />
+            <BoolFilterToggle label="On Demand"   value={filterOnDemand}   onChange={setFilterOnDemand} />
+            <BoolFilterToggle label="Recruitment" value={filterRecruit}    onChange={setFilterRecruit} />
+            {hasColumnFilters && (
+              <button onClick={clearColumnFilters} className="text-xs text-gray-400 hover:text-gray-600 underline">
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Table area — flex-1 takes all remaining height */}
       {loading ? (
-        <div className="py-12 text-center">
+        <div className="flex-1 min-h-0 flex items-center justify-center">
           <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
         </div>
       ) : loans.length === 0 ? (
-        <div className="rounded-xl border border-gray-100 bg-white py-12 text-center">
+        <div className="flex-1 min-h-0 flex items-center justify-center rounded-xl border border-gray-100 bg-white">
           <p className="text-sm text-gray-400">
             No loan data found.{" "}
             {allMonths.length === 0
@@ -196,12 +380,18 @@ export default function LoanCountPage() {
               : "Try adjusting the Month / Year filters."}
           </p>
         </div>
+      ) : displayedLoans.length === 0 ? (
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center rounded-xl border border-gray-100 bg-white">
+          <p className="text-sm text-gray-400">No loans match the active column filters.</p>
+          <button onClick={clearColumnFilters} className="mt-2 text-xs text-blue-600 hover:underline">Clear filters</button>
+        </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
+        <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+          <table className="text-xs" style={{ minWidth: "100%", width: "max-content" }}>
+            <thead className="sticky top-0 z-10 bg-gray-50">
+              <tr className="border-b border-gray-100 text-left text-gray-500">
                 <th className="px-3 py-2.5 font-medium whitespace-nowrap">Month</th>
+                <th className="px-3 py-2.5 font-medium whitespace-nowrap">Loan Number</th>
                 <th className="px-3 py-2.5 font-medium whitespace-nowrap">Borrower Name</th>
                 <th className="px-3 py-2.5 font-medium whitespace-nowrap">Loan Officer</th>
                 <th className="px-3 py-2.5 font-medium whitespace-nowrap">Lead Source LO</th>
@@ -217,10 +407,13 @@ export default function LoanCountPage() {
               </tr>
             </thead>
             <tbody>
-              {loans.map((loan) => (
+              {displayedLoans.map((loan) => (
                 <tr key={loan.id} className="border-b border-gray-50 hover:bg-gray-50/60">
                   <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
                     {loan.month ?? "—"}{loan.year ? ` ${loan.year}` : ""}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-gray-800 whitespace-nowrap">
+                    {loan.loan_number}
                   </td>
                   <td className="max-w-[180px] truncate px-3 py-2 font-medium text-gray-800">
                     {loan.borrower_name ?? "—"}
@@ -235,10 +428,10 @@ export default function LoanCountPage() {
                       disabled={!!saving[loan.id]}
                     />
                   </td>
-                  <td className="px-3 py-2 text-gray-500">
+                  <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
                     {loan.loan_info_channel ?? "—"}
                   </td>
-                  <td className="px-3 py-2 text-gray-600">
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
                     {loan.branch ?? "—"}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-gray-700">
@@ -267,5 +460,24 @@ export default function LoanCountPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function MetricCard({ label, value, accent }: { label: string; value: number; accent: "gray" | "blue" | "indigo" | "orange" }) {
+  const colors = { gray: "text-gray-900", blue: "text-blue-700", indigo: "text-indigo-700", orange: "text-orange-700" };
+  return (
+    <div className="flex flex-col items-center min-w-[40px]">
+      <span className={`text-xl font-bold tabular-nums ${colors[accent]}`}>{value.toLocaleString()}</span>
+      <span className="text-[10px] text-gray-400 mt-0.5">{label}</span>
+    </div>
+  );
+}
+
+function TagPill({ label, value }: { label: string; value: number }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[11px]">
+      <span className="font-semibold text-indigo-700">{value}</span>
+      <span className="text-indigo-500">{label}</span>
+    </span>
   );
 }

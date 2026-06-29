@@ -4,6 +4,7 @@ export interface CompletionStats {
   processed: number;
   completed_direct: number;
   completed_from_10: number;
+  completed_from_9: number;
   incomplete_no_match: number;
   incomplete_ambiguous: number;
 }
@@ -14,10 +15,11 @@ export interface CompletionStats {
  *
  * Rules:
  * - 12-digit raw → copy directly, loan_number_incomplete = false
- * - 10-digit raw with exactly 1 matching 12-digit loan in loan_officials →
+ * - 10-digit raw with exactly 1 matching 12-digit loan (first 10 chars) →
  *     complete to 12 digits, loan_number_incomplete = false
- * - 10-digit raw with 0 matches → keep 10-digit, loan_number_incomplete = true
- * - 10-digit raw with 2+ matches → keep 10-digit, loan_number_incomplete = true
+ * - 9-digit raw with exactly 1 matching 12-digit loan (first 9 chars) →
+ *     complete to 12 digits, loan_number_incomplete = false
+ * - Otherwise (0 or 2+ matches) → keep raw value, loan_number_incomplete = true
  */
 export async function runLoanNumberCompletion(
   supabase: SupabaseClient
@@ -37,13 +39,19 @@ export async function runLoanNumberCompletion(
     ),
   ] as string[];
 
-  // 2. Build prefix map: first-10-digits → [loan_numbers]
-  const prefixMap = new Map<string, string[]>();
+  // 2. Build prefix maps: first-10-digits and first-9-digits → [loan_numbers]
+  const prefix10Map = new Map<string, string[]>();
+  const prefix9Map  = new Map<string, string[]>();
   for (const ln of allLoanNumbers) {
-    const prefix = ln.slice(0, 10);
-    const arr = prefixMap.get(prefix) ?? [];
-    arr.push(ln);
-    prefixMap.set(prefix, arr);
+    const p10 = ln.slice(0, 10);
+    const arr10 = prefix10Map.get(p10) ?? [];
+    arr10.push(ln);
+    prefix10Map.set(p10, arr10);
+
+    const p9 = ln.slice(0, 9);
+    const arr9 = prefix9Map.get(p9) ?? [];
+    arr9.push(ln);
+    prefix9Map.set(p9, arr9);
   }
 
   // 3. Fetch all pl_transactions with loan_number_raw (paginated)
@@ -63,7 +71,7 @@ export async function runLoanNumberCompletion(
   }
 
   if (txs.length === 0) {
-    return { processed: 0, completed_direct: 0, completed_from_10: 0, incomplete_no_match: 0, incomplete_ambiguous: 0 };
+    return { processed: 0, completed_direct: 0, completed_from_10: 0, completed_from_9: 0, incomplete_no_match: 0, incomplete_ambiguous: 0 };
   }
 
   // 4. Compute outcome for each transaction
@@ -71,30 +79,41 @@ export async function runLoanNumberCompletion(
   const updates: Update[] = [];
   let completed_direct = 0;
   let completed_from_10 = 0;
+  let completed_from_9 = 0;
   let incomplete_no_match = 0;
   let incomplete_ambiguous = 0;
 
   for (const tx of txs) {
     const raw = tx.loan_number_raw;
+
     if (raw.length === 12) {
       updates.push({ id: tx.id, loan_number: raw, loan_number_incomplete: false });
       completed_direct++;
     } else if (raw.length === 10) {
-      const matches = prefixMap.get(raw) ?? [];
+      const matches = prefix10Map.get(raw) ?? [];
       if (matches.length === 1) {
         updates.push({ id: tx.id, loan_number: matches[0], loan_number_incomplete: false });
         completed_from_10++;
-      } else if (matches.length === 0) {
-        updates.push({ id: tx.id, loan_number: raw, loan_number_incomplete: true });
-        incomplete_no_match++;
       } else {
         updates.push({ id: tx.id, loan_number: raw, loan_number_incomplete: true });
-        incomplete_ambiguous++;
+        if (matches.length === 0) incomplete_no_match++;
+        else incomplete_ambiguous++;
+      }
+    } else if (raw.length === 9) {
+      const matches = prefix9Map.get(raw) ?? [];
+      if (matches.length === 1) {
+        updates.push({ id: tx.id, loan_number: matches[0], loan_number_incomplete: false });
+        completed_from_9++;
+      } else {
+        updates.push({ id: tx.id, loan_number: raw, loan_number_incomplete: true });
+        if (matches.length === 0) incomplete_no_match++;
+        else incomplete_ambiguous++;
       }
     }
+    // Other lengths (shouldn't occur) are silently skipped
   }
 
-  // 5. Batch update (upsert so we only touch what changed)
+  // 5. Batch update
   const CHUNK = 500;
   for (let i = 0; i < updates.length; i += CHUNK) {
     const chunk = updates.slice(i, i + CHUNK);
@@ -112,6 +131,7 @@ export async function runLoanNumberCompletion(
     processed: txs.length,
     completed_direct,
     completed_from_10,
+    completed_from_9,
     incomplete_no_match,
     incomplete_ambiguous,
   };

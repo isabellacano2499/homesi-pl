@@ -8,7 +8,7 @@ import type { SplitRuleWithDetails, SplitRuleCondition, SplitRuleAllocation } fr
 // ─── Local draft types ─────────────────────────────────────────────────────────
 
 type DraftCondition = {
-  key: string; // client-only stable id
+  key: string;
   sequence: number;
   logic_connector: "AND" | "OR" | null;
   field: string;
@@ -20,7 +20,7 @@ type DraftCondition = {
 type DraftAllocation = {
   key: string;
   cost_center_id: string;
-  percentage: string; // kept as string for input
+  percentage: string;
 };
 
 type CCOption = { id: string; name: string };
@@ -55,12 +55,20 @@ function sumPct(allocations: DraftAllocation[]): number {
 function conditionSummary(conditions: SplitRuleCondition[]): string {
   if (conditions.length === 0) return "No conditions";
   const sorted = [...conditions].sort((a, b) => a.sequence - b.sequence);
-  return sorted
-    .map((c, i) => {
-      const connector = i === 0 ? "" : ` ${c.logic_connector ?? "AND"} `;
-      return `${connector}${c.field} ${c.operator} "${c.value}"`;
-    })
-    .join("");
+  let out = "";
+  sorted.forEach((c, i) => {
+    const gn = c.group_number ?? 0;
+    const prevGn = i > 0 ? (sorted[i - 1].group_number ?? 0) : 0;
+    const nextGn = i < sorted.length - 1 ? (sorted[i + 1].group_number ?? 0) : 0;
+    const isFirst = gn > 0 && (i === 0 || prevGn !== gn);
+    const isLast = gn > 0 && (i === sorted.length - 1 || nextGn !== gn);
+    const connector = i === 0 ? "" : ` ${c.logic_connector ?? "AND"} `;
+    out += connector;
+    if (isFirst) out += "(";
+    out += `${c.field} ${c.operator} "${c.value}"`;
+    if (isLast) out += ")";
+  });
+  return out;
 }
 
 function allocationSummary(allocations: SplitRuleAllocation[], ccNames: Map<string, string>): string {
@@ -94,23 +102,33 @@ function ConditionsEditor({
     onChange(filtered.map((c, i) => ({ ...c, sequence: i + 1 })));
   }
 
+  function toggleGroup(key: string) {
+    onChange(conditions.map((c) =>
+      c.key === key ? { ...c, group_number: c.group_number > 0 ? 0 : 1 } : c
+    ));
+  }
+
   return (
     <div className="space-y-2">
       {conditions.map((cond, idx) => {
         const ops = operatorsForField(cond.field);
+        const inGroup = cond.group_number > 0;
         return (
-          <div key={cond.key} className="flex items-center gap-2 flex-wrap">
+          <div
+            key={cond.key}
+            className={`flex items-center gap-2 flex-wrap rounded-r ${
+              inGroup ? "border-l-2 border-amber-400 bg-amber-50/50 pl-2" : ""
+            }`}
+          >
             {idx === 0 ? (
               <span className="text-xs text-gray-400 w-10 shrink-0">WHERE</span>
             ) : (
               <select
                 value={cond.logic_connector ?? "AND"}
                 onChange={(e) =>
-                  updateCondition(cond.key, {
-                    logic_connector: e.target.value as "AND" | "OR",
-                  })
+                  updateCondition(cond.key, { logic_connector: e.target.value as "AND" | "OR" })
                 }
-                className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-1 py-0.5 w-14 shrink-0"
+                className="text-xs border border-gray-300 bg-white text-gray-800 rounded px-1 py-0.5 w-14 shrink-0"
               >
                 <option value="AND">AND</option>
                 <option value="OR">OR</option>
@@ -120,36 +138,28 @@ function ConditionsEditor({
               value={cond.field}
               onChange={(e) => {
                 const field = e.target.value;
-                updateCondition(cond.key, {
-                  field,
-                  operator: defaultOperator(field),
-                  value: defaultValue(field),
-                });
+                updateCondition(cond.key, { field, operator: defaultOperator(field), value: defaultValue(field) });
               }}
-              className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-1 py-0.5 min-w-[110px]"
+              className="text-xs border border-gray-300 bg-white text-gray-800 rounded px-1 py-0.5 min-w-[110px]"
             >
               {CC_FIELDS.map((f) => (
-                <option key={f.value} value={f.value}>
-                  {f.label}
-                </option>
+                <option key={f.value} value={f.value}>{f.label}</option>
               ))}
             </select>
             <select
               value={cond.operator}
               onChange={(e) => updateCondition(cond.key, { operator: e.target.value })}
-              className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-1 py-0.5 min-w-[120px]"
+              className="text-xs border border-gray-300 bg-white text-gray-800 rounded px-1 py-0.5 min-w-[120px]"
             >
               {ops.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
+                <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
             {getFieldKind(cond.field) === "boolean" ? (
               <select
                 value={cond.value}
                 onChange={(e) => updateCondition(cond.key, { value: e.target.value })}
-                className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-1 py-0.5 min-w-[80px]"
+                className="text-xs border border-gray-300 bg-white text-gray-800 rounded px-1 py-0.5 min-w-[80px]"
               >
                 <option value="yes">Yes</option>
                 <option value="no">No</option>
@@ -160,12 +170,23 @@ function ConditionsEditor({
                 value={cond.value}
                 onChange={(e) => updateCondition(cond.key, { value: e.target.value })}
                 placeholder="value"
-                className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-2 py-0.5 min-w-[100px] flex-1"
+                className="text-xs border border-gray-300 bg-white text-gray-800 rounded px-2 py-0.5 min-w-[100px] flex-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
               />
             )}
             <button
+              onClick={() => toggleGroup(cond.key)}
+              title={inGroup ? "Remove from group ( )" : "Add to group ( )"}
+              className={`shrink-0 text-xs px-1.5 py-0.5 rounded font-mono transition-colors ${
+                inGroup
+                  ? "text-amber-600 bg-amber-100 border border-amber-200"
+                  : "text-gray-400 hover:text-amber-600 hover:bg-amber-50 border border-transparent"
+              }`}
+            >
+              ( )
+            </button>
+            <button
               onClick={() => removeCondition(cond.key)}
-              className="text-gray-400 hover:text-red-400 shrink-0"
+              className="text-gray-400 hover:text-red-500 shrink-0"
               title="Remove condition"
             >
               <X size={14} />
@@ -175,7 +196,7 @@ function ConditionsEditor({
       })}
       <button
         onClick={addCondition}
-        className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 mt-1"
+        className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1 mt-1"
       >
         <Plus size={12} /> Add condition
       </button>
@@ -219,13 +240,11 @@ function AllocationsEditor({
             <select
               value={alloc.cost_center_id}
               onChange={(e) => updateRow(alloc.key, { cost_center_id: e.target.value })}
-              className="text-xs border border-gray-600 bg-gray-700 text-white rounded px-1 py-0.5 flex-1"
+              className="text-xs border border-gray-300 bg-white text-gray-800 rounded px-1 py-0.5 flex-1"
             >
               <option value="">— select cost center —</option>
               {costCenters.map((cc) => (
-                <option key={cc.id} value={cc.id}>
-                  {cc.name}
-                </option>
+                <option key={cc.id} value={cc.id}>{cc.name}</option>
               ))}
             </select>
             <div className="flex items-center gap-1 shrink-0">
@@ -239,15 +258,15 @@ function AllocationsEditor({
                 placeholder="0"
                 className={`text-xs border rounded px-2 py-0.5 w-20 text-right ${
                   pctInvalid
-                    ? "border-red-500 bg-gray-700 text-red-300"
-                    : "border-gray-600 bg-gray-700 text-white"
+                    ? "border-red-400 bg-red-50 text-red-700"
+                    : "border-gray-300 bg-white text-gray-800"
                 }`}
               />
-              <span className="text-xs text-gray-400">%</span>
+              <span className="text-xs text-gray-500">%</span>
             </div>
             <button
               onClick={() => removeRow(alloc.key)}
-              className="text-gray-400 hover:text-red-400 shrink-0"
+              className="text-gray-400 hover:text-red-500 shrink-0"
               title="Remove this allocation"
             >
               <X size={14} />
@@ -258,17 +277,17 @@ function AllocationsEditor({
       <div className="flex items-center justify-between">
         <button
           onClick={addRow}
-          className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
+          className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
         >
           <Plus size={12} /> Add allocation
         </button>
         <span
           className={`text-xs ${
             Math.abs(total - 100) < 0.01
-              ? "text-green-400"
+              ? "text-green-600"
               : total > 100
-              ? "text-red-400"
-              : "text-yellow-400"
+              ? "text-red-600"
+              : "text-amber-600"
           }`}
         >
           {total.toFixed(2)}% / 100%
@@ -302,8 +321,7 @@ function RuleForm({
       .map((c) => ({ ...c, key: uid() }));
   });
   const [allocations, setAllocations] = useState<DraftAllocation[]>(() => {
-    if (!initial || initial.allocations.length === 0)
-      return [blankAllocation()];
+    if (!initial || initial.allocations.length === 0) return [blankAllocation()];
     return initial.allocations
       .slice()
       .sort((a, b) => a.display_order - b.display_order)
@@ -345,7 +363,7 @@ function RuleForm({
           field: c.field,
           operator: c.operator,
           value: c.value,
-          group_number: 0,
+          group_number: c.group_number ?? 0,
         })),
         allocations: allocations.map((a, i) => ({
           cost_center_id: a.cost_center_id,
@@ -355,7 +373,6 @@ function RuleForm({
       };
 
       if (initial) {
-        // Edit: PATCH name/description + PUT conditions + PUT allocations in parallel
         const [patchRes, condRes, allocRes] = await Promise.all([
           fetch(`/api/split-rules/${initial.id}`, {
             method: "PATCH",
@@ -399,47 +416,46 @@ function RuleForm({
   }
 
   return (
-    <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 space-y-4">
+    <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-4 shadow-sm">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs text-gray-400 mb-1">Name *</label>
+          <label className="block text-xs text-gray-600 mb-1">Name *</label>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Margin Ops Split"
-            className="w-full text-sm border border-gray-600 bg-gray-700 text-white rounded px-2 py-1"
+            className="w-full text-sm border border-gray-300 bg-white text-gray-900 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-400 mb-1">Description</label>
+          <label className="block text-xs text-gray-600 mb-1">Description</label>
           <input
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Optional"
-            className="w-full text-sm border border-gray-600 bg-gray-700 text-white rounded px-2 py-1"
+            className="w-full text-sm border border-gray-300 bg-white text-gray-900 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
           />
         </div>
       </div>
 
       <div>
-        <div className="text-xs font-medium text-gray-300 mb-2">Conditions</div>
+        <div className="text-xs font-medium text-gray-700 mb-2">
+          Conditions
+          <span className="ml-2 font-normal text-gray-400">— use ( ) button to group conditions with parentheses</span>
+        </div>
         <ConditionsEditor conditions={conditions} onChange={setConditions} />
       </div>
 
       <div>
-        <div className="text-xs font-medium text-gray-300 mb-2">
-          CC Allocations <span className="text-gray-500 font-normal">(must sum to 100%)</span>
+        <div className="text-xs font-medium text-gray-700 mb-2">
+          CC Allocations <span className="font-normal text-gray-400">(must sum to 100%)</span>
         </div>
-        <AllocationsEditor
-          allocations={allocations}
-          costCenters={costCenters}
-          onChange={setAllocations}
-        />
+        <AllocationsEditor allocations={allocations} costCenters={costCenters} onChange={setAllocations} />
       </div>
 
-      {err && <p className="text-xs text-red-400">{err}</p>}
+      {err && <p className="text-xs text-red-600">{err}</p>}
 
       <div className="flex gap-2 pt-1">
         <button
@@ -451,7 +467,7 @@ function RuleForm({
         </button>
         <button
           onClick={onCancel}
-          className="text-xs text-gray-400 hover:text-white px-3 py-1.5"
+          className="text-xs text-gray-500 hover:text-gray-800 px-3 py-1.5"
         >
           Cancel
         </button>
@@ -460,7 +476,7 @@ function RuleForm({
   );
 }
 
-// ─── Rule row (collapsed view) ────────────────────────────────────────────────
+// ─── Rule row (collapsed / expanded) ─────────────────────────────────────────
 
 function RuleRow({
   rule,
@@ -480,7 +496,7 @@ function RuleRow({
   const [deleting, setDeleting] = useState(false);
 
   async function handleDelete() {
-    if (!confirm(`Delete split rule "${rule.name}"? Transactions matched by this rule will be re-evaluated.`)) return;
+    if (!confirm(`Delete rule "${rule.name}"? Transactions matched by this rule will be re-evaluated.`)) return;
     setDeleting(true);
     try {
       const res = await fetch(`/api/split-rules/${rule.id}`, { method: "DELETE" });
@@ -500,19 +516,19 @@ function RuleRow({
       <RuleForm
         initial={rule}
         costCenters={costCenters}
-        onSave={(updated) => {
-          onUpdate(updated);
-          setEditing(false);
-        }}
+        onSave={(updated) => { onUpdate(updated); setEditing(false); }}
         onCancel={() => setEditing(false)}
       />
     );
   }
 
+  const sorted = rule.conditions.slice().sort((a, b) => a.sequence - b.sequence);
+
   return (
-    <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+      {/* Header row */}
       <div
-        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-750 group"
+        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 group"
         onClick={() => setExpanded((e) => !e)}
       >
         <span className="text-gray-400 shrink-0">
@@ -520,73 +536,83 @@ function RuleRow({
         </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-white">{rule.name}</span>
-            <span className="text-xs text-gray-500">
+            <span className="text-sm font-medium text-gray-900">{rule.name}</span>
+            <span className="text-xs text-gray-400">
               {rule.conditions.length} condition{rule.conditions.length !== 1 ? "s" : ""}
             </span>
           </div>
           {rule.description && (
-            <p className="text-xs text-gray-400 truncate">{rule.description}</p>
+            <p className="text-xs text-gray-500 truncate">{rule.description}</p>
           )}
-          <p className="text-xs text-blue-300 truncate mt-0.5">
+          <p className="text-xs text-blue-600 truncate mt-0.5">
             {allocationSummary(rule.allocations, ccNames)}
           </p>
         </div>
         <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-            className="text-xs text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-700"
+            className="text-xs text-gray-500 hover:text-gray-900 px-2 py-1 rounded hover:bg-gray-100"
           >
             Edit
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); handleDelete(); }}
             disabled={deleting}
-            className="text-gray-400 hover:text-red-400 disabled:opacity-40 p-1 rounded hover:bg-gray-700"
+            className="text-gray-400 hover:text-red-500 disabled:opacity-40 p-1 rounded hover:bg-gray-100"
           >
             <Trash2 size={13} />
           </button>
         </div>
       </div>
 
+      {/* Expanded detail */}
       {expanded && (
-        <div className="border-t border-gray-700 px-4 py-3 space-y-3">
+        <div className="border-t border-gray-100 bg-gray-50/50 px-4 py-3 space-y-3">
           <div>
-            <div className="text-xs text-gray-400 mb-1.5">Conditions</div>
+            <div className="text-xs font-medium text-gray-500 mb-1.5">Conditions</div>
             {rule.conditions.length === 0 ? (
-              <p className="text-xs text-gray-500 italic">No conditions — will match all transactions</p>
+              <p className="text-xs text-gray-400 italic">No conditions — will match all transactions</p>
             ) : (
-              <div className="space-y-1">
-                {rule.conditions
-                  .slice()
-                  .sort((a, b) => a.sequence - b.sequence)
-                  .map((c, i) => (
-                    <div key={c.id} className="text-xs text-gray-300 flex items-center gap-1.5">
-                      {i === 0 ? (
-                        <span className="text-gray-500 w-8">IF</span>
-                      ) : (
-                        <span className="text-yellow-400 w-8">{c.logic_connector}</span>
-                      )}
-                      <span className="text-blue-300">{c.field}</span>
+              <div className="space-y-0.5">
+                {sorted.map((c, i) => {
+                  const gn = c.group_number ?? 0;
+                  const prevGn = i > 0 ? (sorted[i - 1].group_number ?? 0) : 0;
+                  const nextGn = i < sorted.length - 1 ? (sorted[i + 1].group_number ?? 0) : 0;
+                  const isFirst = gn > 0 && (i === 0 || prevGn !== gn);
+                  const isLast = gn > 0 && (i === sorted.length - 1 || nextGn !== gn);
+                  return (
+                    <div
+                      key={c.id}
+                      className={`text-xs flex items-center gap-1.5 py-0.5 ${
+                        gn > 0 ? "border-l-2 border-amber-300 bg-amber-50/60 pl-2 rounded-r" : ""
+                      }`}
+                    >
+                      <span className="font-mono text-gray-400 w-8 shrink-0">
+                        {i === 0 ? "IF" : c.logic_connector ?? "AND"}
+                      </span>
+                      {isFirst && <span className="font-mono text-amber-600 shrink-0">(</span>}
+                      <span className="text-blue-600">{c.field}</span>
                       <span className="text-gray-400">{c.operator}</span>
-                      <span className="text-white">"{c.value}"</span>
+                      <span className="text-gray-900">"{c.value}"</span>
+                      {isLast && <span className="font-mono text-amber-600 shrink-0">)</span>}
                     </div>
-                  ))}
+                  );
+                })}
               </div>
             )}
           </div>
           <div>
-            <div className="text-xs text-gray-400 mb-1.5">Allocations</div>
+            <div className="text-xs font-medium text-gray-500 mb-1.5">Allocations</div>
             <div className="space-y-1">
               {rule.allocations
                 .slice()
                 .sort((a, b) => a.display_order - b.display_order)
                 .map((a) => (
-                  <div key={a.id} className="text-xs text-gray-300 flex items-center gap-2">
-                    <span className="text-white font-medium w-12 text-right shrink-0">
+                  <div key={a.id} className="text-xs flex items-center gap-2">
+                    <span className="font-medium text-gray-900 w-12 text-right shrink-0">
                       {a.percentage}%
                     </span>
-                    <span className="text-blue-300">{ccNames.get(a.cost_center_id) ?? a.cost_center_id}</span>
+                    <span className="text-blue-600">{ccNames.get(a.cost_center_id) ?? a.cost_center_id}</span>
                   </div>
                 ))}
             </div>
@@ -655,10 +681,11 @@ export default function SplitRulesPage() {
 
   return (
     <div className="p-6 space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Rules</h1>
-          <p className="text-sm text-gray-400 mt-0.5">
+          <h1 className="text-2xl font-bold text-gray-900">Rules</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
             Create and manage the rules that assign transactions to cost centers.
           </p>
         </div>
@@ -666,7 +693,7 @@ export default function SplitRulesPage() {
           <button
             onClick={handleReapply}
             disabled={reapplying}
-            className="flex items-center gap-1.5 text-sm bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white px-3 py-1.5 rounded border border-gray-600"
+            className="flex items-center gap-1.5 text-sm bg-white hover:bg-gray-50 disabled:opacity-50 text-gray-700 px-3 py-1.5 rounded border border-gray-200 shadow-sm"
           >
             <RefreshCw size={14} className={reapplying ? "animate-spin" : ""} />
             {reapplying ? "Applying…" : "Re-apply All Rules"}
@@ -674,9 +701,9 @@ export default function SplitRulesPage() {
           {!creating && (
             <button
               onClick={() => setCreating(true)}
-              className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded"
+              className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded shadow-sm"
             >
-              <Plus size={14} /> Add Split Rule
+              <Plus size={14} /> Add Rule
             </button>
           )}
         </div>
@@ -684,10 +711,10 @@ export default function SplitRulesPage() {
 
       {reapplyMsg && (
         <div
-          className={`text-sm px-3 py-2 rounded ${
+          className={`text-sm px-3 py-2 rounded border ${
             reapplyMsg.startsWith("Error")
-              ? "bg-red-900/40 text-red-300 border border-red-800"
-              : "bg-green-900/40 text-green-300 border border-green-800"
+              ? "bg-red-50 text-red-600 border-red-200"
+              : "bg-green-50 text-green-700 border-green-200"
           }`}
         >
           {reapplyMsg}
@@ -708,9 +735,9 @@ export default function SplitRulesPage() {
       {loading ? (
         <div className="text-sm text-gray-400">Loading…</div>
       ) : rules.length === 0 && !creating ? (
-        <div className="bg-gray-800 border border-gray-700 rounded-lg px-6 py-10 text-center">
-          <p className="text-gray-400 text-sm">No split rules yet.</p>
-          <p className="text-gray-500 text-xs mt-1">
+        <div className="bg-white border border-gray-200 rounded-xl px-6 py-10 text-center shadow-sm">
+          <p className="text-sm text-gray-500">No rules yet.</p>
+          <p className="text-xs text-gray-400 mt-1">
             Create a rule to automatically split a transaction across multiple cost centers.
           </p>
         </div>

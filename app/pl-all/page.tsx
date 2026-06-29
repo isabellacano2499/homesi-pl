@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Download } from "lucide-react";
 import { PivotTable } from "@/components/pivot-table";
 import { PivotTableByCC } from "@/components/pivot-table-cc";
 import { ReportFilter } from "@/components/report-filter";
+import { LoanMetricsByMonthBar } from "@/components/loan-metrics-by-month";
 import { buildSplitsMap, fanOutBySplits } from "@/lib/apply-splits";
+import { downloadCSV } from "@/lib/csv";
 import { useActiveBranches, mergeWithGlobal } from "@/components/branch-filter-provider";
 import type { PLReportTx, PLReportTxCC, FilterOptionsResponse } from "@/types";
 import type { SplitEntry } from "@/lib/apply-splits";
@@ -14,7 +17,32 @@ const MONTH_ORDER = [
   "July","August","September","October","November","December",
 ];
 
+const CSV_COLUMNS = [
+  { key: "month",            label: "Month" },
+  { key: "branch",           label: "Branch" },
+  { key: "gl_code",          label: "GL Code" },
+  { key: "gl_name",          label: "GL Name" },
+  { key: "category_2",       label: "Category 2" },
+  { key: "category_6",       label: "Category 6" },
+  { key: "category_7",       label: "Category 7" },
+  { key: "check_description",label: "Description" },
+  { key: "vendor",           label: "Vendor" },
+  { key: "ref_numb",         label: "Ref #" },
+  { key: "debit",            label: "Debit" },
+  { key: "credit",           label: "Credit" },
+  { key: "movement",         label: "Movement" },
+];
+
 type ViewMode = "gl" | "cc";
+
+function FilterChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-100 px-2 py-0.5 text-[11px]">
+      <span className="text-blue-400 font-normal">{label}:</span>
+      <span className="font-medium text-blue-700">{value}</span>
+    </span>
+  );
+}
 
 export default function PLAllPage() {
   const { activeBranches, isLoaded: branchFilterLoaded } = useActiveBranches();
@@ -35,9 +63,11 @@ export default function PLAllPage() {
   const [loaded,  setLoaded]  = useState(false);
   const autoLoaded = useRef(false);
 
-  // Extract the fetch logic so it can be called with explicit params
-  // (avoids stale-closure race when the initial auto-load fires right after
-  //  filter options arrive — `years` state may not have propagated yet)
+  // Params that were last successfully loaded — for metrics panel and chips
+  const [loadedYears,    setLoadedYears]    = useState<string[]>([]);
+  const [loadedBranches, setLoadedBranches] = useState<string[]>([]);
+  const [loadedSources,  setLoadedSources]  = useState<string[]>([]);
+
   async function fetchData(yrs: string[], brs: string[], srcs: string[]) {
     setLoading(true); setError("");
     try {
@@ -51,6 +81,9 @@ export default function PLAllPage() {
       setRawTxs(await res.json());
       setLoaded(true);
       setGlCodes([]); setMonths([]);
+      setLoadedYears(yrs);
+      setLoadedBranches(effectiveBranches);
+      setLoadedSources(srcs);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -58,7 +91,6 @@ export default function PLAllPage() {
     }
   }
 
-  // Load filter options + splits; auto-load once branch filter context is ready
   useEffect(() => {
     if (!branchFilterLoaded) return;
     Promise.all([
@@ -71,7 +103,6 @@ export default function PLAllPage() {
         ? [filterOpts.year[filterOpts.year.length - 1]]
         : [];
       setYears(defaultYear);
-      // Auto-load with the correct year — activeBranches captured via closure (already loaded)
       if (!autoLoaded.current && defaultYear.length > 0) {
         autoLoaded.current = true;
         fetchData(defaultYear, [], []);
@@ -93,7 +124,6 @@ export default function PLAllPage() {
     [rawTxs]
   );
 
-  // Client-side GL/month filter (unchanged from before)
   const txs = useMemo(() => {
     let out = rawTxs;
     if (glCodes.length > 0) out = out.filter(t => t.gl_code && glCodes.includes(t.gl_code));
@@ -101,7 +131,6 @@ export default function PLAllPage() {
     return out;
   }, [rawTxs, glCodes, months]);
 
-  // Build splits map once; apply fan-out only for the CC view
   const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
 
   const txsForCC = useMemo((): PLReportTxCC[] => {
@@ -109,25 +138,38 @@ export default function PLAllPage() {
     return fanOutBySplits(txs, splitsMap);
   }, [txs, splitsMap, viewMode]);
 
+  function handleExport() {
+    const suffix = loadedYears.length === 1 ? `_${loadedYears[0]}` : "";
+    if (viewMode === "cc") {
+      const flat = txsForCC.map((tx) => ({
+        ...tx,
+        cost_center_name: (tx.cost_centers as { name: string } | null)?.name ?? "",
+      })) as Record<string, unknown>[];
+      downloadCSV(`pl_cc${suffix}.csv`, flat, [...CSV_COLUMNS, { key: "cost_center_name", label: "Cost Center" }]);
+    } else {
+      downloadCSV(`pl_all${suffix}.csv`, txs as unknown as Record<string, unknown>[], CSV_COLUMNS);
+    }
+  }
+
+  // Active filter chips (what was actually loaded)
+  const loadedChips: { label: string; value: string }[] = [];
+  if (loadedYears.length > 0)
+    loadedChips.push({ label: "Year", value: loadedYears.length === 1 ? loadedYears[0] : `${loadedYears.length} years` });
+  if (loadedBranches.length > 0)
+    loadedChips.push({ label: "Branch", value: loadedBranches.length === 1 ? loadedBranches[0] : `${loadedBranches.length} branches` });
+  if (loadedSources.length > 0)
+    loadedChips.push({ label: "Source", value: loadedSources.map(s => s === "offshore_allocations" ? "OA" : s).join(", ") });
+
   return (
     <div className="flex flex-col gap-3">
-      {/* ── Sticky filter bar ───────────────────────────────────────────── */}
+      {/* Sticky filter bar */}
       <div className="sticky top-0 z-30 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 shadow-sm">
+        {/* Controls row */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Filters</span>
 
-          <ReportFilter
-            label="Year"
-            options={(opts?.year ?? []).map(String)}
-            selected={years}
-            onChange={setYears}
-          />
-          <ReportFilter
-            label="Branch"
-            options={opts?.branch ?? []}
-            selected={branches}
-            onChange={setBranches}
-          />
+          <ReportFilter label="Year"   options={(opts?.year ?? []).map(String)} selected={years}    onChange={setYears} />
+          <ReportFilter label="Branch" options={opts?.branch ?? []}              selected={branches} onChange={setBranches} />
           <ReportFilter
             label="Source"
             options={["original", "addback", "offshore_allocations"]}
@@ -140,24 +182,14 @@ export default function PLAllPage() {
             disabled={loading}
             className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40"
           >
-            {loading ? "Loading…" : "Load"}
+            {loading ? "Loading…" : "Run Report"}
           </button>
 
           {loaded && (
             <>
               <span className="text-gray-300">|</span>
-              <ReportFilter
-                label="GL Code"
-                options={glCodeOptions}
-                selected={glCodes}
-                onChange={setGlCodes}
-              />
-              <ReportFilter
-                label="Month"
-                options={monthOptions}
-                selected={months}
-                onChange={setMonths}
-              />
+              <ReportFilter label="GL Code" options={glCodeOptions} selected={glCodes} onChange={setGlCodes} />
+              <ReportFilter label="Month"   options={monthOptions}  selected={months}  onChange={setMonths} />
             </>
           )}
 
@@ -167,9 +199,7 @@ export default function PLAllPage() {
               onClick={() => setViewMode("gl")}
               className={[
                 "rounded-md px-3 py-1 text-xs font-medium transition-colors",
-                viewMode === "gl"
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "text-gray-500 hover:text-gray-700",
+                viewMode === "gl" ? "bg-blue-600 text-white shadow-sm" : "text-gray-500 hover:text-gray-700",
               ].join(" ")}
             >
               P&amp;L by GL
@@ -178,26 +208,53 @@ export default function PLAllPage() {
               onClick={() => setViewMode("cc")}
               className={[
                 "rounded-md px-3 py-1 text-xs font-medium transition-colors",
-                viewMode === "cc"
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "text-gray-500 hover:text-gray-700",
+                viewMode === "cc" ? "bg-blue-600 text-white shadow-sm" : "text-gray-500 hover:text-gray-700",
               ].join(" ")}
             >
               P&amp;L by Cost Center
             </button>
           </div>
         </div>
+
+        {/* Active filter chips — shown after successful load */}
+        {loaded && loadedChips.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-300">Loaded:</span>
+            {loadedChips.map((chip) => (
+              <FilterChip key={chip.label} label={chip.label} value={chip.value} />
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* ── Page title ──────────────────────────────────────────────────── */}
-      <div>
-        <h2 className="text-xl font-bold text-gray-900">P&amp;L All</h2>
-        <p className="text-sm text-gray-500">
-          {viewMode === "gl"
-            ? "Pivot by Category 2 → Category 7 → GL Name → GL Code"
-            : "Pivot by Cost Center → GL Name → Transaction · Vendor/OA allocations prorated by %"}
-        </p>
+      {/* Page title + export */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">P&amp;L All</h2>
+          <p className="text-sm text-gray-500">
+            {viewMode === "gl"
+              ? "Pivot by Category 2 → Category 7 → GL Name → GL Code"
+              : "Pivot by Cost Center → GL Name → Transaction · Vendor/OA allocations prorated by %"}
+          </p>
+        </div>
+        {loaded && (
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 shadow-sm"
+          >
+            <Download size={13} /> Export CSV
+          </button>
+        )}
       </div>
+
+      {/* Per-month loan metrics — shown after first successful load */}
+      {loaded && (
+        <LoanMetricsByMonthBar
+          years={loadedYears}
+          branches={loadedBranches}
+          sources={loadedSources}
+        />
+      )}
 
       {error && (
         <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>
@@ -205,7 +262,7 @@ export default function PLAllPage() {
 
       {!loaded && !loading && (
         <p className="py-10 text-center text-sm text-gray-400">
-          Select filters and click Load to generate the report.
+          Select filters and click Run Report to generate the report.
         </p>
       )}
 

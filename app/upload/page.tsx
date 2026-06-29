@@ -301,7 +301,7 @@ function UploadSection({ endpoint, title, description, infoItems, onUploadComple
 
 type LoanDupeInfo = { month: string; year: number; existing_count: number };
 
-function LoanCountUploadSection() {
+function LoanCountUploadSection({ onUploadComplete }: { onUploadComplete?: () => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [fileBuffer, setFileBuffer] = useState<ArrayBuffer | null>(null);
   const [status, setStatus] = useState<UploadStatus>("idle");
@@ -335,6 +335,7 @@ function LoanCountUploadSection() {
       if (!res.ok) { setStatus("error"); setErrorMsg(json.error ?? "Unknown error"); return; }
       setResult(json as UploadLoanCountResponse);
       setStatus("success");
+      onUploadComplete?.();
     } catch (err) {
       setStatus("error"); setErrorMsg(String(err));
     }
@@ -475,12 +476,17 @@ function LoanCountUploadSection() {
               <p className="font-semibold">Loan number completion — {result.completion.processed} P&L transactions processed:</p>
               <ul className="space-y-0.5 pl-2">
                 <li>✓ {result.completion.completed_direct} had 12-digit loan numbers (copied directly)</li>
-                <li>✓ {result.completion.completed_from_10} 10-digit numbers completed to 12 digits</li>
+                {result.completion.completed_from_10 > 0 && (
+                  <li>✓ {result.completion.completed_from_10} 10-digit numbers completed to 12 digits</li>
+                )}
+                {result.completion.completed_from_9 > 0 && (
+                  <li>✓ {result.completion.completed_from_9} 9-digit numbers completed to 12 digits</li>
+                )}
                 {result.completion.incomplete_no_match > 0 && (
-                  <li className="text-amber-700">⚠ {result.completion.incomplete_no_match} 10-digit numbers with no match (loan_number_incomplete)</li>
+                  <li className="text-amber-700">⚠ {result.completion.incomplete_no_match} partial loan numbers with no match in Loan Count (loan_number_incomplete)</li>
                 )}
                 {result.completion.incomplete_ambiguous > 0 && (
-                  <li className="text-amber-700">⚠ {result.completion.incomplete_ambiguous} ambiguous (2+ possible matches, loan_number_incomplete)</li>
+                  <li className="text-amber-700">⚠ {result.completion.incomplete_ambiguous} partial loan numbers with multiple possible matches — loan_number_incomplete (más frecuente en 9 dígitos)</li>
                 )}
               </ul>
             </div>
@@ -514,6 +520,124 @@ function LoanCountUploadSection() {
           <li>Marks unresolved or ambiguous loan numbers as loan_number_incomplete for audit.</li>
         </ol>
       </div>
+    </div>
+  );
+}
+
+// ─── Loan Count history ───────────────────────────────────────────────────────
+
+type LoanCountPeriod = { month: string; year: number; count: number; last_updated: string };
+
+function LoanCountHistory({ refreshKey }: { refreshKey: number }) {
+  const [periods, setPeriods] = useState<LoanCountPeriod[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [confirmKey, setConfirmKey] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/loan-count-history");
+      if (res.ok) setPeriods(await res.json());
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load, refreshKey]);
+
+  async function handleDelete(month: string, year: number) {
+    const key = `${month}|${year}`;
+    setDeletingKey(key); setErrorMsg("");
+    try {
+      const res = await fetch(`/api/loan-count-history?month=${encodeURIComponent(month)}&year=${year}`, { method: "DELETE" });
+      if (!res.ok) { const j = await res.json(); setErrorMsg(j.error ?? "Delete failed"); return; }
+      setPeriods((prev) => prev.filter((p) => !(p.month === month && p.year === year)));
+    } finally { setDeletingKey(null); setConfirmKey(null); }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold text-gray-900">Loan Count History</h3>
+        <button
+          onClick={load}
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50"
+        >
+          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          Refresh
+        </button>
+      </div>
+
+      {errorMsg && (
+        <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">{errorMsg}</p>
+      )}
+
+      {loading ? (
+        <div className="py-8 text-center text-gray-400">
+          <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
+        </div>
+      ) : periods.length === 0 ? (
+        <p className="py-8 text-center text-sm text-gray-400">No loan count data uploaded yet.</p>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
+                <th className="px-4 py-3 font-medium">Period</th>
+                <th className="px-4 py-3 font-medium text-right">Loan records</th>
+                <th className="px-4 py-3 font-medium">Last updated</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody>
+              {periods.map((p) => {
+                const key = `${p.month}|${p.year}`;
+                return (
+                  <tr key={key} className="border-b border-gray-50 hover:bg-gray-50/60">
+                    <td className="px-4 py-2.5 font-medium text-gray-800">
+                      {p.month} {p.year}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-mono text-gray-700">
+                      {p.count.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2.5 text-gray-500">
+                      {p.last_updated ? new Date(p.last_updated).toLocaleString() : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      {confirmKey === key ? (
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="text-gray-500">Delete {p.count} records?</span>
+                          <button
+                            onClick={() => handleDelete(p.month, p.year)}
+                            disabled={deletingKey === key}
+                            className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-red-700 disabled:opacity-40"
+                          >
+                            {deletingKey === key ? "…" : "Yes"}
+                          </button>
+                          <button
+                            onClick={() => setConfirmKey(null)}
+                            className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-medium text-gray-500 hover:bg-gray-50"
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmKey(key)}
+                          className="flex items-center gap-1 rounded px-2 py-0.5 text-gray-400 hover:text-red-600 hover:bg-red-50"
+                          title="Delete all loan records for this period"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -676,8 +800,10 @@ function UploadHistory({ refreshKey }: { refreshKey: number }) {
 
 export default function UploadPage() {
   const [historyKey, setHistoryKey] = useState(0);
+  const [loanCountHistoryKey, setLoanCountHistoryKey] = useState(0);
 
   function refreshHistory() { setHistoryKey((k) => k + 1); }
+  function refreshLoanCountHistory() { setLoanCountHistoryKey((k) => k + 1); }
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
@@ -739,10 +865,15 @@ export default function UploadPage() {
 
       {/* ── Loan Count ── */}
       <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
-        <LoanCountUploadSection />
+        <LoanCountUploadSection onUploadComplete={refreshLoanCountHistory} />
       </div>
 
-      {/* ── Upload History ── */}
+      {/* ── Loan Count History ── */}
+      <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
+        <LoanCountHistory refreshKey={loanCountHistoryKey} />
+      </div>
+
+      {/* ── Upload History (P&L / Addbacks / Offshore) ── */}
       <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
         <UploadHistory refreshKey={historyKey} />
       </div>

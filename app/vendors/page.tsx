@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Search, RefreshCw, Percent } from "lucide-react";
+import { Download, Search, RefreshCw, Percent } from "lucide-react";
+import { downloadCSV } from "@/lib/csv";
 import { ReportFilter } from "@/components/report-filter";
 import { SplitEditor } from "@/components/split-editor";
 import { buildSplitsMap } from "@/lib/apply-splits";
@@ -96,6 +97,29 @@ export default function VendorsPage() {
     return vendors.filter((v) => v.vendor.toLowerCase().includes(q));
   }, [vendors, query]);
 
+  function handleExport() {
+    const data = filtered.map((v) => ({
+      vendor:               v.vendor,
+      tx_count:             v.tx_count,
+      tx_count_unassigned:  v.tx_count_unassigned,
+      branches:             v.branches.join(", "),
+      months:               v.months.join(", "),
+      years:                v.years.join(", "),
+      gl_items:             v.gl_items.map((g) => `${g.gl_code}: ${g.gl_name}`).join("; "),
+      cost_centers:         v.cost_centers.join(", "),
+    }));
+    downloadCSV("vendors.csv", data, [
+      { key: "vendor",              label: "Vendor" },
+      { key: "tx_count",            label: "Total Tx" },
+      { key: "tx_count_unassigned", label: "Unassigned Tx" },
+      { key: "branches",            label: "Branches" },
+      { key: "months",              label: "Months" },
+      { key: "years",               label: "Years" },
+      { key: "gl_items",            label: "GL Codes / Names" },
+      { key: "cost_centers",        label: "Cost Centers" },
+    ]);
+  }
+
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-32px)]">
       {/* Header */}
@@ -106,13 +130,24 @@ export default function VendorsPage() {
             {loading ? "Loading…" : `${filtered.length} of ${vendors.length} vendors`}
           </p>
         </div>
-        <button
-          onClick={() => fetchVendors(filterBranches, filterMonths, filterYears, false)}
-          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
-        >
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {filtered.length > 0 && (
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+            >
+              <Download size={14} />
+              Export CSV
+            </button>
+          )}
+          <button
+            onClick={() => fetchVendors(filterBranches, filterMonths, filterYears, false)}
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Filters + search */}
