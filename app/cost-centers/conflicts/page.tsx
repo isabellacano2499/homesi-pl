@@ -42,6 +42,20 @@ function txMatchesSearch(tx: SearchableTx, q: string): boolean {
     .some((v) => v?.toLowerCase().includes(lq));
 }
 
+function txMatchesCcFilter(
+  tx: { cost_center_name?: string | null; vendor?: string | null; check_description_3?: string | null },
+  ccFilter: string[],
+  splitsMap: Map<string, SplitEntry[]>
+): boolean {
+  if (ccFilter.length === 0) return true;
+  if (tx.cost_center_name && ccFilter.includes(tx.cost_center_name)) return true;
+  const normVendor = tx.vendor?.trim().replace(/\s+/g, " ") || null;
+  const splits =
+    (normVendor ? splitsMap.get(`vendor:${normVendor}`) : undefined) ??
+    (tx.check_description_3 ? splitsMap.get(`description3:${tx.check_description_3}`) : undefined);
+  return splits?.some((s) => ccFilter.includes(s.cost_centers?.name ?? "")) ?? false;
+}
+
 function CD2Cell({ v }: { v: string | null | undefined }) {
   return v ? <span className="text-sky-700 truncate">{v}</span> : <span className="text-gray-300">—</span>;
 }
@@ -92,7 +106,7 @@ function OpBadge({ isOp, busy, onToggle }: { isOp: boolean; busy?: boolean; onTo
 // ─── Shared AssignTab ─────────────────────────────────────────────────────────
 
 function AssignTab({
-  costCenters, endpoint, mode, branches, showAllocationButtons = false, glFilter, txSearch,
+  costCenters, endpoint, mode, branches, showAllocationButtons = false, glFilter, txSearch, ccFilter = [],
 }: {
   costCenters: CostCenter[];
   endpoint: string;
@@ -101,6 +115,7 @@ function AssignTab({
   showAllocationButtons?: boolean;
   glFilter: string[];
   txSearch: string;
+  ccFilter?: string[];
 }) {
   const [groups, setGroups] = useState<AssignmentGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -145,20 +160,24 @@ function AssignTab({
   const visibleGroups = useMemo(() => {
     return groups.filter((g) =>
       (glFilter.length === 0 || glFilter.includes(g.gl_code)) &&
-      (!txSearch || g.transactions.some((tx) => txMatchesSearch(tx, txSearch)))
+      (!txSearch || g.transactions.some((tx) => txMatchesSearch(tx, txSearch))) &&
+      (ccFilter.length === 0 || g.transactions.some((tx) => txMatchesCcFilter(tx, ccFilter, splitsMap)))
     );
-  }, [groups, glFilter, txSearch]);
+  }, [groups, glFilter, txSearch, ccFilter, splitsMap]);
 
   const totalCount = visibleGroups.reduce((s, g) => s + g.transactions.length, 0);
 
   const allVisibleIds = useMemo(() => {
     const ids = new Set<string>();
     visibleGroups.forEach((g) => {
-      const txs = txSearch ? g.transactions.filter((tx) => txMatchesSearch(tx, txSearch)) : g.transactions;
+      const txs = g.transactions.filter((tx) =>
+        (!txSearch || txMatchesSearch(tx, txSearch)) &&
+        txMatchesCcFilter(tx, ccFilter, splitsMap)
+      );
       txs.forEach((tx) => ids.add(tx.id));
     });
     return ids;
-  }, [visibleGroups, txSearch]);
+  }, [visibleGroups, txSearch, ccFilter, splitsMap]);
 
   const visibleSelected = useMemo(
     () => [...selected].filter((id) => allVisibleIds.has(id)),
@@ -308,9 +327,10 @@ function AssignTab({
       {visibleGroups.map((group) => {
         const key = group.gl_code;
         const isCollapsed = collapsed.has(key);
-        const visibleTxs = txSearch
-          ? group.transactions.filter((tx) => txMatchesSearch(tx, txSearch))
-          : group.transactions;
+        const visibleTxs = group.transactions.filter((tx) =>
+          (!txSearch || txMatchesSearch(tx, txSearch)) &&
+          txMatchesCcFilter(tx, ccFilter, splitsMap)
+        );
         const visibleIds = visibleTxs.map((t) => t.id);
         const groupAllSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
 
@@ -329,7 +349,7 @@ function AssignTab({
               {isCollapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
               <span className="text-xs font-semibold font-mono text-gray-800">{group.gl_code}</span>
               <span className="text-xs text-gray-500">{group.gl_name}</span>
-              <span className="ml-auto text-xs text-gray-400">{group.transactions.length} tx{txSearch && visibleTxs.length !== group.transactions.length ? ` · ${visibleTxs.length} visible` : ""}</span>
+              <span className="ml-auto text-xs text-gray-400">{group.transactions.length} tx{(txSearch || ccFilter.length > 0) && visibleTxs.length !== group.transactions.length ? ` · ${visibleTxs.length} visible` : ""}</span>
             </div>
 
             {!isCollapsed && (
@@ -483,13 +503,13 @@ function UnassignedTab({ costCenters, branches, glFilter, txSearch }: { costCent
   return <AssignTab costCenters={costCenters} endpoint="/api/cost-center-assignment/unassigned" mode="assign" branches={branches} glFilter={glFilter} txSearch={txSearch} />;
 }
 
-function AssignedByRuleTab({ costCenters, branches, glFilter, txSearch }: { costCenters: CostCenter[]; branches: string[]; glFilter: string[]; txSearch: string }) {
-  return <AssignTab costCenters={costCenters} endpoint="/api/cost-center-assignment/assigned-by-rule" mode="override" branches={branches} showAllocationButtons glFilter={glFilter} txSearch={txSearch} />;
+function AssignedByRuleTab({ costCenters, branches, glFilter, txSearch, ccFilter }: { costCenters: CostCenter[]; branches: string[]; glFilter: string[]; txSearch: string; ccFilter: string[] }) {
+  return <AssignTab costCenters={costCenters} endpoint="/api/cost-center-assignment/assigned-by-rule" mode="override" branches={branches} showAllocationButtons glFilter={glFilter} txSearch={txSearch} ccFilter={ccFilter} />;
 }
 
 // ─── Manual Assigned Tab ──────────────────────────────────────────────────────
 
-function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: string[]; costCenters: CostCenter[]; glFilter: string[]; txSearch: string }) {
+function ManualTab({ branches, costCenters, glFilter, txSearch, ccFilter }: { branches: string[]; costCenters: CostCenter[]; glFilter: string[]; txSearch: string; ccFilter: string[] }) {
   const [groups, setGroups] = useState<AssignmentGroup[]>([]);
   const [allSplits, setAllSplits] = useState<SplitEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -524,19 +544,23 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
   const visibleGroups = useMemo(() =>
     groups.filter((g) =>
       (glFilter.length === 0 || glFilter.includes(g.gl_code)) &&
-      (!txSearch || g.transactions.some((tx) => txMatchesSearch(tx, txSearch)))
-    ), [groups, glFilter, txSearch]);
+      (!txSearch || g.transactions.some((tx) => txMatchesSearch(tx, txSearch))) &&
+      (ccFilter.length === 0 || g.transactions.some((tx) => txMatchesCcFilter(tx, ccFilter, splitsMap)))
+    ), [groups, glFilter, txSearch, ccFilter, splitsMap]);
 
   const totalCount = visibleGroups.reduce((s, g) => s + g.transactions.length, 0);
 
   const allVisibleIds = useMemo(() => {
     const ids = new Set<string>();
     visibleGroups.forEach((g) => {
-      const txs = txSearch ? g.transactions.filter((tx) => txMatchesSearch(tx, txSearch)) : g.transactions;
+      const txs = g.transactions.filter((tx) =>
+        (!txSearch || txMatchesSearch(tx, txSearch)) &&
+        txMatchesCcFilter(tx, ccFilter, splitsMap)
+      );
       txs.forEach((tx) => ids.add(tx.id));
     });
     return ids;
-  }, [visibleGroups, txSearch]);
+  }, [visibleGroups, txSearch, ccFilter, splitsMap]);
 
   const visibleSelected = useMemo(
     () => [...selected].filter((id) => allVisibleIds.has(id)),
@@ -697,9 +721,10 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
       {visibleGroups.map((group) => {
         const key = group.gl_code;
         const isCollapsed = collapsed.has(key);
-        const visibleTxs = txSearch
-          ? group.transactions.filter((tx) => txMatchesSearch(tx, txSearch))
-          : group.transactions;
+        const visibleTxs = group.transactions.filter((tx) =>
+          (!txSearch || txMatchesSearch(tx, txSearch)) &&
+          txMatchesCcFilter(tx, ccFilter, splitsMap)
+        );
         const visibleIds = visibleTxs.map((t) => t.id);
         const groupAllSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
         return (
@@ -717,7 +742,7 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
               {isCollapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
               <span className="text-xs font-semibold font-mono text-gray-800">{group.gl_code}</span>
               <span className="text-xs text-gray-500">{group.gl_name}</span>
-              <span className="ml-auto text-xs text-gray-400">{group.transactions.length} tx{txSearch && visibleTxs.length !== group.transactions.length ? ` · ${visibleTxs.length} visible` : ""}</span>
+              <span className="ml-auto text-xs text-gray-400">{group.transactions.length} tx{(txSearch || ccFilter.length > 0) && visibleTxs.length !== group.transactions.length ? ` · ${visibleTxs.length} visible` : ""}</span>
             </div>
 
             {!isCollapsed && (
@@ -1128,12 +1153,13 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
 // ─── Conflict Resolved Tab ────────────────────────────────────────────────────
 
 function ConflictResolvedTab({
-  costCenters, branches, glFilter, txSearch,
+  costCenters, branches, glFilter, txSearch, ccFilter,
 }: {
   costCenters: CostCenter[];
   branches: string[];
   glFilter: string[];
   txSearch: string;
+  ccFilter: string[];
 }) {
   const [groups, setGroups] = useState<ResolvedConflictGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1236,19 +1262,25 @@ function ConflictResolvedTab({
   const visibleGroups = useMemo(() =>
     groups.filter((g) =>
       (glFilter.length === 0 || glFilter.includes(g.gl_code)) &&
-      (!txSearch || g.transactions.some((tx) => txMatchesSearch(tx, txSearch)))
-    ), [groups, glFilter, txSearch]);
+      (!txSearch || g.transactions.some((tx) => txMatchesSearch(tx, txSearch))) &&
+      (ccFilter.length === 0 || g.transactions.some((tx) =>
+        tx.resolved_cc?.name != null && ccFilter.includes(tx.resolved_cc.name)
+      ))
+    ), [groups, glFilter, txSearch, ccFilter]);
 
   const totalCount = visibleGroups.reduce((s, g) => s + g.transactions.length, 0);
 
   const allVisibleIds = useMemo(() => {
     const ids = new Set<string>();
     visibleGroups.forEach((g) => {
-      const txs = txSearch ? g.transactions.filter((tx) => txMatchesSearch(tx, txSearch)) : g.transactions;
+      const txs = g.transactions.filter((tx) =>
+        (!txSearch || txMatchesSearch(tx, txSearch)) &&
+        (ccFilter.length === 0 || (tx.resolved_cc?.name != null && ccFilter.includes(tx.resolved_cc.name)))
+      );
       txs.forEach((tx) => ids.add(tx.id));
     });
     return ids;
-  }, [visibleGroups, txSearch]);
+  }, [visibleGroups, txSearch, ccFilter]);
 
   const visibleSelected = useMemo(
     () => [...selected].filter((id) => allVisibleIds.has(id)),
@@ -1297,9 +1329,10 @@ function ConflictResolvedTab({
       {visibleGroups.map((group) => {
         const key = group.gl_code;
         const isCollapsed = collapsedGroups.has(key);
-        const visibleTxs = txSearch
-          ? group.transactions.filter((tx) => txMatchesSearch(tx, txSearch))
-          : group.transactions;
+        const visibleTxs = group.transactions.filter((tx) =>
+          (!txSearch || txMatchesSearch(tx, txSearch)) &&
+          (ccFilter.length === 0 || (tx.resolved_cc?.name != null && ccFilter.includes(tx.resolved_cc.name)))
+        );
         const visibleIds = visibleTxs.map((t) => t.id);
         const groupAllSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
         return (
@@ -1315,7 +1348,7 @@ function ConflictResolvedTab({
               {isCollapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
               <span className="text-xs font-semibold font-mono text-gray-800">{group.gl_code}</span>
               <span className="text-xs text-gray-500">{group.gl_name}</span>
-              <span className="ml-auto text-xs text-gray-400">{group.transactions.length} resolved{txSearch && visibleTxs.length !== group.transactions.length ? ` · ${visibleTxs.length} visible` : ""}</span>
+              <span className="ml-auto text-xs text-gray-400">{group.transactions.length} resolved{(txSearch || ccFilter.length > 0) && visibleTxs.length !== group.transactions.length ? ` · ${visibleTxs.length} visible` : ""}</span>
             </div>
 
             {!isCollapsed && (
@@ -1461,6 +1494,7 @@ export default function CCAssignmentPage() {
   const [allBranches, setAllBranches] = useState<string[]>([]);
   const [glFilter, setGlFilter] = useState<string[]>([]);
   const [allGlCodes, setAllGlCodes] = useState<string[]>([]);
+  const [ccFilter, setCcFilter] = useState<string[]>([]);
   const [txSearch, setTxSearch] = useState("");
   // Effective branches = intersection of global filter and local selection
   const effectiveBranches = mergeWithGlobal(activeBranches, branches);
@@ -1480,7 +1514,8 @@ export default function CCAssignmentPage() {
       .catch(console.error);
   }, []);
 
-  const hasFilters = branches.length > 0 || glFilter.length > 0 || txSearch !== "";
+  const hasFilters = branches.length > 0 || glFilter.length > 0 || ccFilter.length > 0 || txSearch !== "";
+  const ccFilterOptions = costCenters.map((cc) => cc.name);
 
   return (
     <div className="space-y-5">
@@ -1492,6 +1527,9 @@ export default function CCAssignmentPage() {
       <div className="flex flex-wrap items-center gap-2">
         <ReportFilter label="Branch" options={allBranches} selected={branches} onChange={setBranches} />
         <ReportFilter label="GL Code" options={allGlCodes} selected={glFilter} onChange={setGlFilter} />
+        {["assigned-by-rule", "manual", "conflict-resolved"].includes(tab) && (
+          <ReportFilter label="Cost Center" options={ccFilterOptions} selected={ccFilter} onChange={setCcFilter} />
+        )}
         <div className="relative">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
           <input
@@ -1509,7 +1547,7 @@ export default function CCAssignmentPage() {
         </div>
         {hasFilters && (
           <button
-            onClick={() => { setBranches([]); setGlFilter([]); setTxSearch(""); }}
+            onClick={() => { setBranches([]); setGlFilter([]); setCcFilter([]); setTxSearch(""); }}
             className="text-xs text-gray-400 hover:text-gray-600 underline"
           >
             Clear all
@@ -1539,10 +1577,10 @@ export default function CCAssignmentPage() {
       </div>
 
       {tab === "unassigned"        && <UnassignedTab costCenters={costCenters} branches={effectiveBranches} glFilter={glFilter} txSearch={txSearch} />}
-      {tab === "assigned-by-rule"  && <AssignedByRuleTab costCenters={costCenters} branches={effectiveBranches} glFilter={glFilter} txSearch={txSearch} />}
-      {tab === "manual"            && <ManualTab branches={effectiveBranches} costCenters={costCenters} glFilter={glFilter} txSearch={txSearch} />}
+      {tab === "assigned-by-rule"  && <AssignedByRuleTab costCenters={costCenters} branches={effectiveBranches} glFilter={glFilter} txSearch={txSearch} ccFilter={ccFilter} />}
+      {tab === "manual"            && <ManualTab branches={effectiveBranches} costCenters={costCenters} glFilter={glFilter} txSearch={txSearch} ccFilter={ccFilter} />}
       {tab === "conflict"          && <ConflictTab costCenters={costCenters} branches={effectiveBranches} glFilter={glFilter} txSearch={txSearch} />}
-      {tab === "conflict-resolved" && <ConflictResolvedTab costCenters={costCenters} branches={effectiveBranches} glFilter={glFilter} txSearch={txSearch} />}
+      {tab === "conflict-resolved" && <ConflictResolvedTab costCenters={costCenters} branches={effectiveBranches} glFilter={glFilter} txSearch={txSearch} ccFilter={ccFilter} />}
     </div>
   );
 }
