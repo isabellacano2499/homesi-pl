@@ -5,6 +5,7 @@ import { Download } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
 import { downloadCSV } from "@/lib/csv";
 import type { LoanOfficial } from "@/types";
+import { LoanValidationTab } from "./loan-validation-tab";
 
 const BOOL_FIELDS: { key: keyof LoanOfficial; label: string }[] = [
   { key: "affinity",          label: "Affinity" },
@@ -164,11 +165,16 @@ function TextCell({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+type MainTab = "count" | "validation";
+
 export default function LoanCountPage() {
+  const [mainTab, setMainTab] = useState<MainTab>("count");
+
   const [loans, setLoans] = useState<LoanOfficial[]>([]);
   const [loading, setLoading] = useState(true);
   const [allMonths, setAllMonths] = useState<string[]>([]);
   const [allYears, setAllYears] = useState<number[]>([]);
+  const [allBranches, setAllBranches] = useState<string[]>([]);
   const [selMonths, setSelMonths] = useState<string[]>([]);
   const [selYears, setSelYears] = useState<string[]>([]);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
@@ -187,9 +193,10 @@ export default function LoanCountPage() {
   useEffect(() => {
     fetch("/api/loan-officials/filter-options")
       .then((r) => r.json())
-      .then((d: { months: string[]; years: number[] }) => {
+      .then((d: { months: string[]; years: number[]; branches: string[] }) => {
         setAllMonths(d.months ?? []);
         setAllYears(d.years ?? []);
+        setAllBranches(d.branches ?? []);
       })
       .catch(console.error);
   }, []);
@@ -279,13 +286,13 @@ export default function LoanCountPage() {
 
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-32px)]">
-      {/* Title + export */}
+      {/* Title + main tab bar */}
       <div className="flex items-start justify-between shrink-0">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Loan Count</h2>
           <p className="text-sm text-gray-500">Master loan list — upload via Upload P&L → Loan Count.</p>
         </div>
-        {loans.length > 0 && (
+        {mainTab === "count" && loans.length > 0 && (
           <button
             onClick={handleExport}
             className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 shadow-sm"
@@ -294,6 +301,38 @@ export default function LoanCountPage() {
           </button>
         )}
       </div>
+
+      {/* Main tab switcher */}
+      <div className="flex gap-1 border-b border-gray-200 shrink-0 -mt-2">
+        {(["count", "validation"] as MainTab[]).map((t) => (
+          <button
+            key={t}
+            onClick={() => setMainTab(t)}
+            className={[
+              "px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors",
+              mainTab === t
+                ? "border-blue-600 text-blue-700"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300",
+            ].join(" ")}
+          >
+            {t === "count" ? "Loan Count" : "Loan Validation"}
+          </button>
+        ))}
+      </div>
+
+      {/* Loan Validation tab */}
+      {mainTab === "validation" && (
+        <div className="flex-1 min-h-0 overflow-auto">
+          <LoanValidationTab
+            allMonths={allMonths}
+            allYears={allYears}
+            allBranches={allBranches}
+          />
+        </div>
+      )}
+
+      {/* Loan Count tab content below — hidden when validation is active */}
+      {mainTab === "count" && (<>
 
       {/* Month/Year filters */}
       <div className="flex items-center gap-3 flex-wrap shrink-0">
@@ -459,6 +498,7 @@ export default function LoanCountPage() {
           </table>
         </div>
       )}
+      </>)}
     </div>
   );
 }

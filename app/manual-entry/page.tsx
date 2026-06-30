@@ -12,24 +12,30 @@ function GLCodeCell({
   value,
   glName,
   onChange,
+  showError,
 }: {
   value: string;
   glName: string;
   onChange: (gl_code: string, gl_name: string) => void;
+  showError: boolean;
 }) {
   const [inputVal, setInputVal] = useState(value ? `${value}${glName ? ` — ${glName}` : ""}` : "");
   const [results, setResults] = useState<GLMapping[]>([]);
   const [open, setOpen] = useState(false);
   const [fetching, setFetching] = useState(false);
+  // True when user typed something but tabbed/clicked away without selecting
+  const [typedWithoutSelection, setTypedWithoutSelection] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setInputVal(value ? `${value}${glName ? ` — ${glName}` : ""}` : "");
+    if (value) setTypedWithoutSelection(false); // Selection committed — clear the warning
   }, [value, glName]);
 
   function handleInput(q: string) {
     setInputVal(q);
+    setTypedWithoutSelection(false); // User is typing again
     setOpen(true);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
@@ -45,19 +51,33 @@ function GLCodeCell({
   function handleSelect(gl: GLMapping) {
     onChange(gl.gl_code, gl.gl_name);
     setInputVal(`${gl.gl_code} — ${gl.gl_name}`);
+    setTypedWithoutSelection(false);
     setOpen(false);
     setResults([]);
   }
 
+  function handleBlur() {
+    if (!inputVal.trim()) {
+      onChange("", "");
+      setTypedWithoutSelection(false);
+    } else if (!value.trim()) {
+      // User has text in the box but nothing was committed via the dropdown
+      setTypedWithoutSelection(true);
+    }
+  }
+
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
+    function handleMouseDown(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
   }, []);
+
+  const hasError = showError && !value;
+  const hasWarning = typedWithoutSelection; // Typed but not selected — independent of showError
 
   return (
     <div ref={containerRef} className="relative">
@@ -66,13 +86,25 @@ function GLCodeCell({
         value={inputVal}
         onChange={(e) => handleInput(e.target.value)}
         onFocus={() => { if (inputVal) setOpen(true); }}
-        onBlur={() => {
-          // If user cleared the input, clear the selected value
-          if (!inputVal.trim()) onChange("", "");
-        }}
+        onBlur={handleBlur}
         placeholder="Search GL Code…"
-        className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none min-w-[140px]"
+        className={[
+          "w-full rounded border px-2 py-1 text-xs text-gray-700 focus:outline-none min-w-[140px]",
+          hasError || hasWarning
+            ? "border-red-400 bg-red-50/40 focus:border-red-500"
+            : "border-gray-200 focus:border-blue-400",
+        ].join(" ")}
       />
+      {hasWarning && !open && (
+        <p className="absolute left-0 top-full mt-0.5 z-10 rounded bg-red-50 border border-red-200 px-1.5 py-0.5 text-[10px] text-red-600 whitespace-nowrap shadow-sm">
+          Select an option from the dropdown
+        </p>
+      )}
+      {hasError && !hasWarning && (
+        <p className="absolute left-0 top-full mt-0.5 z-10 rounded bg-red-50 border border-red-200 px-1.5 py-0.5 text-[10px] text-red-600 whitespace-nowrap shadow-sm">
+          Required
+        </p>
+      )}
       {open && (inputVal.length > 0) && (
         <div className="absolute z-50 top-full left-0 mt-0.5 w-72 rounded-lg border border-gray-200 bg-white shadow-lg max-h-52 overflow-y-auto">
           {fetching && <p className="px-3 py-2 text-xs text-gray-400">Searching…</p>}
@@ -126,6 +158,7 @@ function newRow(): ManualRow {
   };
 }
 
+// A row is ready to save when all truly required fields have a committed value.
 function isComplete(r: ManualRow): boolean {
   return r.gl_code.trim() !== "" && r.branch !== "" && r.month !== "" && r.year !== "";
 }
@@ -137,6 +170,8 @@ export default function ManualEntryPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string; uploadId?: string } | null>(null);
+  // Set to true on first save attempt — triggers per-field error indicators
+  const [triedToSave, setTriedToSave] = useState(false);
 
   useEffect(() => {
     fetch("/api/branches")
@@ -162,9 +197,23 @@ export default function ManualEntryPage() {
   }
 
   async function handleSave() {
+    setTriedToSave(true);
+
+    // Diagnostic: log each row's field values and validation result to browser console.
+    // Open DevTools → Console to see exactly which field is failing.
+    for (const r of rows) {
+      console.group(`[ManualEntry] Row ${r.id.slice(0, 8)}`);
+      console.log("gl_code  :", JSON.stringify(r.gl_code),  "→", r.gl_code.trim() !== "" ? "✓" : "✗ FAILS (empty — must select from dropdown)");
+      console.log("branch   :", JSON.stringify(r.branch),   "→", r.branch !== ""         ? "✓" : "✗ FAILS (empty — select a branch)");
+      console.log("month    :", JSON.stringify(r.month),    "→", r.month !== ""           ? "✓" : "✗ FAILS (empty)");
+      console.log("year     :", JSON.stringify(r.year),     "→", r.year !== ""            ? "✓" : "✗ FAILS (empty)");
+      console.log("isComplete:", isComplete(r));
+      console.groupEnd();
+    }
+
     const validRows = rows.filter(isComplete);
     if (validRows.length === 0) {
-      setResult({ ok: false, message: "Fill in at least GL Code, Branch, Month, and Year for each row." });
+      setResult({ ok: false, message: "Fill in the required fields (GL Code, Branch, Month, Year) for at least one row. Check the fields highlighted in red." });
       return;
     }
     setSaving(true);
@@ -196,6 +245,7 @@ export default function ManualEntryPage() {
         uploadId: json.uploadId,
       });
       setRows([newRow()]);
+      setTriedToSave(false);
     } finally {
       setSaving(false);
     }
@@ -263,102 +313,157 @@ export default function ManualEntryPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {rows.map((row) => (
-              <tr key={row.id} className="hover:bg-gray-50/50">
-                <td className="px-2 py-1.5 min-w-[180px]">
-                  <GLCodeCell
-                    value={row.gl_code}
-                    glName={row.gl_name}
-                    onChange={(code, name) => updateGLCode(row.id, code, name)}
-                  />
-                </td>
-                <td className="px-2 py-1.5">
-                  <select
-                    value={row.branch}
-                    onChange={(e) => updateRow(row.id, "branch", e.target.value)}
-                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
-                  >
-                    <option value="">Select…</option>
-                    {branches.map((b) => (
-                      <option key={b.id} value={b.branch}>{b.branch}</option>
-                    ))}
-                  </select>
-                </td>
-                <td className="px-2 py-1.5">
-                  <input
-                    type="text"
-                    value={row.check_description}
-                    onChange={(e) => updateRow(row.id, "check_description", e.target.value)}
-                    placeholder="Description"
-                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
-                  />
-                </td>
-                <td className="px-2 py-1.5">
-                  <input
-                    type="text"
-                    value={row.vendor}
-                    onChange={(e) => updateRow(row.id, "vendor", e.target.value)}
-                    placeholder="Vendor"
-                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
-                  />
-                </td>
-                <td className="px-2 py-1.5">
-                  <input
-                    type="number"
-                    value={row.debit}
-                    onChange={(e) => updateRow(row.id, "debit", e.target.value)}
-                    placeholder="0.00"
-                    min="0"
-                    step="0.01"
-                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-right text-gray-700 focus:border-blue-400 focus:outline-none"
-                  />
-                </td>
-                <td className="px-2 py-1.5">
-                  <input
-                    type="number"
-                    value={row.credit}
-                    onChange={(e) => updateRow(row.id, "credit", e.target.value)}
-                    placeholder="0.00"
-                    min="0"
-                    step="0.01"
-                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-right text-gray-700 focus:border-blue-400 focus:outline-none"
-                  />
-                </td>
-                <td className="px-2 py-1.5">
-                  <select
-                    value={row.month}
-                    onChange={(e) => updateRow(row.id, "month", e.target.value)}
-                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
-                  >
-                    <option value="">Month…</option>
-                    {MONTH_NAMES.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </td>
-                <td className="px-2 py-1.5">
-                  <input
-                    type="number"
-                    value={row.year}
-                    onChange={(e) => updateRow(row.id, "year", e.target.value)}
-                    placeholder={String(new Date().getFullYear())}
-                    min="2000"
-                    max="2099"
-                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
-                  />
-                </td>
-                <td className="px-1 py-1.5">
-                  <button
-                    onClick={() => removeRow(row.id)}
-                    disabled={rows.length === 1}
-                    title="Remove row"
-                    className="rounded p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 disabled:opacity-0 disabled:pointer-events-none"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {rows.map((row) => {
+              const showErr = triedToSave;
+              const missingBranch = showErr && !row.branch;
+              const missingMonth  = showErr && !row.month;
+              const missingYear   = showErr && !row.year;
+
+              return (
+                <tr key={row.id} className="hover:bg-gray-50/50 align-top">
+                  {/* GL Code */}
+                  <td className="px-2 py-1.5 min-w-[180px]">
+                    <GLCodeCell
+                      value={row.gl_code}
+                      glName={row.gl_name}
+                      onChange={(code, name) => updateGLCode(row.id, code, name)}
+                      showError={showErr}
+                    />
+                  </td>
+
+                  {/* Branch */}
+                  <td className="px-2 py-1.5">
+                    <div className="relative">
+                      <select
+                        value={row.branch}
+                        onChange={(e) => updateRow(row.id, "branch", e.target.value)}
+                        className={[
+                          "w-full rounded border px-2 py-1 text-xs text-gray-700 focus:outline-none",
+                          missingBranch
+                            ? "border-red-400 bg-red-50/40 focus:border-red-500"
+                            : "border-gray-200 focus:border-blue-400",
+                        ].join(" ")}
+                      >
+                        <option value="">Select…</option>
+                        {branches.map((b) => (
+                          <option key={b.id} value={b.branch}>{b.branch}</option>
+                        ))}
+                      </select>
+                      {missingBranch && (
+                        <p className="mt-0.5 text-[10px] text-red-600">Required</p>
+                      )}
+                    </div>
+                  </td>
+
+                  {/* Description */}
+                  <td className="px-2 py-1.5">
+                    <input
+                      type="text"
+                      value={row.check_description}
+                      onChange={(e) => updateRow(row.id, "check_description", e.target.value)}
+                      placeholder="Description"
+                      className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+                    />
+                  </td>
+
+                  {/* Vendor */}
+                  <td className="px-2 py-1.5">
+                    <input
+                      type="text"
+                      value={row.vendor}
+                      onChange={(e) => updateRow(row.id, "vendor", e.target.value)}
+                      placeholder="Vendor"
+                      className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+                    />
+                  </td>
+
+                  {/* Debit */}
+                  <td className="px-2 py-1.5">
+                    <input
+                      type="number"
+                      value={row.debit}
+                      onChange={(e) => updateRow(row.id, "debit", e.target.value)}
+                      placeholder="0.00"
+                      min="0"
+                      step="0.01"
+                      className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-right text-gray-700 focus:border-blue-400 focus:outline-none"
+                    />
+                  </td>
+
+                  {/* Credit */}
+                  <td className="px-2 py-1.5">
+                    <input
+                      type="number"
+                      value={row.credit}
+                      onChange={(e) => updateRow(row.id, "credit", e.target.value)}
+                      placeholder="0.00"
+                      min="0"
+                      step="0.01"
+                      className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-right text-gray-700 focus:border-blue-400 focus:outline-none"
+                    />
+                  </td>
+
+                  {/* Month */}
+                  <td className="px-2 py-1.5">
+                    <div>
+                      <select
+                        value={row.month}
+                        onChange={(e) => updateRow(row.id, "month", e.target.value)}
+                        className={[
+                          "w-full rounded border px-2 py-1 text-xs text-gray-700 focus:outline-none",
+                          missingMonth
+                            ? "border-red-400 bg-red-50/40 focus:border-red-500"
+                            : "border-gray-200 focus:border-blue-400",
+                        ].join(" ")}
+                      >
+                        <option value="">Month…</option>
+                        {MONTH_NAMES.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                      {missingMonth && (
+                        <p className="mt-0.5 text-[10px] text-red-600">Required</p>
+                      )}
+                    </div>
+                  </td>
+
+                  {/* Year */}
+                  <td className="px-2 py-1.5">
+                    <div>
+                      <input
+                        type="number"
+                        value={row.year}
+                        onChange={(e) => updateRow(row.id, "year", e.target.value)}
+                        placeholder={String(new Date().getFullYear())}
+                        min="2000"
+                        max="2099"
+                        className={[
+                          "w-full rounded border px-2 py-1 text-xs text-gray-700 focus:outline-none",
+                          missingYear
+                            ? "border-red-400 bg-red-50/40 focus:border-red-500"
+                            : "border-gray-200 focus:border-blue-400",
+                        ].join(" ")}
+                      />
+                      {missingYear && (
+                        <p className="mt-0.5 text-[10px] text-red-600">Required</p>
+                      )}
+                    </div>
+                  </td>
+
+                  {/* Delete */}
+                  <td className="px-1 py-1.5">
+                    <button
+                      onClick={() => removeRow(row.id)}
+                      disabled={rows.length === 1}
+                      title="Remove row"
+                      className="rounded p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 disabled:opacity-0 disabled:pointer-events-none"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -372,24 +477,29 @@ export default function ManualEntryPage() {
         </button>
 
         <div className="flex items-center gap-3">
-          {validCount < rows.length && rows.length > 1 && (
+          {triedToSave && validCount < rows.length && (
+            <span className="text-xs text-red-500">
+              {rows.length - validCount} row{rows.length - validCount !== 1 ? "s" : ""} with missing required fields
+            </span>
+          )}
+          {!triedToSave && validCount < rows.length && rows.length > 1 && (
             <span className="text-xs text-gray-400">
               {rows.length - validCount} row{rows.length - validCount !== 1 ? "s" : ""} incomplete — will be skipped
             </span>
           )}
           <button
             onClick={handleSave}
-            disabled={saving || validCount === 0}
+            disabled={saving}
             className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
           >
             <Save size={13} />
-            {saving ? "Saving…" : `Save ${validCount} row${validCount !== 1 ? "s" : ""}`}
+            {saving ? "Saving…" : validCount > 0 ? `Save ${validCount} row${validCount !== 1 ? "s" : ""}` : "Save All"}
           </button>
         </div>
       </div>
 
       <p className="text-xs text-gray-400">
-        <span className="text-red-400">*</span> Required fields. Movement is calculated as Credit − Debit. Rows are processed through the Cost Center Rules engine automatically.
+        <span className="text-red-400">*</span> Required. Movement = Credit − Debit. GL Code must be selected from the dropdown. Rows are processed through Cost Center Rules automatically.
       </p>
     </div>
   );
