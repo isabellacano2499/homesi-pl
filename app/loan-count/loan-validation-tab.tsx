@@ -8,13 +8,14 @@ import type { ValidationResult, ValidationRow, SurplusRow } from "@/app/api/loan
 
 // ─── Sub-tab config ───────────────────────────────────────────────────────────
 
-type ValType = "b2b" | "on_demand" | "processing" | "all_loans";
+type ValType = "b2b" | "on_demand" | "processing" | "all_loans" | "recruitment";
 
 const SUB_TABS: { type: ValType; label: string; glLabel: string }[] = [
-  { type: "b2b",        label: "B2B",         glLabel: "DM Margin (41309)" },
-  { type: "on_demand",  label: "On Demand",    glLabel: "Other HUD Fees (41205)" },
-  { type: "processing", label: "Processing",   glLabel: "Processing Fee (55275)" },
-  { type: "all_loans",  label: "All Loans",    glLabel: "DM Margin (41309)" },
+  { type: "b2b",         label: "B2B",          glLabel: "DM Margin (41309)" },
+  { type: "on_demand",   label: "On Demand",     glLabel: "Other HUD Fees (41205)" },
+  { type: "processing",  label: "Processing",    glLabel: "Processing Fee (55275)" },
+  { type: "recruitment", label: "Recruitment",   glLabel: "DM Margin (41309)" },
+  { type: "all_loans",   label: "All Loans",     glLabel: "DM Margin (41309)" },
 ];
 
 // ─── Formatting ───────────────────────────────────────────────────────────────
@@ -163,6 +164,7 @@ function ValidationTable({ rows, showBps }: { rows: ValidationRow[]; showBps: bo
             <th className="px-3 py-2 font-medium whitespace-nowrap">Loan Number</th>
             <th className="px-3 py-2 font-medium">Borrower Name</th>
             <th className="px-3 py-2 font-medium">Branch</th>
+            <th className="px-3 py-2 font-medium whitespace-nowrap">Month</th>
             {showBps && <th className="px-3 py-2 font-medium text-right whitespace-nowrap">Loan Amount</th>}
             <th className="px-3 py-2 font-medium text-right whitespace-nowrap">
               {showBps ? "DM Margin" : "Accounting Amt."}
@@ -194,6 +196,7 @@ function ValidationTable({ rows, showBps }: { rows: ValidationRow[]; showBps: bo
                   {row.borrower_name ?? "—"}
                 </td>
                 <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{row.branch ?? "—"}</td>
+                <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{row.month ?? "—"}</td>
                 {showBps && (
                   <td className="px-3 py-1.5 text-right font-mono text-gray-700 whitespace-nowrap">
                     {fmtUSD(row.loan_amount)}
@@ -253,7 +256,7 @@ function ValidationSection({
 
   useEffect(() => { load(); }, [load]);
 
-  const showBps = type === "b2b" || type === "all_loans";
+  const showBps = type === "b2b" || type === "all_loans" || type === "recruitment";
 
   // Derived view — summary strip always uses full data.summary regardless of statusFilter
   const visibleRows: ValidationRow[] = !data ? [] :

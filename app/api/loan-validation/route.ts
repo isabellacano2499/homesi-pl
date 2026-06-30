@@ -3,12 +3,13 @@ import { createServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-type ValType = "b2b" | "on_demand" | "processing" | "all_loans";
+type ValType = "b2b" | "on_demand" | "processing" | "all_loans" | "recruitment";
 
 export interface ValidationRow {
   loan_number: string;
   borrower_name: string | null;
   branch: string | null;
+  month: string | null;
   loan_amount: number | null;
   accounting_total: number;
   bps: number | null;
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let loQuery: any = supabase
     .from("loan_officials")
-    .select("loan_number, borrower_name, branch, loan_amount")
+    .select("loan_number, borrower_name, branch, loan_amount, month")
     .order("loan_number");
 
   if (months.length > 0) loQuery = loQuery.in("month", months);
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest) {
   if (type === "b2b") loQuery = loQuery.eq("b2b", true);
   else if (type === "on_demand") loQuery = loQuery.eq("support_on_demand", true);
   else if (type === "processing") loQuery = loQuery.eq("processing", true);
+  else if (type === "recruitment") loQuery = loQuery.eq("recruitment", true);
   // all_loans: no flag filter
 
   const { data: loanOfficials, error: loError } = await loQuery;
@@ -65,7 +67,7 @@ export async function GET(req: NextRequest) {
 
   // ── 2. Determine GL code and description filter ─────────────────────────────
   const glCode =
-    type === "b2b" || type === "all_loans" ? "41309" :
+    type === "b2b" || type === "all_loans" || type === "recruitment" ? "41309" :
     type === "on_demand" ? "41205" : "55275";
   const descFilter =
     type === "on_demand" ? "LOA ON DEMAND FEE ON FILE" :
@@ -99,7 +101,7 @@ export async function GET(req: NextRequest) {
   );
 
   // ── 5. Build validation rows (one per loan in loan_officials) ───────────────
-  const showBps = type === "b2b" || type === "all_loans";
+  const showBps = type === "b2b" || type === "all_loans" || type === "recruitment";
   const rows: ValidationRow[] = (loanOfficials ?? []).map((lo: Record<string, unknown>) => {
     const loanNum = lo.loan_number as string;
     const total = txByLoan.get(loanNum);
@@ -113,6 +115,7 @@ export async function GET(req: NextRequest) {
       loan_number: loanNum,
       borrower_name: lo.borrower_name as string | null,
       branch: lo.branch as string | null,
+      month: lo.month as string | null,
       loan_amount,
       accounting_total,
       bps,

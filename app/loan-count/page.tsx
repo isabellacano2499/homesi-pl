@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
+import { Download, RefreshCw, CheckCircle2, AlertCircle, Save, X } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
 import { downloadCSV } from "@/lib/csv";
 import type { LoanOfficial } from "@/types";
@@ -179,6 +179,8 @@ export default function LoanCountPage() {
   const [selYears, setSelYears] = useState<string[]>([]);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [saveErr, setSaveErr] = useState("");
+  const [pendingChanges, setPendingChanges] = useState<Record<string, Partial<LoanOfficial>>>({});
+  const [isSavingAll, setIsSavingAll] = useState(false);
 
   // Re-extraction state
   const [reextractStatus, setReextractStatus] = useState<"idle" | "running" | "done" | "error">("idle");
@@ -191,6 +193,7 @@ export default function LoanCountPage() {
   const [reextractError, setReextractError] = useState("");
 
   // Column filters
+  const [filterLoanNumber, setFilterLoanNumber] = useState("");
   const [filterBranches,  setFilterBranches]  = useState<string[]>([]);
   const [filterLOs,       setFilterLOs]       = useState<string[]>([]);
   const [filterChannels,  setFilterChannels]  = useState<string[]>([]);
@@ -224,6 +227,13 @@ export default function LoanCountPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    if (Object.keys(pendingChanges).length === 0) return;
+    function handler(e: BeforeUnloadEvent) { e.preventDefault(); e.returnValue = ""; }
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [pendingChanges]);
+
   async function handleUpdate(loan: LoanOfficial, field: keyof LoanOfficial, newValue: boolean | string | null) {
     setSaving((prev) => ({ ...prev, [loan.id]: true }));
     setSaveErr("");
@@ -243,6 +253,39 @@ export default function LoanCountPage() {
     }
   }
 
+  async function handleSaveAll() {
+    setIsSavingAll(true);
+    setSaveErr("");
+    const updates: LoanOfficial[] = [];
+    try {
+      await Promise.all(
+        Object.entries(pendingChanges).map(async ([id, changes]) => {
+          const res = await fetch(`/api/loan-officials/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(changes),
+          });
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error ?? "Failed to save");
+          updates.push(json as LoanOfficial);
+        })
+      );
+      setLoans((prev) => {
+        const byId = new Map(updates.map((u) => [u.id, u]));
+        return prev.map((l) => byId.get(l.id) ?? l);
+      });
+      setPendingChanges({});
+    } catch (err) {
+      setSaveErr(String(err));
+    } finally {
+      setIsSavingAll(false);
+    }
+  }
+
+  function handleDiscard() {
+    setPendingChanges({});
+  }
+
   const yearOptions = useMemo(() => allYears.map(String), [allYears]);
 
   // Column filter option lists derived from loaded data
@@ -251,6 +294,7 @@ export default function LoanCountPage() {
   const channelOptions = useMemo(() => [...new Set(loans.map(l => l.loan_info_channel).filter(Boolean) as string[])].sort(), [loans]);
 
   const hasColumnFilters =
+    filterLoanNumber.trim() !== "" ||
     filterBranches.length > 0 || filterLOs.length > 0 || filterChannels.length > 0 ||
     filterB2B !== "all" || filterAffinity !== "all" || filterProcessing !== "all" ||
     filterOnDemand !== "all" || filterRecruit !== "all";
@@ -258,6 +302,8 @@ export default function LoanCountPage() {
   // Apply column filters to the loaded loans
   const displayedLoans = useMemo(() => {
     let out = loans;
+    const lnSearch = filterLoanNumber.trim().toLowerCase();
+    if (lnSearch) out = out.filter(l => l.loan_number?.toLowerCase().includes(lnSearch));
     if (filterBranches.length)  out = out.filter(l => l.branch           && filterBranches.includes(l.branch));
     if (filterLOs.length)       out = out.filter(l => l.loan_officer      && filterLOs.includes(l.loan_officer));
     if (filterChannels.length)  out = out.filter(l => l.loan_info_channel && filterChannels.includes(l.loan_info_channel));
@@ -269,7 +315,7 @@ export default function LoanCountPage() {
     out = applyBool(out, filterOnDemand,   "support_on_demand");
     out = applyBool(out, filterRecruit,    "recruitment");
     return out;
-  }, [loans, filterBranches, filterLOs, filterChannels, filterB2B, filterAffinity, filterProcessing, filterOnDemand, filterRecruit]);
+  }, [loans, filterLoanNumber, filterBranches, filterLOs, filterChannels, filterB2B, filterAffinity, filterProcessing, filterOnDemand, filterRecruit]);
 
   // Dashboard metrics computed from the full loaded set (before column filters)
   const metrics = useMemo(() => ({
@@ -285,6 +331,7 @@ export default function LoanCountPage() {
   }), [loans]);
 
   function clearColumnFilters() {
+    setFilterLoanNumber("");
     setFilterBranches([]); setFilterLOs([]); setFilterChannels([]);
     setFilterB2B("all"); setFilterAffinity("all"); setFilterProcessing("all");
     setFilterOnDemand("all"); setFilterRecruit("all");
@@ -329,6 +376,25 @@ export default function LoanCountPage() {
               <RefreshCw size={13} className={reextractStatus === "running" ? "animate-spin" : ""} />
               {reextractStatus === "running" ? "Processing…" : "Reprocess Loan Numbers"}
             </button>
+          )}
+          {mainTab === "count" && Object.keys(pendingChanges).length > 0 && (
+            <>
+              <button
+                onClick={handleDiscard}
+                disabled={isSavingAll}
+                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50 shadow-sm disabled:opacity-50"
+              >
+                <X size={13} /> Discard Changes
+              </button>
+              <button
+                onClick={handleSaveAll}
+                disabled={isSavingAll}
+                className="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 shadow-sm disabled:opacity-50"
+              >
+                <Save size={13} className={isSavingAll ? "animate-pulse" : ""} />
+                {isSavingAll ? "Saving…" : `Save Changes (${Object.keys(pendingChanges).length})`}
+              </button>
+            </>
           )}
           {mainTab === "count" && loans.length > 0 && (
             <button
@@ -424,9 +490,16 @@ export default function LoanCountPage() {
         <span className="text-xs text-gray-500 font-medium">Filter:</span>
         <ReportFilter label="Month" options={allMonths}   selected={selMonths} onChange={setSelMonths} />
         <ReportFilter label="Year"  options={yearOptions} selected={selYears}  onChange={setSelYears} />
-        {(selMonths.length > 0 || selYears.length > 0) && (
+        <input
+          type="text"
+          value={filterLoanNumber}
+          onChange={(e) => setFilterLoanNumber(e.target.value)}
+          placeholder="Loan # search…"
+          className="h-7 w-40 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
+        />
+        {(selMonths.length > 0 || selYears.length > 0 || filterLoanNumber) && (
           <button
-            onClick={() => { setSelMonths([]); setSelYears([]); }}
+            onClick={() => { setSelMonths([]); setSelYears([]); setFilterLoanNumber(""); }}
             className="text-xs text-gray-400 hover:text-gray-600 underline"
           >
             Clear
@@ -531,8 +604,10 @@ export default function LoanCountPage() {
               </tr>
             </thead>
             <tbody>
-              {displayedLoans.map((loan) => (
-                <tr key={loan.id} className="border-b border-gray-50 hover:bg-gray-50/60">
+              {displayedLoans.map((loan) => {
+                const pending = pendingChanges[loan.id];
+                return (
+                <tr key={loan.id} className={`border-b border-gray-50 hover:bg-gray-50/60 ${pending ? "bg-amber-50/30" : ""}`}>
                   <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
                     {loan.month ?? "—"}{loan.year ? ` ${loan.year}` : ""}
                   </td>
@@ -549,7 +624,7 @@ export default function LoanCountPage() {
                     <TextCell
                       value={loan.lead_source_lo}
                       onSave={(v) => handleUpdate(loan, "lead_source_lo", v)}
-                      disabled={!!saving[loan.id]}
+                      disabled={!!saving[loan.id] || isSavingAll}
                     />
                   </td>
                   <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
@@ -565,20 +640,26 @@ export default function LoanCountPage() {
                     <TextCell
                       value={loan.bd_owner}
                       onSave={(v) => handleUpdate(loan, "bd_owner", v)}
-                      disabled={!!saving[loan.id]}
+                      disabled={!!saving[loan.id] || isSavingAll}
                     />
                   </td>
                   {BOOL_FIELDS.map((f) => (
                     <td key={f.key} className="px-3 py-2 text-center">
                       <BoolToggle
-                        value={loan[f.key] as boolean}
-                        onChange={(v) => handleUpdate(loan, f.key, v)}
-                        disabled={!!saving[loan.id]}
+                        value={(pending?.[f.key] as boolean | undefined) ?? (loan[f.key] as boolean)}
+                        onChange={(v) => {
+                          setPendingChanges((prev) => ({
+                            ...prev,
+                            [loan.id]: { ...(prev[loan.id] ?? {}), [f.key]: v },
+                          }));
+                        }}
+                        disabled={isSavingAll}
                       />
                     </td>
                   ))}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
