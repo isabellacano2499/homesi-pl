@@ -312,6 +312,7 @@ export interface AssignmentTx {
   cost_center_id: string | null;
   cost_center_name: string | null;
   assignment_origin: string | null;
+  operational_pct: number;
 }
 
 export interface AssignmentGroup {
@@ -466,6 +467,7 @@ export interface ResolvedConflictTx extends ConflictTx {
   cost_center_id: string | null;
   resolved_cc: { id: string; name: string } | null;
   resolved_at: string | null;
+  operational_pct: number;
   // matched_rules may be empty for pre-migration snapshots (old format)
 }
 

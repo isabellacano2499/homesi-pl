@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
     .from("pl_transactions")
     .select(
       "id,gl_code,gl_name,month,year,branch,check_description,check_description_2," +
-      "check_description_3,vendor,debit,credit,movement,cost_center_id,conflict_type"
+      "check_description_3,vendor,debit,credit,movement,cost_center_id,conflict_type,operational_pct"
     )
     .in("id", txIds);
   if (branches.length > 0) txQ = txQ.in("branch", branches);
@@ -122,6 +122,7 @@ export async function GET(req: NextRequest) {
       total_matched_percentage: totalPct,
       matched_rules: matchedRules,
       cost_center_id: tx.cost_center_id as string | null,
+      operational_pct: (tx.operational_pct as number | null) ?? 100,
       resolved_cc: snap.resolved_cc_id
         ? { id: snap.resolved_cc_id as string, name: ccMap.get(snap.resolved_cc_id as string) ?? "(deleted Cost Center)" }
         : null,

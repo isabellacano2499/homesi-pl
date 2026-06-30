@@ -61,6 +61,34 @@ async function apiAssign(transactionIds: string[], costCenterId: string, is_oper
   return null;
 }
 
+async function apiSetOperational(transactionIds: string[], isOperational: boolean): Promise<string | null> {
+  const res = await fetch("/api/cost-center-assignment/set-operational", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transaction_ids: transactionIds, is_operational: isOperational }),
+  });
+  if (!res.ok) { const j = await res.json(); return j.error ?? "Unknown error"; }
+  return null;
+}
+
+function OpBadge({ isOp, busy, onToggle }: { isOp: boolean; busy?: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      disabled={busy}
+      title={isOp ? "Operational — click to set Non-Operational" : "Non-Operational — click to set Operational"}
+      className={[
+        "rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none transition-colors disabled:opacity-50 whitespace-nowrap",
+        isOp
+          ? "bg-green-100 text-green-700 hover:bg-green-200"
+          : "bg-gray-100 text-gray-500 hover:bg-gray-200",
+      ].join(" ")}
+    >
+      {busy ? "…" : isOp ? "Op" : "Non-Op"}
+    </button>
+  );
+}
+
 // ─── Shared AssignTab ─────────────────────────────────────────────────────────
 
 function AssignTab({
@@ -84,6 +112,7 @@ function AssignTab({
   const [msg, setMsg] = useState("");
   const [rowOp, setRowOp] = useState<Record<string, boolean>>({});
   const [bulkOp, setBulkOp] = useState(true);
+  const [opBusy, setOpBusy] = useState<Set<string>>(new Set());
 
   // Allocation buttons state (only active when showAllocationButtons)
   const [allSplits, setAllSplits] = useState<SplitEntry[]>([]);
@@ -152,6 +181,28 @@ function AssignTab({
     });
   }
 
+  async function handleToggleOp(txId: string, isOp: boolean) {
+    setOpBusy((prev) => new Set([...prev, txId]));
+    try {
+      const err = await apiSetOperational([txId], isOp);
+      if (err) { setMsg(`Error: ${err}`); return; }
+      await load();
+    } finally {
+      setOpBusy((prev) => { const s = new Set(prev); s.delete(txId); return s; });
+    }
+  }
+
+  async function handleBulkSetOp(isOp: boolean) {
+    if (!visibleSelected.length) return;
+    setSaving(true); setMsg("");
+    try {
+      const err = await apiSetOperational(visibleSelected, isOp);
+      if (err) { setMsg(`Error: ${err}`); return; }
+      setSelected(new Set());
+      await load();
+    } finally { setSaving(false); }
+  }
+
   async function assign(txIds: string[], ccId: string, isOp = true) {
     if (!ccId || !txIds.length) return;
     setSaving(true); setMsg("");
@@ -209,6 +260,21 @@ function AssignTab({
         </span>
         {visibleSelected.length > 0 && (
           <>
+            <button
+              onClick={() => handleBulkSetOp(true)}
+              disabled={saving}
+              className="rounded-lg bg-green-100 px-3 py-1.5 text-xs font-semibold text-green-700 hover:bg-green-200 disabled:opacity-40"
+            >
+              Set Operational
+            </button>
+            <button
+              onClick={() => handleBulkSetOp(false)}
+              disabled={saving}
+              className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-200 disabled:opacity-40"
+            >
+              Set Non-Op
+            </button>
+            <span className="text-gray-300">|</span>
             <select
               value={bulkCcId}
               onChange={(e) => setBulkCcId(e.target.value)}
@@ -280,6 +346,7 @@ function AssignTab({
                     <th className="px-2 py-1 font-medium">Vendor</th>
                     <th className="px-2 py-1 text-right font-medium">Movement</th>
                     {mode === "override" && <th className="px-2 py-1 font-medium">Current CC</th>}
+                    {mode === "override" && <th className="px-2 py-1 font-medium">Status</th>}
                     <th className="px-2 py-1 font-medium">{actionLabel} to</th>
                     <th className="w-8 px-1 py-1 text-center font-medium">Op</th>
                     <th className="w-14 px-2 py-1" />
@@ -311,6 +378,15 @@ function AssignTab({
                           {tx.cost_center_name
                             ? <span className="rounded bg-blue-100 px-1.5 py-0.5 text-blue-800 text-[10px] font-medium">{tx.cost_center_name}</span>
                             : <span className="text-gray-400">—</span>}
+                        </td>
+                      )}
+                      {mode === "override" && (
+                        <td className="px-2 py-1">
+                          <OpBadge
+                            isOp={(tx.operational_pct ?? 100) > 0}
+                            busy={opBusy.has(tx.id)}
+                            onToggle={() => handleToggleOp(tx.id, (tx.operational_pct ?? 100) === 0)}
+                          />
                         </td>
                       )}
                       <td className="px-2 py-1">
@@ -427,6 +503,7 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
   const [bulkOp, setBulkOp] = useState(true);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMsg, setBulkMsg] = useState("");
+  const [opBusy, setOpBusy] = useState<Set<string>>(new Set());
 
   const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
 
@@ -482,6 +559,28 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
     });
   }
 
+  async function handleToggleOp(txId: string, isOp: boolean) {
+    setOpBusy((prev) => new Set([...prev, txId]));
+    try {
+      const err = await apiSetOperational([txId], isOp);
+      if (err) { setBulkMsg(`Error: ${err}`); return; }
+      await load();
+    } finally {
+      setOpBusy((prev) => { const s = new Set(prev); s.delete(txId); return s; });
+    }
+  }
+
+  async function handleBulkSetOp(isOp: boolean) {
+    if (!visibleSelected.length) return;
+    setBulkBusy(true); setBulkMsg("");
+    try {
+      const err = await apiSetOperational(visibleSelected, isOp);
+      if (err) { setBulkMsg(`Error: ${err}`); return; }
+      setSelected(new Set());
+      await load();
+    } finally { setBulkBusy(false); }
+  }
+
   async function handleBulkUnassign() {
     const ids = visibleSelected;
     if (!ids.length) return;
@@ -533,6 +632,21 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
       {visibleSelected.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
           <span className="text-xs font-medium text-gray-600">{visibleSelected.length} selected</span>
+          <button
+            onClick={() => handleBulkSetOp(true)}
+            disabled={bulkBusy}
+            className="rounded-lg bg-green-100 px-3 py-1.5 text-xs font-semibold text-green-700 hover:bg-green-200 disabled:opacity-40"
+          >
+            Set Operational
+          </button>
+          <button
+            onClick={() => handleBulkSetOp(false)}
+            disabled={bulkBusy}
+            className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-200 disabled:opacity-40"
+          >
+            Set Non-Op
+          </button>
+          <span className="text-gray-300">|</span>
           {!confirmUnassign ? (
             <button
               onClick={() => setConfirmUnassign(true)}
@@ -620,6 +734,7 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
                     <th className="px-3 py-1 font-medium">Vendor</th>
                     <th className="px-3 py-1 text-right font-medium">Movement</th>
                     <th className="px-3 py-1 font-medium">Assigned to</th>
+                    <th className="px-3 py-1 font-medium">Status</th>
                     <th className="px-3 py-1 font-medium">Allocation</th>
                   </tr>
                 </thead>
@@ -653,6 +768,13 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
                               ? <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800 text-[10px] font-medium">{tx.cost_center_name}</span>
                               : <span className="text-gray-400">—</span>;
                           })()}
+                        </td>
+                        <td className="px-3 py-1">
+                          <OpBadge
+                            isOp={(tx.operational_pct ?? 100) > 0}
+                            busy={opBusy.has(tx.id)}
+                            onToggle={() => handleToggleOp(tx.id, (tx.operational_pct ?? 100) === 0)}
+                          />
                         </td>
                         <td className="px-3 py-1">
                           <div className="flex items-center gap-1.5">
@@ -1021,6 +1143,9 @@ function ConflictResolvedTab({
   const [rowOpResolved, setRowOpResolved] = useState<Record<string, boolean>>({});
   const [reassigning, setReassigning] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [opBusy, setOpBusy] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true); setMsg("");
@@ -1071,6 +1196,41 @@ function ConflictResolvedTab({
     } finally { setReassigning(null); }
   }
 
+  async function handleToggleOp(txId: string, isOp: boolean) {
+    setOpBusy((prev) => new Set([...prev, txId]));
+    try {
+      const err = await apiSetOperational([txId], isOp);
+      if (err) { setMsg(`Error: ${err}`); return; }
+      await load();
+    } finally {
+      setOpBusy((prev) => { const s = new Set(prev); s.delete(txId); return s; });
+    }
+  }
+
+  async function handleBulkSetOp(isOp: boolean) {
+    if (!visibleSelected.length) return;
+    setBulkBusy(true); setMsg("");
+    try {
+      const err = await apiSetOperational(visibleSelected, isOp);
+      if (err) { setMsg(`Error: ${err}`); return; }
+      setSelected(new Set());
+      await load();
+    } finally { setBulkBusy(false); }
+  }
+
+  function toggleRow(id: string) {
+    setSelected((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+  function toggleGroupRows(visibleIds: string[]) {
+    const allSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+    setSelected((prev) => {
+      const s = new Set(prev);
+      if (allSel) visibleIds.forEach((id) => s.delete(id));
+      else visibleIds.forEach((id) => s.add(id));
+      return s;
+    });
+  }
+
   const allGroupsCount = groups.reduce((s, g) => s + g.transactions.length, 0);
 
   const visibleGroups = useMemo(() =>
@@ -1080,6 +1240,20 @@ function ConflictResolvedTab({
     ), [groups, glFilter, txSearch]);
 
   const totalCount = visibleGroups.reduce((s, g) => s + g.transactions.length, 0);
+
+  const allVisibleIds = useMemo(() => {
+    const ids = new Set<string>();
+    visibleGroups.forEach((g) => {
+      const txs = txSearch ? g.transactions.filter((tx) => txMatchesSearch(tx, txSearch)) : g.transactions;
+      txs.forEach((tx) => ids.add(tx.id));
+    });
+    return ids;
+  }, [visibleGroups, txSearch]);
+
+  const visibleSelected = useMemo(
+    () => [...selected].filter((id) => allVisibleIds.has(id)),
+    [selected, allVisibleIds]
+  );
 
   if (loading) return (
     <div className="py-10 text-center text-gray-400">
@@ -1094,7 +1268,30 @@ function ConflictResolvedTab({
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-gray-400">{totalCount} resolved conflict{totalCount !== 1 ? "s" : ""}</p>
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+        <span className="text-xs font-medium text-gray-600">
+          {totalCount} resolved conflict{totalCount !== 1 ? "s" : ""}
+          {visibleSelected.length > 0 && ` · ${visibleSelected.length} selected`}
+        </span>
+        {visibleSelected.length > 0 && (
+          <>
+            <button
+              onClick={() => handleBulkSetOp(true)}
+              disabled={bulkBusy}
+              className="rounded-lg bg-green-100 px-3 py-1.5 text-xs font-semibold text-green-700 hover:bg-green-200 disabled:opacity-40"
+            >
+              Set Operational
+            </button>
+            <button
+              onClick={() => handleBulkSetOp(false)}
+              disabled={bulkBusy}
+              className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-200 disabled:opacity-40"
+            >
+              Set Non-Op
+            </button>
+          </>
+        )}
+      </div>
       {msg && <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">{msg}</p>}
 
       {visibleGroups.map((group) => {
@@ -1103,10 +1300,18 @@ function ConflictResolvedTab({
         const visibleTxs = txSearch
           ? group.transactions.filter((tx) => txMatchesSearch(tx, txSearch))
           : group.transactions;
+        const visibleIds = visibleTxs.map((t) => t.id);
+        const groupAllSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
         return (
           <div key={key} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             <div className="flex cursor-pointer items-center gap-3 border-b border-gray-100 bg-gray-50 px-4 py-2.5 hover:bg-gray-100"
               onClick={() => toggleGroup(key)}>
+              <input
+                type="checkbox" checked={groupAllSel}
+                onChange={() => toggleGroupRows(visibleIds)}
+                onClick={(e) => e.stopPropagation()}
+                className="h-3.5 w-3.5 accent-blue-600 rounded"
+              />
               {isCollapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
               <span className="text-xs font-semibold font-mono text-gray-800">{group.gl_code}</span>
               <span className="text-xs text-gray-500">{group.gl_name}</span>
@@ -1118,6 +1323,7 @@ function ConflictResolvedTab({
               <table className="w-full text-xs">
                 <thead className="sticky top-0 z-10 bg-gray-50">
                   <tr className="border-b border-gray-100 bg-gray-50/50 text-left text-gray-400">
+                    <th className="w-7 px-2 py-1" />
                     <th className="px-3 py-1 font-medium">Month</th>
                     <th className="px-3 py-1 font-medium">Branch</th>
                     <th className="px-3 py-1 font-medium">Description</th>
@@ -1127,6 +1333,7 @@ function ConflictResolvedTab({
                     <th className="px-3 py-1 text-right font-medium">Movement</th>
                     <th className="px-3 py-1 font-medium">Was conflicting</th>
                     <th className="px-3 py-1 font-medium">Assigned CC</th>
+                    <th className="px-3 py-1 font-medium">Status</th>
                     <th className="px-3 py-1 font-medium">Resolved at</th>
                     <th className="px-3 py-1" />
                   </tr>
@@ -1138,7 +1345,12 @@ function ConflictResolvedTab({
                     const isDirty = currentCcId !== resolvedCcId && currentCcId !== "";
 
                     return (
-                      <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <tr key={tx.id} className={`border-b border-gray-50 hover:bg-gray-50 ${selected.has(tx.id) ? "bg-blue-50/40" : ""}`}>
+                        <td className="px-2 py-1">
+                          <input type="checkbox" checked={selected.has(tx.id)}
+                            onChange={() => toggleRow(tx.id)}
+                            className="h-3.5 w-3.5 accent-blue-600 rounded" />
+                        </td>
                         <td className="px-3 py-1 text-gray-700 whitespace-nowrap">{tx.month ?? "—"}</td>
                         <td className="px-3 py-1 text-gray-700 whitespace-nowrap">{tx.branch ?? "—"}</td>
                         <td className="max-w-[120px] truncate px-3 py-1 text-gray-600" title={tx.check_description ?? ""}>{tx.check_description ?? "—"}</td>
@@ -1194,6 +1406,13 @@ function ConflictResolvedTab({
                               </>
                             )}
                           </div>
+                        </td>
+                        <td className="px-3 py-1">
+                          <OpBadge
+                            isOp={(tx.operational_pct ?? 100) > 0}
+                            busy={opBusy.has(tx.id)}
+                            onToggle={() => handleToggleOp(tx.id, (tx.operational_pct ?? 100) === 0)}
+                          />
                         </td>
                         <td className="px-3 py-1 text-gray-400 whitespace-nowrap">
                           {tx.resolved_at ? new Date(tx.resolved_at).toLocaleDateString() : "—"}

@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
       check_description_2: tx.check_description_2, check_description_3: tx.check_description_3,
       vendor: tx.vendor, debit: tx.debit, credit: tx.credit, movement: tx.movement,
       cost_center_id: null, cost_center_name: null, assignment_origin: tx.assignment_origin,
+      operational_pct: 100,
     });
   }
 
