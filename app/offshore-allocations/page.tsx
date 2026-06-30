@@ -59,6 +59,27 @@ function normGroupKey(assignType: string | null, groupKey: string): string {
   return assignType === "vendor" ? groupKey.trim().replace(/\s+/g, " ") : groupKey;
 }
 
+function rowMatchesCcFilter(
+  row: OAGroupRow,
+  filterCCs: string[],
+  splitsMap: Map<string, SplitEntry[]>,
+): boolean {
+  if (filterCCs.length === 0) return true;
+  const splits = row.assign_type && row.group_key
+    ? splitsMap.get(`${row.assign_type}:${normGroupKey(row.assign_type, row.group_key)}`)
+    : undefined;
+  const hasSplits = splits && splits.length > 0;
+  for (const cc of filterCCs) {
+    if (cc === "Unassigned") {
+      if (!hasSplits && row.cc_labels.length === 0) return true;
+    } else {
+      if (row.cc_labels.includes(cc)) return true;
+      if (hasSplits && splits!.some((s) => s.cost_centers?.name === cc)) return true;
+    }
+  }
+  return false;
+}
+
 function CCCell({ row, splitsMap }: { row: OAGroupRow; splitsMap: Map<string, SplitEntry[]> }) {
   const splits = row.assign_type && row.group_key
     ? splitsMap.get(`${row.assign_type}:${normGroupKey(row.assign_type, row.group_key)}`)
@@ -102,6 +123,7 @@ interface BlockTableProps {
   filterCategories: string[];
   filterPositions: string[];
   filterVendors: string[];
+  filterCCs: string[];
   search: string;
   splitsMap: Map<string, SplitEntry[]>;
   unassigning: string | null;
@@ -114,12 +136,16 @@ interface BlockTableProps {
 
 function BlockTable({
   block, costCenters, filterYears, filterMonths, filterBranches,
-  filterCategories, filterPositions, filterVendors, search,
+  filterCategories, filterPositions, filterVendors, filterCCs, search,
   splitsMap, unassigning, unassignBusy, onEditAllocation, onUnassign, onUnassignConfirm, onUnassignCancel,
 }: BlockTableProps) {
   const visibleRows = useMemo(
-    () => block.rows.filter((r) => rowVisible(r, filterYears, filterMonths, filterBranches, filterCategories, filterPositions, filterVendors, search)),
-    [block.rows, filterYears, filterMonths, filterBranches, filterCategories, filterPositions, filterVendors, search],
+    () => block.rows.filter(
+      (r) =>
+        rowVisible(r, filterYears, filterMonths, filterBranches, filterCategories, filterPositions, filterVendors, search) &&
+        rowMatchesCcFilter(r, filterCCs, splitsMap),
+    ),
+    [block.rows, filterYears, filterMonths, filterBranches, filterCategories, filterPositions, filterVendors, filterCCs, search, splitsMap],
   );
 
   if (visibleRows.length === 0) return null;
@@ -276,6 +302,7 @@ export default function OffshoreAllocationsPage() {
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
   const [filterPositions, setFilterPositions]   = useState<string[]>([]);
   const [filterVendors, setFilterVendors]       = useState<string[]>([]);
+  const [filterCCs, setFilterCCs]               = useState<string[]>([]);
   const [search, setSearch]                     = useState("");
 
   const [editingRow, setEditingRow]     = useState<OAGroupRow | null>(null);
@@ -413,13 +440,28 @@ export default function OffshoreAllocationsPage() {
 
   const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
 
+  const allCostCenters = useMemo(() => {
+    const s = new Set<string>();
+    blocks.forEach((b) => b.rows.forEach((r) => r.cc_labels.forEach((name) => s.add(name))));
+    for (const entries of splitsMap.values()) {
+      for (const e of entries) {
+        if (e.cost_centers?.name) s.add(e.cost_centers.name);
+      }
+    }
+    return ["Unassigned", ...[...s].sort()];
+  }, [blocks, splitsMap]);
+
   const hasFilters = filterYears.length > 0 || filterMonths.length > 0 || filterBranches.length > 0
-    || filterCategories.length > 0 || filterPositions.length > 0 || filterVendors.length > 0 || search.length > 0;
+    || filterCategories.length > 0 || filterPositions.length > 0 || filterVendors.length > 0
+    || filterCCs.length > 0 || search.length > 0;
 
   function handleExport() {
     const visibleRows = blocks.flatMap((block) =>
       block.rows
-        .filter((r) => rowVisible(r, filterYears, filterMonths, filterBranches, filterCategories, filterPositions, filterVendors, search))
+        .filter((r) =>
+          rowVisible(r, filterYears, filterMonths, filterBranches, filterCategories, filterPositions, filterVendors, search) &&
+          rowMatchesCcFilter(r, filterCCs, splitsMap)
+        )
         .map((r) => ({
           block:               block.block_key,
           check_description_3: r.check_description_3 ?? "",
@@ -512,12 +554,13 @@ export default function OffshoreAllocationsPage() {
       {/* Filters */}
       <div className="flex flex-col gap-2 shrink-0">
         <div className="flex flex-wrap items-center gap-2">
-          <ReportFilter label="Year"     options={allYears}      selected={filterYears}      onChange={setFilterYears} />
-          <ReportFilter label="Month"    options={allMonths}     selected={filterMonths}     onChange={setFilterMonths} />
-          <ReportFilter label="Branch"   options={allBranches}   selected={filterBranches}   onChange={setFilterBranches} />
-          <ReportFilter label="Category" options={allCategories} selected={filterCategories} onChange={setFilterCategories} />
-          <ReportFilter label="Position" options={allPositions}  selected={filterPositions}  onChange={setFilterPositions} />
-          <ReportFilter label="Vendor"   options={allVendors}    selected={filterVendors}    onChange={setFilterVendors} />
+          <ReportFilter label="Year"         options={allYears}        selected={filterYears}      onChange={setFilterYears} />
+          <ReportFilter label="Month"        options={allMonths}       selected={filterMonths}     onChange={setFilterMonths} />
+          <ReportFilter label="Branch"       options={allBranches}     selected={filterBranches}   onChange={setFilterBranches} />
+          <ReportFilter label="Category"     options={allCategories}   selected={filterCategories} onChange={setFilterCategories} />
+          <ReportFilter label="Position"     options={allPositions}    selected={filterPositions}  onChange={setFilterPositions} />
+          <ReportFilter label="Vendor"       options={allVendors}      selected={filterVendors}    onChange={setFilterVendors} />
+          <ReportFilter label="Cost Center"  options={allCostCenters}  selected={filterCCs}        onChange={setFilterCCs} />
           <div className="relative">
             <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             <input
@@ -535,7 +578,7 @@ export default function OffshoreAllocationsPage() {
           </div>
           {hasFilters && (
             <button
-              onClick={() => { setFilterYears([]); setFilterMonths([]); setFilterBranches([]); setFilterCategories([]); setFilterPositions([]); setFilterVendors([]); setSearch(""); }}
+              onClick={() => { setFilterYears([]); setFilterMonths([]); setFilterBranches([]); setFilterCategories([]); setFilterPositions([]); setFilterVendors([]); setFilterCCs([]); setSearch(""); }}
               className="text-xs text-gray-400 hover:text-gray-600 underline"
             >
               Clear all
@@ -615,6 +658,7 @@ export default function OffshoreAllocationsPage() {
               filterCategories={filterCategories}
               filterPositions={filterPositions}
               filterVendors={filterVendors}
+              filterCCs={filterCCs}
               search={search}
               splitsMap={splitsMap}
               unassigning={unassigning}

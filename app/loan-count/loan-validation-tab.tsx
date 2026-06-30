@@ -216,6 +216,8 @@ function ValidationTable({ rows, showBps }: { rows: ValidationRow[]; showBps: bo
   );
 }
 
+const STATUS_OPTS = ["Matched", "Missing in Accounting", "Extra in Accounting"] as const;
+
 // ─── Single validation section (one sub-tab) ──────────────────────────────────
 
 function ValidationSection({
@@ -230,6 +232,7 @@ function ValidationSection({
   const [data, setData] = useState<ValidationResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -252,9 +255,21 @@ function ValidationSection({
 
   const showBps = type === "b2b" || type === "all_loans";
 
+  // Derived view — summary strip always uses full data.summary regardless of statusFilter
+  const visibleRows: ValidationRow[] = !data ? [] :
+    statusFilter.length === 0 ? data.rows :
+    data.rows.filter((r) =>
+      (statusFilter.includes("Matched") && r.status === "match") ||
+      (statusFilter.includes("Missing in Accounting") && r.status === "missing")
+    );
+
+  const showSurplus = !data ? false :
+    data.surplus.length > 0 &&
+    (statusFilter.length === 0 || statusFilter.includes("Extra in Accounting"));
+
   function handleExport() {
     if (!data) return;
-    const csvRows = data.rows.map((r) => ({
+    const csvRows = visibleRows.map((r) => ({
       status: r.status,
       loan_number: r.loan_number,
       borrower_name: r.borrower_name ?? "",
@@ -278,20 +293,28 @@ function ValidationSection({
   return (
     <div className="space-y-4">
       {/* Header row */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-xs text-gray-500">
           GL {glLabel}
-          {type === "on_demand" && <span className="ml-1 text-gray-400">· desc contains "LOA ON DEMAND FEE ON FILE"</span>}
-          {type === "processing" && <span className="ml-1 text-gray-400">· desc contains "PROCESSING FEE ON FILE"</span>}
+          {type === "on_demand" && <span className="ml-1 text-gray-400">· desc contains &ldquo;LOA ON DEMAND FEE ON FILE&rdquo;</span>}
+          {type === "processing" && <span className="ml-1 text-gray-400">· desc contains &ldquo;PROCESSING FEE ON FILE&rdquo;</span>}
         </p>
-        {data && data.rows.length > 0 && (
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 shadow-sm"
-          >
-            <Download size={13} /> Export CSV
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <ReportFilter
+            label="Status"
+            options={[...STATUS_OPTS]}
+            selected={statusFilter}
+            onChange={setStatusFilter}
+          />
+          {data && data.rows.length > 0 && (
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 shadow-sm"
+            >
+              <Download size={13} /> Export CSV
+            </button>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -303,8 +326,8 @@ function ValidationSection({
       ) : data ? (
         <>
           <SummaryStrip summary={data.summary} />
-          <ValidationTable rows={data.rows} showBps={showBps} />
-          <SurplusSection rows={data.surplus} />
+          <ValidationTable rows={visibleRows} showBps={showBps} />
+          {showSurplus && <SurplusSection rows={data.surplus} />}
         </>
       ) : null}
     </div>
