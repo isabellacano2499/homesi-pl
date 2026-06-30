@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download } from "lucide-react";
+import { Download, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
 import { ReportFilter } from "@/components/report-filter";
 import { downloadCSV } from "@/lib/csv";
 import type { LoanOfficial } from "@/types";
@@ -180,6 +180,16 @@ export default function LoanCountPage() {
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [saveErr, setSaveErr] = useState("");
 
+  // Re-extraction state
+  const [reextractStatus, setReextractStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [reextractResult, setReextractResult] = useState<{
+    scanned: number;
+    extracted: number;
+    completion: { completed_from_9: number; completed_from_10: number; completed_direct: number; incomplete_no_match: number; incomplete_ambiguous: number };
+    examples: { id: string; check_description: string | null; loan_number_raw: string | null; loan_number: string | null; loan_number_incomplete: boolean | null }[];
+  } | null>(null);
+  const [reextractError, setReextractError] = useState("");
+
   // Column filters
   const [filterBranches,  setFilterBranches]  = useState<string[]>([]);
   const [filterLOs,       setFilterLOs]       = useState<string[]>([]);
@@ -284,6 +294,22 @@ export default function LoanCountPage() {
     downloadCSV("loan_count.csv", displayedLoans as unknown as Record<string, unknown>[], CSV_COLUMNS);
   }
 
+  async function handleReextract() {
+    setReextractStatus("running");
+    setReextractResult(null);
+    setReextractError("");
+    try {
+      const res = await fetch("/api/transactions/reextract-loan-numbers", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) { setReextractError(json.error ?? "Unknown error"); setReextractStatus("error"); return; }
+      setReextractResult(json);
+      setReextractStatus("done");
+    } catch (err) {
+      setReextractError(String(err));
+      setReextractStatus("error");
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-32px)]">
       {/* Title + main tab bar */}
@@ -292,15 +318,74 @@ export default function LoanCountPage() {
           <h2 className="text-xl font-bold text-gray-900">Loan Count</h2>
           <p className="text-sm text-gray-500">Master loan list — upload via Upload P&L → Loan Count.</p>
         </div>
-        {mainTab === "count" && loans.length > 0 && (
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 shadow-sm"
-          >
-            <Download size={13} /> Export CSV
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {mainTab === "validation" && (
+            <button
+              onClick={handleReextract}
+              disabled={reextractStatus === "running"}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 shadow-sm disabled:opacity-50"
+              title="Re-scan all transactions with no loan number and re-apply extraction"
+            >
+              <RefreshCw size={13} className={reextractStatus === "running" ? "animate-spin" : ""} />
+              {reextractStatus === "running" ? "Processing…" : "Reprocess Loan Numbers"}
+            </button>
+          )}
+          {mainTab === "count" && loans.length > 0 && (
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 shadow-sm"
+            >
+              <Download size={13} /> Export CSV
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Re-extraction result banner */}
+      {mainTab === "validation" && reextractStatus === "done" && reextractResult && (
+        <div className="shrink-0 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-xs text-green-900">
+          <div className="flex items-start gap-2">
+            <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-green-600" />
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold">
+                Re-extraction complete — {reextractResult.extracted} of {reextractResult.scanned} transactions updated
+              </p>
+              <p className="mt-0.5 text-green-700">
+                Completed: {reextractResult.completion.completed_from_9} from 9-digit,{" "}
+                {reextractResult.completion.completed_from_10} from 10-digit,{" "}
+                {reextractResult.completion.completed_direct} direct 12-digit.
+                {(reextractResult.completion.incomplete_no_match + reextractResult.completion.incomplete_ambiguous) > 0 && (
+                  <span className="text-amber-700">
+                    {" "}{reextractResult.completion.incomplete_no_match + reextractResult.completion.incomplete_ambiguous} still incomplete (no match or ambiguous).
+                  </span>
+                )}
+              </p>
+              {reextractResult.examples.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  <p className="font-medium text-green-800">Sample updated rows:</p>
+                  {reextractResult.examples.map((ex) => (
+                    <div key={ex.id} className="flex gap-2 font-mono text-[11px] text-green-800">
+                      <span className="truncate max-w-[280px] shrink-0 text-green-600">{ex.check_description}</span>
+                      <span>→ raw: <strong>{ex.loan_number_raw}</strong></span>
+                      <span>→ loan: <strong>{ex.loan_number ?? (ex.loan_number_incomplete ? "⚠ incomplete" : "—")}</strong></span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button onClick={() => setReextractStatus("idle")} className="text-green-500 hover:text-green-700 text-xs">✕</button>
+          </div>
+        </div>
+      )}
+
+      {/* Re-extraction error banner */}
+      {mainTab === "validation" && reextractStatus === "error" && (
+        <div className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800 flex items-start gap-2">
+          <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-500" />
+          <span className="flex-1">{reextractError}</span>
+          <button onClick={() => setReextractStatus("idle")} className="text-red-400 hover:text-red-600 text-xs">✕</button>
+        </div>
+      )}
 
       {/* Main tab switcher */}
       <div className="flex gap-1 border-b border-gray-200 shrink-0 -mt-2">

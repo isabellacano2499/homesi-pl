@@ -36,7 +36,7 @@ function parseExcelDate(value: unknown): Date | null {
 
 // ─── Loan number extraction ───────────────────────────────────────────────────
 
-function extractLoanNumber(desc: string): string | null {
+export function extractLoanNumber(desc: string): string | null {
   // Prefer 12-digit standalone number, fall back to 10-digit, then 9-digit
   const m12 = desc.match(/(?<!\d)\d{12}(?!\d)/);
   if (m12) return m12[0];
