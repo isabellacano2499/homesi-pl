@@ -402,32 +402,6 @@ export function PivotTableDynamic({
 
   renderPivotNodes(tree, 0, months, exp, toggle, rows, "root");
 
-  // Combined Total — only when op_nonop is outermost level AND non-op data exists
-  if (activeLevels[0] === "op_nonop" && hasNonOp) {
-    rows.push(
-      <tr key="__combined__" style={{ backgroundColor: TOTAL_BG }} className="border-t-2 border-white/20">
-        <td
-          style={{ backgroundColor: TOTAL_BG, left: 0, zIndex: 10, paddingLeft: 12, position: "sticky" }}
-          className="pr-3 py-2 text-[11px] font-extrabold text-white whitespace-nowrap"
-        >
-          Combined Total
-        </td>
-        {months.map(m => (
-          <td key={m} className={`${numCell} font-extrabold text-[12px] ${mvClsLight(grandByMonth[m])}`}
-              style={{ backgroundColor: TOTAL_BG }}>
-            {fmtM(grandByMonth[m])}
-          </td>
-        ))}
-        <td
-          style={{ backgroundColor: TOTAL_BG, borderLeft: "1px solid rgba(255,255,255,0.15)" }}
-          className={`${numCell} font-extrabold text-[12px] ${mvClsLight(grandTotal)}`}
-        >
-          {fmtM(grandTotal)}
-        </td>
-      </tr>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-2">
       {/* Hierarchy selector */}

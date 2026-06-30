@@ -16,7 +16,6 @@
 //   Non-Operational (slate, expandable)
 //     (same sub-hierarchy)
 //     Net Income (Non-Operational)
-//   Combined Total (navy, bottom)
 
 import { useMemo, useState } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
@@ -592,26 +591,6 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
         </tr>
       );
     }
-  }
-
-  // ── Combined Total (bottom) — only shown when both blocks have data ───────
-  if (hasNonOp) {
-    rows.push(
-      <tr key="__combined__" className="border-t-2 border-white/20" style={{ backgroundColor: TOTAL_BG }}>
-        <td style={{ backgroundColor: TOTAL_BG, position: "sticky", left: 0, zIndex: 10 }}
-            className="px-3 py-2 text-[11px] font-extrabold text-white whitespace-nowrap">
-          Combined Total
-        </td>
-        {months.map(m => (
-          <td key={m} className={`${numCell} font-extrabold text-[12px] ${mvClsLight(combinedByMonth[m])}`}>
-            {fmtM(combinedByMonth[m])}
-          </td>
-        ))}
-        <td className={`${numCell} font-extrabold text-[12px] border-l border-white/15 ${mvClsLight(combinedTotal)}`}>
-          {fmtM(combinedTotal)}
-        </td>
-      </tr>
-    );
   }
 
   return (
