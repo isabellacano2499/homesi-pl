@@ -224,13 +224,14 @@ const STATUS_OPTS = ["Matched", "Missing in Accounting", "Extra in Accounting"] 
 // ─── Single validation section (one sub-tab) ──────────────────────────────────
 
 function ValidationSection({
-  type, glLabel, months, years, branches,
+  type, glLabel, months, years, branches, filterLoanNumber,
 }: {
   type: ValType;
   glLabel: string;
   months: string[];
   years: string[];
   branches: string[];
+  filterLoanNumber: string;
 }) {
   const [data, setData] = useState<ValidationResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -258,13 +259,15 @@ function ValidationSection({
 
   const showBps = type === "b2b" || type === "all_loans" || type === "recruitment";
 
-  // Derived view — summary strip always uses full data.summary regardless of statusFilter
+  // Derived view — summary strip always uses full data.summary regardless of active filters
   const visibleRows: ValidationRow[] = !data ? [] :
-    statusFilter.length === 0 ? data.rows :
-    data.rows.filter((r) =>
-      (statusFilter.includes("Matched") && r.status === "match") ||
-      (statusFilter.includes("Missing in Accounting") && r.status === "missing")
-    );
+    data.rows.filter((r) => {
+      const lnSearch = filterLoanNumber.trim().toLowerCase();
+      if (lnSearch && !r.loan_number.toLowerCase().includes(lnSearch)) return false;
+      if (statusFilter.length === 0) return true;
+      return (statusFilter.includes("Matched") && r.status === "match") ||
+             (statusFilter.includes("Missing in Accounting") && r.status === "missing");
+    });
 
   const showSurplus = !data ? false :
     data.surplus.length > 0 &&
@@ -352,9 +355,10 @@ export function LoanValidationTab({
   const [selMonths, setSelMonths] = useState<string[]>([]);
   const [selYears, setSelYears] = useState<string[]>([]);
   const [selBranches, setSelBranches] = useState<string[]>([]);
+  const [filterLoanNumber, setFilterLoanNumber] = useState("");
 
   const yearOptions = allYears.map(String);
-  const hasFilters = selMonths.length > 0 || selYears.length > 0 || selBranches.length > 0;
+  const hasFilters = selMonths.length > 0 || selYears.length > 0 || selBranches.length > 0 || filterLoanNumber !== "";
 
   return (
     <div className="flex flex-col gap-4">
@@ -364,9 +368,16 @@ export function LoanValidationTab({
         <ReportFilter label="Month"  options={allMonths}   selected={selMonths}   onChange={setSelMonths} />
         <ReportFilter label="Year"   options={yearOptions} selected={selYears}    onChange={setSelYears} />
         <ReportFilter label="Branch" options={allBranches} selected={selBranches} onChange={setSelBranches} />
+        <input
+          type="text"
+          value={filterLoanNumber}
+          onChange={(e) => setFilterLoanNumber(e.target.value)}
+          placeholder="Loan # search…"
+          className="h-7 w-40 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
+        />
         {hasFilters && (
           <button
-            onClick={() => { setSelMonths([]); setSelYears([]); setSelBranches([]); }}
+            onClick={() => { setSelMonths([]); setSelYears([]); setSelBranches([]); setFilterLoanNumber(""); }}
             className="text-xs text-gray-400 hover:text-gray-600 underline"
           >
             Clear
@@ -401,6 +412,7 @@ export function LoanValidationTab({
           months={selMonths}
           years={selYears}
           branches={selBranches}
+          filterLoanNumber={filterLoanNumber}
         />
       ))}
     </div>
