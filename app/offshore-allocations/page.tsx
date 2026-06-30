@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, RefreshCw, AlertTriangle, Percent, Search, X, RotateCcw, ShieldCheck, Wand2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Download, RefreshCw, AlertTriangle, Percent, Search, X, RotateCcw, ShieldCheck, Wand2, Trash2, Plus } from "lucide-react";
 import { downloadCSV } from "@/lib/csv";
 import { ReportFilter } from "@/components/report-filter";
 import { SplitEditor } from "@/components/split-editor";
@@ -112,6 +112,276 @@ function CCCell({ row, splitsMap }: { row: OAGroupRow; splitsMap: Map<string, Sp
   );
 }
 
+// ─── Bulk split dialog ────────────────────────────────────────────────────────
+
+interface BulkSplitRow { cost_center_id: string; percentage: string; is_operational: boolean; }
+
+function BulkSplitDialog({
+  selectedRows, costCenters, onClose, onSaved,
+}: {
+  selectedRows: OAGroupRow[];
+  costCenters: CostCenter[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [step, setStep]         = useState<"edit" | "confirm">("edit");
+  const [splitRows, setSplitRows] = useState<BulkSplitRow[]>([
+    { cost_center_id: "", percentage: "100", is_operational: true },
+  ]);
+  const [saving, setSaving] = useState(false);
+  const [errMsg, setErrMsg] = useState("");
+
+  const assignable = selectedRows.filter((r) => r.assign_type !== null);
+  const skipped    = selectedRows.length - assignable.length;
+
+  const parsed = splitRows.map((r) => ({ ...r, pct: parseFloat(r.percentage) || 0 }));
+  const sum    = parsed.reduce((s, r) => s + r.pct, 0);
+  const sumOk  = Math.abs(sum - 100) < 0.01;
+  const ccIds  = splitRows.map((r) => r.cost_center_id).filter(Boolean);
+  const hasDups = ccIds.length !== new Set(ccIds).size;
+  const canProceed = sumOk && splitRows.every((r) => r.cost_center_id) && !hasDups && assignable.length > 0;
+
+  function setField(idx: number, field: keyof BulkSplitRow, value: string | boolean) {
+    setSplitRows((prev) => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r));
+  }
+
+  async function handleConfirm() {
+    setSaving(true); setErrMsg("");
+    try {
+      const targets = assignable.map((r) => ({
+        assign_type:  r.assign_type!,
+        assign_value: r.group_key,
+      }));
+      const res = await fetch("/api/cc-allocation-splits/bulk", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          targets,
+          splits: parsed.map((r) => ({
+            cost_center_id: r.cost_center_id,
+            percentage:     r.pct,
+            is_operational: r.is_operational,
+          })),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setErrMsg(json.error ?? "Failed"); setStep("edit"); return; }
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const sumLabel =
+    sum === 0  ? "Enter percentages — must total 100%"
+    : sumOk    ? "✓ Total: 100%"
+    : sum > 100 ? `Exceeds 100% by ${(sum - 100).toFixed(3)}%`
+    :             `${(100 - sum).toFixed(3)}% remaining`;
+  const sumColor  = sum === 0 ? "text-gray-400" : sumOk ? "text-green-700" : sum > 100 ? "text-red-600" : "text-gray-600";
+  const sumBorder = sumOk ? "border-green-200 bg-green-50" : sum > 100 ? "border-red-200 bg-red-50" : "border-gray-200 bg-gray-50";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-gray-200 bg-white shadow-xl">
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4">
+          <div>
+            <h3 className="text-base font-semibold text-gray-900">Bulk Cost Center Allocation</h3>
+            <p className="mt-0.5 text-sm text-gray-600">
+              {assignable.length} row{assignable.length !== 1 ? "s" : ""} will be updated
+              {skipped > 0 && (
+                <span className="ml-1 text-gray-400">({skipped} skipped — no assignment key)</span>
+              )}
+            </p>
+          </div>
+          <button onClick={onClose} className="shrink-0 text-gray-400 hover:text-gray-600 mt-0.5">
+            <X size={18} />
+          </button>
+        </div>
+
+        {step === "edit" ? (
+          <>
+            <div className="p-5 space-y-3">
+              <div className="grid grid-cols-[1fr_6rem_5rem_1.5rem] gap-2 px-0.5">
+                <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Cost Center</span>
+                <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wide text-right">%</span>
+                <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wide text-center">Type</span>
+                <span />
+              </div>
+
+              <div className="space-y-2">
+                {splitRows.map((row, idx) => (
+                  <div key={idx} className="grid grid-cols-[1fr_6rem_5rem_1.5rem] gap-2 items-center">
+                    <select
+                      value={row.cost_center_id}
+                      onChange={(e) => setField(idx, "cost_center_id", e.target.value)}
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:border-blue-400 focus:outline-none w-full"
+                    >
+                      <option value="">Select…</option>
+                      {costCenters.map((cc) => (
+                        <option key={cc.id} value={cc.id}>{cc.name}</option>
+                      ))}
+                    </select>
+                    <div className="relative">
+                      <input
+                        type="number" min="0.001" max="100" step="0.001"
+                        value={row.percentage}
+                        onChange={(e) => setField(idx, "percentage", e.target.value)}
+                        placeholder="0"
+                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 pr-6 text-sm text-right text-gray-700 focus:border-blue-400 focus:outline-none"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">%</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setField(idx, "is_operational", !row.is_operational)}
+                      className={`text-[10px] rounded px-1.5 py-1 font-medium border transition-colors ${
+                        row.is_operational
+                          ? "border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
+                          : "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+                      }`}
+                    >
+                      {row.is_operational ? "Op" : "Non-Op"}
+                    </button>
+                    <button
+                      onClick={() => setSplitRows((prev) => prev.filter((_, i) => i !== idx))}
+                      disabled={splitRows.length <= 1}
+                      className="text-gray-300 hover:text-red-500 disabled:opacity-0 disabled:pointer-events-none"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                onClick={() => setSplitRows((prev) => [...prev, { cost_center_id: "", percentage: "", is_operational: true }])}
+                className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700"
+              >
+                <Plus size={13} /> Add cost center
+              </button>
+
+              <div className={`flex items-center justify-between rounded-lg border px-3 py-2 ${sumBorder}`}>
+                <span className={`text-xs font-medium ${sumColor}`}>{sumLabel}</span>
+                {splitRows.length === 1 && !sumOk && (
+                  <button
+                    onClick={() => setField(0, "percentage", "100")}
+                    className="text-xs text-blue-500 hover:text-blue-700 underline shrink-0 ml-2"
+                  >
+                    Set 100%
+                  </button>
+                )}
+              </div>
+
+              {hasDups && <p className="text-xs text-red-600">Each cost center can only appear once.</p>}
+              {errMsg && <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{errMsg}</p>}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-gray-100 px-5 py-4">
+              <p className="text-[11px] text-gray-400">Existing allocations will be overwritten</p>
+              <div className="flex gap-2">
+                <button onClick={onClose} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button
+                  onClick={() => setStep("confirm")}
+                  disabled={!canProceed}
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Review &amp; Apply →
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="p-5 space-y-4">
+              <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3">
+                <p className="text-sm font-semibold text-amber-900">
+                  Apply this allocation to {assignable.length} row{assignable.length !== 1 ? "s" : ""}?
+                </p>
+                <p className="mt-0.5 text-xs text-amber-700">
+                  Any existing allocation for these rows will be overwritten.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Allocation to apply</p>
+                {parsed.map((s, i) => {
+                  const cc = costCenters.find((c) => c.id === s.cost_center_id);
+                  return (
+                    <div key={i} className="flex items-center justify-between text-sm">
+                      <span className="text-gray-700">{cc?.name ?? s.cost_center_id}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] rounded px-1.5 py-0.5 font-medium border ${
+                          s.is_operational
+                            ? "border-green-200 bg-green-50 text-green-700"
+                            : "border-red-200 bg-red-50 text-red-600"
+                        }`}>
+                          {s.is_operational ? "Op" : "Non-Op"}
+                        </span>
+                        <span className="font-mono font-medium text-gray-900 w-14 text-right">{s.pct}%</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">
+                  Rows ({assignable.length})
+                </p>
+                <div className="max-h-40 overflow-auto space-y-0.5 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                  {assignable.map((r) => (
+                    <div key={r.group_key} className="flex items-center gap-2 text-xs text-gray-600">
+                      <span className="shrink-0 text-gray-300">·</span>
+                      <span className="truncate">{r.check_description_3 ?? r.group_key}</span>
+                      <span className="shrink-0 text-gray-400">({r.tx_count} tx)</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {errMsg && <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{errMsg}</p>}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-gray-100 px-5 py-4">
+              <button
+                onClick={() => setStep("edit")}
+                disabled={saving}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              >
+                ← Back
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={onClose}
+                  disabled={saving}
+                  className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirm}
+                  disabled={saving}
+                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {saving && (
+                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                  )}
+                  {saving
+                    ? "Applying…"
+                    : `Apply to ${assignable.length} row${assignable.length !== 1 ? "s" : ""}`}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Block table ──────────────────────────────────────────────────────────────
 
 interface BlockTableProps {
@@ -126,6 +396,8 @@ interface BlockTableProps {
   filterCCs: string[];
   search: string;
   splitsMap: Map<string, SplitEntry[]>;
+  selected: Set<string>;
+  onToggle: (keys: string[], checked: boolean) => void;
   unassigning: string | null;
   unassignBusy: boolean;
   onEditAllocation: (row: OAGroupRow) => void;
@@ -137,7 +409,8 @@ interface BlockTableProps {
 function BlockTable({
   block, costCenters, filterYears, filterMonths, filterBranches,
   filterCategories, filterPositions, filterVendors, filterCCs, search,
-  splitsMap, unassigning, unassignBusy, onEditAllocation, onUnassign, onUnassignConfirm, onUnassignCancel,
+  splitsMap, selected, onToggle,
+  unassigning, unassignBusy, onEditAllocation, onUnassign, onUnassignConfirm, onUnassignCancel,
 }: BlockTableProps) {
   const visibleRows = useMemo(
     () => block.rows.filter(
@@ -149,6 +422,9 @@ function BlockTable({
   );
 
   if (visibleRows.length === 0) return null;
+
+  const blockAllSelected  = visibleRows.length > 0 && visibleRows.every((r) => selected.has(r.group_key));
+  const blockSomeSelected = visibleRows.some((r) => selected.has(r.group_key));
 
   const isRoster = block.block_type === "roster";
   const isOther  = block.block_type === "other";
@@ -182,6 +458,18 @@ function BlockTable({
         <table className="w-full text-xs">
           <thead className="bg-gray-50 sticky top-0 z-10">
             <tr className="border-b border-gray-200 text-left text-gray-500">
+              <th className="px-2 py-2 w-8">
+                <input
+                  type="checkbox"
+                  checked={blockAllSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = blockSomeSelected && !blockAllSelected;
+                  }}
+                  onChange={(e) => onToggle(visibleRows.map((r) => r.group_key), e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  title="Select all visible in this block"
+                />
+              </th>
               {isOther && <th className="px-3 py-2 font-medium whitespace-nowrap">Check Desc 2 (raw)</th>}
               <th className="px-3 py-2 font-medium whitespace-nowrap">Description 3</th>
               <th className="px-3 py-2 font-medium whitespace-nowrap">Branch</th>
@@ -196,8 +484,20 @@ function BlockTable({
           <tbody>
             {visibleRows.map((row) => {
               const canAssign = row.assign_type !== null;
+              const isSelected = selected.has(row.group_key);
               return (
-                <tr key={row.group_key} className="border-b border-gray-50 hover:bg-gray-50 align-middle">
+                <tr
+                  key={row.group_key}
+                  className={`border-b border-gray-50 hover:bg-gray-50 align-middle ${isSelected ? "bg-blue-50/40" : ""}`}
+                >
+                  <td className="px-2 py-1.5">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => onToggle([row.group_key], e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                  </td>
                   {isOther && (
                     <td className="px-3 py-2 font-mono text-gray-600 whitespace-nowrap max-w-[180px] truncate"
                         title={row.raw_cd2s?.join(", ")}>
@@ -308,6 +608,8 @@ export default function OffshoreAllocationsPage() {
   const [editingRow, setEditingRow]     = useState<OAGroupRow | null>(null);
   const [unassigning, setUnassigning]   = useState<string | null>(null); // group_key being confirmed
   const [unassignBusy, setUnassignBusy] = useState(false);
+  const [selected, setSelected]         = useState<Set<string>>(new Set());
+  const [bulkEditing, setBulkEditing]   = useState(false);
 
   // Re-evaluate with Rules state
   const [reevalCount,   setReevalCount]   = useState<number | null>(null);
@@ -450,6 +752,65 @@ export default function OffshoreAllocationsPage() {
     }
     return ["Unassigned", ...[...s].sort()];
   }, [blocks, splitsMap]);
+
+  // All group_keys currently visible across all blocks (respects every active filter)
+  const allVisibleKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const block of blocks) {
+      for (const row of block.rows) {
+        if (
+          rowVisible(row, filterYears, filterMonths, filterBranches, filterCategories, filterPositions, filterVendors, search) &&
+          rowMatchesCcFilter(row, filterCCs, splitsMap)
+        ) {
+          keys.add(row.group_key);
+        }
+      }
+    }
+    return keys;
+  }, [blocks, filterYears, filterMonths, filterBranches, filterCategories, filterPositions, filterVendors, filterCCs, search, splitsMap]);
+
+  // OAGroupRow objects for currently selected keys (for bulk dialog)
+  const selectedRows = useMemo(() => {
+    const rowMap = new Map<string, OAGroupRow>();
+    for (const block of blocks) {
+      for (const row of block.rows) rowMap.set(row.group_key, row);
+    }
+    return [...selected].map((k) => rowMap.get(k)).filter((r): r is OAGroupRow => r !== undefined);
+  }, [blocks, selected]);
+
+  const globalAllSelected  = allVisibleKeys.size > 0 && [...allVisibleKeys].every((k) => selected.has(k));
+  const globalSomeSelected = [...allVisibleKeys].some((k) => selected.has(k));
+  const selectAllRef       = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = globalSomeSelected && !globalAllSelected;
+    }
+  }, [globalSomeSelected, globalAllSelected]);
+
+  const handleToggle = useCallback((keys: string[], checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const k of keys) checked ? next.add(k) : next.delete(k);
+      return next;
+    });
+  }, []);
+
+  function handleSelectAll() {
+    if (globalAllSelected) {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        allVisibleKeys.forEach((k) => next.delete(k));
+        return next;
+      });
+    } else {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        allVisibleKeys.forEach((k) => next.add(k));
+        return next;
+      });
+    }
+  }
 
   const hasFilters = filterYears.length > 0 || filterMonths.length > 0 || filterBranches.length > 0
     || filterCategories.length > 0 || filterPositions.length > 0 || filterVendors.length > 0
@@ -635,6 +996,44 @@ export default function OffshoreAllocationsPage() {
         </div>
       )}
 
+      {/* Selection / bulk action bar */}
+      {!loading && blocks.length > 0 && (
+        <div className="flex items-center gap-3 shrink-0 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              ref={selectAllRef}
+              type="checkbox"
+              checked={globalAllSelected}
+              onChange={handleSelectAll}
+              className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-xs text-gray-600 select-none">
+              {allVisibleKeys.size} visible row{allVisibleKeys.size !== 1 ? "s" : ""}
+            </span>
+          </label>
+          {selected.size > 0 && (
+            <>
+              <span className="h-3 w-px bg-gray-300" />
+              <span className="text-xs font-semibold text-blue-700">
+                {selected.size} selected
+              </span>
+              <button
+                onClick={() => setBulkEditing(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-blue-300 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+              >
+                <Percent size={11} /> Assign Cost Centers
+              </button>
+              <button
+                onClick={() => setSelected(new Set())}
+                className="text-xs text-gray-400 hover:text-gray-600 underline"
+              >
+                Clear
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Blocks */}
       <div className="flex-1 min-h-0 overflow-auto space-y-5 pb-4">
         {loading ? (
@@ -661,6 +1060,8 @@ export default function OffshoreAllocationsPage() {
               filterCCs={filterCCs}
               search={search}
               splitsMap={splitsMap}
+              selected={selected}
+              onToggle={handleToggle}
               unassigning={unassigning}
               unassignBusy={unassignBusy}
               onEditAllocation={setEditingRow}
@@ -783,7 +1184,21 @@ export default function OffshoreAllocationsPage() {
           onClose={() => setEditingRow(null)}
           onSaved={() => {
             setEditingRow(null);
-            fetchData(); // fetchData already reloads splits
+            fetchData();
+          }}
+        />
+      )}
+
+      {/* Bulk split dialog */}
+      {bulkEditing && (
+        <BulkSplitDialog
+          selectedRows={selectedRows}
+          costCenters={costCenters}
+          onClose={() => setBulkEditing(false)}
+          onSaved={() => {
+            setBulkEditing(false);
+            setSelected(new Set());
+            fetchData();
           }}
         />
       )}
