@@ -43,7 +43,8 @@ export function fanOutBySplits(
     const normVendor = tx.vendor?.trim().replace(/\s+/g, " ");
     const vendorSplits  = normVendor ? splitsMap.get(`vendor:${normVendor}`) : undefined;
     const cd3Splits     = tx.check_description_3 ? splitsMap.get(`description3:${tx.check_description_3}`) : undefined;
-    const activeSplits  = vendorSplits ?? cd3Splits ?? null;
+    const txIdSplits    = splitsMap.get(`transaction:${tx.id}`);
+    const activeSplits  = vendorSplits ?? cd3Splits ?? txIdSplits ?? null;
 
     if (activeSplits && activeSplits.length > 0) {
       for (const s of activeSplits) {

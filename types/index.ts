@@ -107,7 +107,7 @@ export interface CostCenterEvalResult {
   cost_center_status: "assigned" | "unassigned" | "conflict";
   cost_center_conflicts: string[];  // unified rule IDs that matched (conflicts only)
   conflict_type?: "underassigned" | "overassigned";
-  rule_splits?: Array<{ cost_center_id: string; percentage: number }>;
+  rule_splits?: Array<{ cost_center_id: string; percentage: number; is_operational: boolean }>;
   operational_pct: number;          // 0–100; proportion of movement that is Operational
 }
 

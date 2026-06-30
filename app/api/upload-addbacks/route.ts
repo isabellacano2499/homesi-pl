@@ -3,6 +3,7 @@ import { parseAddbacks } from "@/lib/parse-addbacks";
 import { enrichTransactions } from "@/lib/enrich-transactions";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import { loadAllSplitRules, loadLoanOfficialFields, enrichTxWithLoanOfficials } from "@/lib/reevaluate-rule-assigned";
+import { syncRuleSplitAllocations, type RuleSplitEntry } from "@/lib/sync-rule-split-allocations";
 import { createServerClient } from "@/lib/supabase-server";
 import { INSERT_CHUNK_SIZE } from "@/lib/constants";
 import { checkDuplicateUpload, deleteUpload } from "@/lib/check-duplicate-upload";
@@ -98,12 +99,15 @@ export async function POST(req: NextRequest) {
       .eq("upload_id", id);
 
     if (newTxs && newTxs.length > 0) {
+      const ruleSplitEntries: RuleSplitEntry[] = [];
       const ccUpdates = newTxs.map((tx) => {
+        const txId = (tx as unknown as { id: string }).id;
         const enriched = enrichTxWithLoanOfficials(tx as unknown as Record<string, unknown>, loMap);
         const r = evaluateCostCenterRules(enriched as unknown as PLTransaction, splitRules as SplitRuleWithDetails[]);
         const origin = r.cost_center_status !== "assigned" ? null : r.rule_splits ? "rule_split" : "rule";
+        if (r.rule_splits) ruleSplitEntries.push({ transaction_id: txId, splits: r.rule_splits });
         return {
-          id: (tx as unknown as { id: string }).id,
+          id: txId,
           cost_center_id: r.cost_center_id,
           cost_center_status: r.cost_center_status,
           cost_center_conflicts: r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
@@ -127,6 +131,7 @@ export async function POST(req: NextRequest) {
           )
         );
       }
+      await syncRuleSplitAllocations(supabase, ccUpdates.map((u) => u.id), ruleSplitEntries);
     }
 
     // ── 8. Mark completed ─────────────────────────────────────────────────

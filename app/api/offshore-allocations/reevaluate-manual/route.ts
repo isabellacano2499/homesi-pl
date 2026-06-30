@@ -6,6 +6,7 @@ import {
   loadLoanOfficialFields,
   enrichTxWithLoanOfficials,
 } from "@/lib/reevaluate-rule-assigned";
+import { syncRuleSplitAllocations, type RuleSplitEntry } from "@/lib/sync-rule-split-allocations";
 import type { PLTransaction, SplitRuleWithDetails } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -76,6 +77,7 @@ export async function POST() {
     conflict_type: string | null;
     operational_pct: number;
   }[] = [];
+  const ruleSplitEntries: RuleSplitEntry[] = [];
   const snapshotUpserts: { transaction_id: string; conflicting_cc_ids: string[] }[] = [];
   const snapshotDeletes: string[] = [];
 
@@ -83,6 +85,7 @@ export async function POST() {
     const r = evaluateCostCenterRules(tx as unknown as PLTransaction, splitRules as SplitRuleWithDetails[]);
     const origin = r.cost_center_status !== "assigned" ? null : r.rule_splits ? "rule_split" : "rule";
 
+    if (r.rule_splits) ruleSplitEntries.push({ transaction_id: tx.id, splits: r.rule_splits });
     toUpdate.push({
       id: tx.id,
       cost_center_id:       r.cost_center_id,
@@ -118,6 +121,8 @@ export async function POST() {
       )
     );
   }
+
+  await syncRuleSplitAllocations(supabase, txs.map((t) => t.id), ruleSplitEntries);
 
   // Sync conflict snapshots
   const now = new Date().toISOString();

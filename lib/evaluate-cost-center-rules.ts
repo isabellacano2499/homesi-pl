@@ -127,10 +127,12 @@ export function evaluateCostCenterRules(
 
   // Aggregate allocations across all matched rules, merging same-CC entries
   const ccTotals = new Map<string, number>();
+  const ccIsOp = new Map<string, boolean>();
   let grandTotal = 0;
   for (const rule of matched) {
     for (const alloc of rule.allocations) {
       ccTotals.set(alloc.cost_center_id, (ccTotals.get(alloc.cost_center_id) ?? 0) + alloc.percentage);
+      ccIsOp.set(alloc.cost_center_id, (ccIsOp.get(alloc.cost_center_id) ?? false) || rule.is_operational);
       grandTotal += alloc.percentage;
     }
   }
@@ -156,7 +158,11 @@ export function evaluateCostCenterRules(
       cost_center_conflicts: [],
       operational_pct: operationalPct,
       rule_splits: ccTotals.size > 1
-        ? [...ccTotals.entries()].map(([cost_center_id, percentage]) => ({ cost_center_id, percentage }))
+        ? [...ccTotals.entries()].map(([cost_center_id, percentage]) => ({
+            cost_center_id,
+            percentage,
+            is_operational: ccIsOp.get(cost_center_id) ?? true,
+          }))
         : undefined,
     };
   }

@@ -9,6 +9,7 @@
 
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import { createServerClient } from "@/lib/supabase-server";
+import { syncRuleSplitAllocations, type RuleSplitEntry } from "@/lib/sync-rule-split-allocations";
 import type {
   PLTransaction,
   SplitRule,
@@ -188,6 +189,7 @@ export async function reevaluateRuleAssigned(
     conflict_type: string | null;
     operational_pct: number;
   }[] = [];
+  const ruleSplitEntries: RuleSplitEntry[] = [];
   const snapshotUpserts: { transaction_id: string; conflicting_cc_ids: string[] }[] = [];
   const snapshotDeletes: string[] = [];
 
@@ -196,6 +198,7 @@ export async function reevaluateRuleAssigned(
     const origin =
       r.cost_center_status !== "assigned" ? null : r.rule_splits ? "rule_split" : "rule";
 
+    if (r.rule_splits) ruleSplitEntries.push({ transaction_id: tx.id, splits: r.rule_splits });
     toUpdate.push({
       id: tx.id,
       cost_center_id: r.cost_center_id,
@@ -230,6 +233,8 @@ export async function reevaluateRuleAssigned(
       )
     );
   }
+
+  await syncRuleSplitAllocations(supabase, txs.map((t) => t.id), ruleSplitEntries);
 
   const now = new Date().toISOString();
 

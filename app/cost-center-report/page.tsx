@@ -236,12 +236,13 @@ export default function CostCenterReportPage() {
         )}
       </div>
 
-      {/* Per-month loan metrics — shown after first successful load */}
+      {/* Per-month loan metrics — loan_officials branch names differ from
+          pl_transactions branch names, so branch filter is not applied here. */}
       {loaded && (
         <LoanMetricsByMonthBar
           years={loadedYears}
-          branches={loadedBranches}
-          sources={loadedSources}
+          branches={[]}
+          sources={[]}
           costCenterIds={loadedCCIds.length > 0 ? loadedCCIds : undefined}
         />
       )}

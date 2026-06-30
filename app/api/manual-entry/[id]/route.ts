@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import { loadAllSplitRules, loadLoanOfficialFields, enrichTxWithLoanOfficials } from "@/lib/reevaluate-rule-assigned";
+import { syncRuleSplitAllocations } from "@/lib/sync-rule-split-allocations";
 import type { PLTransaction, SplitRuleWithDetails } from "@/types";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -83,6 +84,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       .eq("source", "manual_entry");
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    await syncRuleSplitAllocations(
+      supabase,
+      [id],
+      r.rule_splits ? [{ transaction_id: id, splits: r.rule_splits }] : []
+    );
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

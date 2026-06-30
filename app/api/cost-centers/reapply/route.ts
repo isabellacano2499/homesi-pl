@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
 import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import { loadAllSplitRules, loadLoanOfficialFields, enrichTxWithLoanOfficials } from "@/lib/reevaluate-rule-assigned";
+import { syncRuleSplitAllocations, type RuleSplitEntry } from "@/lib/sync-rule-split-allocations";
 import type { PLTransaction, SplitRuleWithDetails } from "@/types";
 
 type TxRow = {
@@ -104,6 +105,8 @@ export async function POST(req: NextRequest) {
       conflict_type: string | null;
       operational_pct: number;
     }[] = [];
+    const evaluatedIds: string[] = [];
+    const ruleSplitEntries: RuleSplitEntry[] = [];
 
     for (const tx of rows) {
       // Manual assignments are permanent — never re-evaluate
@@ -135,6 +138,8 @@ export async function POST(req: NextRequest) {
 
       const origin =
         r.cost_center_status !== "assigned" ? null : r.rule_splits ? "rule_split" : "rule";
+      evaluatedIds.push(tx.id);
+      if (r.rule_splits) ruleSplitEntries.push({ transaction_id: tx.id, splits: r.rule_splits });
       toUpdate.push({
         id: tx.id,
         cost_center_id: r.cost_center_id,
@@ -178,6 +183,8 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+
+    await syncRuleSplitAllocations(supabase, evaluatedIds, ruleSplitEntries);
 
     totalProcessed += rows.length;
     if (rows.length < FETCH_BATCH) break;

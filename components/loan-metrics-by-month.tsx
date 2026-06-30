@@ -28,6 +28,7 @@ interface Props {
 export function LoanMetricsByMonthBar({ years, branches, sources, costCenterIds }: Props) {
   const [byMonth, setByMonth] = useState<Record<string, MonthMetrics> | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchErr, setFetchErr] = useState("");
 
   const key = [years, branches, sources, costCenterIds ?? []].map((a) => a.join(",")).join("|");
 
@@ -39,16 +40,28 @@ export function LoanMetricsByMonthBar({ years, branches, sources, costCenterIds 
     (costCenterIds ?? []).forEach((id) => p.append("cost_center_id", id));
 
     setLoading(true);
+    setFetchErr("");
     fetch(`/api/loan-metrics?${p}`)
-      .then((r) => r.json())
-      .then((d: { by_month: Record<string, MonthMetrics> }) => setByMonth(d.by_month ?? {}))
-      .catch(console.error)
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) { setFetchErr(d?.error ?? "Error loading loan metrics"); return; }
+        setByMonth((d as { by_month: Record<string, MonthMetrics> }).by_month ?? {});
+      })
+      .catch((e) => setFetchErr(String(e)))
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
   if (loading) {
     return <div className="h-[80px] rounded-xl border border-gray-100 bg-gray-50 animate-pulse" />;
+  }
+
+  if (fetchErr) {
+    return (
+      <p className="rounded-xl border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">
+        Loan metrics: {fetchErr}
+      </p>
+    );
   }
 
   const months = Object.keys(byMonth ?? {})

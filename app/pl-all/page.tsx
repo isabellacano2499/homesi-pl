@@ -252,12 +252,15 @@ export default function PLAllPage() {
         )}
       </div>
 
-      {/* Per-month loan metrics — shown after first successful load */}
+      {/* Per-month loan metrics — shown after first successful load.
+          Loan officials live in their own table with independent branch naming,
+          so we don't pass loadedBranches (pl_transactions branch names). Year is
+          sufficient context and avoids a silent empty-panel when branch formats differ. */}
       {loaded && (
         <LoanMetricsByMonthBar
           years={loadedYears}
-          branches={loadedBranches}
-          sources={loadedSources}
+          branches={[]}
+          sources={[]}
         />
       )}
 
