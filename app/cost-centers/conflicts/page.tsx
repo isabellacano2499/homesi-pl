@@ -526,6 +526,7 @@ function ManualTab({ branches, costCenters, glFilter, txSearch, ccFilter }: { br
   const [bulkOp, setBulkOp] = useState(true);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMsg, setBulkMsg] = useState("");
+  const [unassignErr, setUnassignErr] = useState("");
   const [opBusy, setOpBusy] = useState<Set<string>>(new Set());
 
   const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
@@ -624,8 +625,29 @@ function ManualTab({ branches, costCenters, glFilter, txSearch, ccFilter }: { br
         body: JSON.stringify({ transaction_ids: ids }),
       });
       if (!res.ok) { const j = await res.json(); setBulkMsg(`Error: ${j.error ?? "Unknown error"}`); return; }
-      setSelected(new Set()); setConfirmUnassign(false); load();
+      setSelected(new Set()); setConfirmUnassign(false); await load();
     } finally { setBulkBusy(false); }
+  }
+
+  async function handleUnassignSingle(txId: string) {
+    setUnassignBusy(true);
+    setUnassignErr("");
+    try {
+      const res = await fetch("/api/cost-center-assignment/unassign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_ids: [txId] }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setUnassignErr(`Error: ${(j as { error?: string }).error ?? "Unknown error"}`);
+        return;
+      }
+      setUnassigning(null);
+      await load();
+    } finally {
+      setUnassignBusy(false);
+    }
   }
 
   async function handleBulkReassign() {
@@ -725,6 +747,7 @@ function ManualTab({ branches, costCenters, glFilter, txSearch, ccFilter }: { br
       )}
 
       {bulkMsg && <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">{bulkMsg}</p>}
+      {unassignErr && <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">{unassignErr}</p>}
 
       {visibleGroups.map((group) => {
         const key = group.gl_code;
@@ -821,17 +844,7 @@ function ManualTab({ branches, costCenters, glFilter, txSearch, ccFilter }: { br
                               <span className="flex items-center gap-1 text-[10px]">
                                 <span className="text-red-600 font-medium">Remove?</span>
                                 <button
-                                  onClick={async () => {
-                                    setUnassignBusy(true);
-                                    await fetch("/api/cost-center-assignment/unassign", {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({ transaction_ids: [tx.id] }),
-                                    });
-                                    setUnassignBusy(false);
-                                    setUnassigning(null);
-                                    load();
-                                  }}
+                                  onClick={() => handleUnassignSingle(tx.id)}
                                   disabled={unassignBusy}
                                   className="rounded px-1.5 py-0.5 bg-red-600 text-white text-[10px] hover:bg-red-700 disabled:opacity-40"
                                 >Yes</button>
