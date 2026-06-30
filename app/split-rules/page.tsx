@@ -126,8 +126,8 @@ function ConditionsEditor({
               title="Insert ( before this condition"
               className={`shrink-0 w-5 text-center text-xs py-0.5 rounded font-mono transition-colors ${
                 cond.opens_group
-                  ? "text-amber-600 bg-amber-100 border border-amber-300"
-                  : "text-gray-300 hover:text-amber-500 hover:bg-amber-50 border border-transparent"
+                  ? "text-blue-600 bg-blue-100 border border-blue-300"
+                  : "text-gray-300 hover:text-blue-500 hover:bg-blue-50 border border-transparent"
               }`}
             >
               (
@@ -191,8 +191,8 @@ function ConditionsEditor({
               title="Insert ) after this condition"
               className={`shrink-0 w-5 text-center text-xs py-0.5 rounded font-mono transition-colors ${
                 cond.closes_group
-                  ? "text-amber-600 bg-amber-100 border border-amber-300"
-                  : "text-gray-300 hover:text-amber-500 hover:bg-amber-50 border border-transparent"
+                  ? "text-blue-600 bg-blue-100 border border-blue-300"
+                  : "text-gray-300 hover:text-blue-500 hover:bg-blue-50 border border-transparent"
               }`}
             >
               )
@@ -300,7 +300,7 @@ function AllocationsEditor({
               ? "text-green-600"
               : total > 100
               ? "text-red-600"
-              : "text-amber-600"
+              : "text-gray-500"
           }`}
         >
           {total.toFixed(2)}% / 100%
@@ -617,11 +617,11 @@ function RuleRow({
                     <span className="font-mono text-gray-400 w-8 shrink-0">
                       {i === 0 ? "IF" : c.logic_connector ?? "AND"}
                     </span>
-                    {c.opens_group && <span className="font-mono text-amber-600 shrink-0">(</span>}
+                    {c.opens_group && <span className="font-mono text-blue-600 shrink-0">(</span>}
                     <span className="text-blue-600">{c.field}</span>
                     <span className="text-gray-400">{c.operator}</span>
                     <span className="text-gray-900">"{c.value}"</span>
-                    {c.closes_group && <span className="font-mono text-amber-600 shrink-0">)</span>}
+                    {c.closes_group && <span className="font-mono text-blue-600 shrink-0">)</span>}
                   </div>
                 ))}
               </div>

@@ -170,7 +170,7 @@ function LoanNumStatusPicker({ value, onChange }: { value: LoanNumStatus; onChan
     { v: "all",        label: "All",   activeClass: "bg-blue-600 text-white" },
     { v: "has_loan",   label: "Loan ✓", activeClass: "bg-green-600 text-white" },
     { v: "no_loan",    label: "No Loan", activeClass: "bg-gray-500 text-white" },
-    { v: "incomplete", label: "⚠ Incomplete", activeClass: "bg-amber-500 text-white" },
+    { v: "incomplete", label: "⚠ Incomplete", activeClass: "bg-gray-600 text-white" },
   ];
   return (
     <span className="ml-1 inline-flex items-center rounded border border-gray-200 bg-white overflow-hidden shrink-0">
@@ -291,7 +291,7 @@ function LoanResolvePicker({
       <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2">
         <span className="text-[11px] font-semibold text-gray-700">
           Resolve loan #{" "}
-          <span className="font-mono text-amber-600">{tx.loan_number}</span>
+          <span className="font-mono text-gray-600">{tx.loan_number}</span>
         </span>
         <button onClick={onClose} className="text-gray-300 hover:text-gray-600"><X size={13} /></button>
       </div>
@@ -768,7 +768,7 @@ export default function TransactionsPage() {
                     style={{ height: ROW_H }}
                     className={[
                       "border-b border-gray-50 hover:bg-blue-50/20",
-                      !tx.category_1 ? "bg-amber-50/30" : "",
+                      !tx.category_1 ? "bg-gray-50/50" : "",
                     ].join(" ")}
                   >
                     <td className="px-2 py-0 overflow-hidden"><CCCell tx={tx} splitsMap={splitsMap} /></td>
@@ -787,11 +787,11 @@ export default function TransactionsPage() {
                       {tx.loan_number ? (
                         tx.loan_number_incomplete ? (
                           <span className="flex items-center gap-1">
-                            <AlertTriangle size={10} className="shrink-0 text-amber-500" />
-                            <span className="text-amber-600 text-[10px]">{tx.loan_number}</span>
+                            <AlertTriangle size={10} className="shrink-0 text-gray-400" />
+                            <span className="text-gray-600 text-[10px]">{tx.loan_number}</span>
                             <button
                               onClick={(e) => openResolvePicker(e, tx)}
-                              className="ml-0.5 rounded px-1 py-px text-[9px] font-semibold bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-200 whitespace-nowrap"
+                              className="ml-0.5 rounded px-1 py-px text-[9px] font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200 whitespace-nowrap"
                               title="Assign correct loan number"
                             >
                               Resolve
@@ -807,7 +807,7 @@ export default function TransactionsPage() {
                     <LoanTagsCell tx={tx} />
                     <td className="px-2 py-0 overflow-hidden whitespace-nowrap">
                       {tx.source === "addback"
-                        ? <span className="rounded bg-purple-100 px-1 py-0.5 text-[10px] font-medium text-purple-700">Addback</span>
+                        ? <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-700">Addback</span>
                         : tx.source === "offshore_allocations"
                           ? <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-700">Offshore</span>
                           : <span className="text-gray-400 text-[10px]">Original</span>}

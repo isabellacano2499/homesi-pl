@@ -12,7 +12,14 @@ type SplitRow = {
   is_operational: boolean;
 };
 
-/** Builds a map of assign_value → splits[] from cc_allocation_splits for vendor type. */
+function norm(v: string) {
+  return v.trim().replace(/\s+/g, " ");
+}
+
+/** Loads vendor splits and returns:
+ *  - byNormKey: normalized(assign_value) → SplitRow[]
+ *  - allVendorVariants: both raw and normalized assign_values for DB IN query
+ */
 async function loadVendorSplits(supabase: ReturnType<typeof createServerClient>) {
   const { data, error } = await supabase
     .from("cc_allocation_splits")
@@ -22,49 +29,79 @@ async function loadVendorSplits(supabase: ReturnType<typeof createServerClient>)
   if (error) throw new Error(error.message);
   const splits = (data ?? []) as SplitRow[];
 
-  const byKey = new Map<string, SplitRow[]>();
+  const byNormKey = new Map<string, SplitRow[]>();
+  const allVendorVariants = new Set<string>();
+
   for (const s of splits) {
-    if (!byKey.has(s.assign_value)) byKey.set(s.assign_value, []);
-    byKey.get(s.assign_value)!.push(s);
+    const normKey = norm(s.assign_value);
+    if (!byNormKey.has(normKey)) byNormKey.set(normKey, []);
+    byNormKey.get(normKey)!.push(s);
+    allVendorVariants.add(s.assign_value);
+    allVendorVariants.add(normKey);
   }
-  return byKey;
+
+  return { byNormKey, allVendorVariants: [...allVendorVariants] };
+}
+
+/** Fetch unassigned txs whose vendor matches any of the given values (IN query, chunked). */
+async function fetchUnassignedByVendors(
+  supabase: ReturnType<typeof createServerClient>,
+  vendorVariants: string[]
+) {
+  const rows: { id: string; vendor: string | null }[] = [];
+  for (let i = 0; i < vendorVariants.length; i += CHUNK) {
+    const chunk = vendorVariants.slice(i, i + CHUNK);
+    let offset = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from("pl_transactions")
+        .select("id,vendor")
+        .in("vendor", chunk)
+        .or("cost_center_status.eq.unassigned,cost_center_status.is.null")
+        .range(offset, offset + 999);
+      if (error) throw new Error(error.message);
+      if (!data || data.length === 0) break;
+      rows.push(...(data as { id: string; vendor: string | null }[]));
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+  }
+  // Deduplicate by id (raw + normalized might yield duplicates)
+  const seen = new Set<string>();
+  return rows.filter((r) => { if (seen.has(r.id)) return false; seen.add(r.id); return true; });
 }
 
 // GET — count of unassigned transactions that have a matching vendor assignment
 export async function GET() {
   const supabase = createServerClient();
 
-  let byKey: Map<string, SplitRow[]>;
-  try { byKey = await loadVendorSplits(supabase); } catch (e) {
+  let byNormKey: Map<string, SplitRow[]>;
+  let allVendorVariants: string[];
+  try {
+    ({ byNormKey, allVendorVariants } = await loadVendorSplits(supabase));
+  } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 
-  if (byKey.size === 0) return NextResponse.json({ count: 0, breakdown: [] });
+  if (byNormKey.size === 0) return NextResponse.json({ count: 0, breakdown: [] });
 
-  const assignValues = [...byKey.keys()];
-
-  const txRows: { vendor: string | null }[] = [];
-  for (let i = 0; i < assignValues.length; i += CHUNK) {
-    const chunk = assignValues.slice(i, i + CHUNK);
-    const { data, error } = await supabase
-      .from("pl_transactions")
-      .select("vendor")
-      .in("vendor", chunk)
-      .or("cost_center_status.eq.unassigned,cost_center_status.is.null");
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    txRows.push(...((data ?? []) as { vendor: string | null }[]));
+  let txRows: { id: string; vendor: string | null }[];
+  try { txRows = await fetchUnassignedByVendors(supabase, allVendorVariants); } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 
-  const breakdown: { key: string; count: number }[] = [];
   const countMap = new Map<string, number>();
-  for (const row of txRows) {
-    const k = row.vendor ?? "";
-    countMap.set(k, (countMap.get(k) ?? 0) + 1);
+  for (const tx of txRows) {
+    const normVendor = norm(tx.vendor ?? "");
+    if (byNormKey.has(normVendor)) {
+      countMap.set(normVendor, (countMap.get(normVendor) ?? 0) + 1);
+    }
   }
-  for (const [key, count] of countMap) {
-    breakdown.push({ key, count });
-  }
+
+  const breakdown = [...countMap.entries()].map(([key, count]) => ({
+    key: byNormKey.get(key)?.[0]?.assign_value ?? key,
+    count,
+  }));
 
   return NextResponse.json({ count: txRows.length, breakdown });
 }
@@ -73,38 +110,38 @@ export async function GET() {
 export async function POST() {
   const supabase = createServerClient();
 
-  let byKey: Map<string, SplitRow[]>;
-  try { byKey = await loadVendorSplits(supabase); } catch (e) {
+  let byNormKey: Map<string, SplitRow[]>;
+  let allVendorVariants: string[];
+  try {
+    ({ byNormKey, allVendorVariants } = await loadVendorSplits(supabase));
+  } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 
-  if (byKey.size === 0) return NextResponse.json({ assigned: 0, breakdown: [] });
+  if (byNormKey.size === 0) return NextResponse.json({ assigned: 0, breakdown: [] });
+
+  let txRows: { id: string; vendor: string | null }[];
+  try { txRows = await fetchUnassignedByVendors(supabase, allVendorVariants); } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+
+  // Group tx IDs by normalized vendor key
+  const matchedGroups = new Map<string, string[]>(); // normKey → [txId]
+  for (const tx of txRows) {
+    const normVendor = norm(tx.vendor ?? "");
+    if (byNormKey.has(normVendor)) {
+      if (!matchedGroups.has(normVendor)) matchedGroups.set(normVendor, []);
+      matchedGroups.get(normVendor)!.push(tx.id);
+    }
+  }
 
   const breakdown: { key: string; count: number }[] = [];
   let totalAssigned = 0;
 
-  for (const [vendor, keySplits] of byKey) {
+  for (const [normKey, txIds] of matchedGroups) {
+    const keySplits = byNormKey.get(normKey)!;
     const primaryCcId = [...keySplits].sort((a, b) => b.percentage - a.percentage)[0].cost_center_id;
     const operationalPct = keySplits.reduce((sum, s) => sum + (s.is_operational ? s.percentage : 0), 0);
-
-    const txIds: string[] = [];
-    let offset = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from("pl_transactions")
-        .select("id")
-        .eq("vendor", vendor)
-        .or("cost_center_status.eq.unassigned,cost_center_status.is.null")
-        .range(offset, offset + 999);
-
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-      if (!data || data.length === 0) break;
-      txIds.push(...data.map((r: { id: string }) => r.id));
-      if (data.length < 1000) break;
-      offset += 1000;
-    }
-
-    if (txIds.length === 0) continue;
 
     for (let i = 0; i < txIds.length; i += CHUNK) {
       const { error: updErr } = await supabase
@@ -117,11 +154,10 @@ export async function POST() {
           operational_pct:       operationalPct,
         })
         .in("id", txIds.slice(i, i + CHUNK));
-
       if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
     }
 
-    breakdown.push({ key: vendor, count: txIds.length });
+    breakdown.push({ key: keySplits[0].assign_value, count: txIds.length });
     totalAssigned += txIds.length;
   }
 

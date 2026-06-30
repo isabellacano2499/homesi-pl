@@ -12,7 +12,7 @@ type UploadStatus = "idle" | "uploading" | "success" | "error";
 function Stat({ value, label, warn = false }: { value: number; label: string; warn?: boolean }) {
   return (
     <div className="rounded-lg border border-green-100 bg-white p-3">
-      <p className={`text-2xl font-bold ${warn ? "text-amber-600" : "text-gray-900"}`}>
+      <p className={`text-2xl font-bold ${warn ? "text-gray-500" : "text-gray-900"}`}>
         {value.toLocaleString()}
       </p>
       <p className="text-xs text-gray-500">{label}</p>
@@ -38,23 +38,23 @@ function DuplicateDialog({
       <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2">
-            <AlertCircle size={18} className="shrink-0 text-amber-500" />
+            <AlertCircle size={18} className="shrink-0 text-gray-500" />
             <h3 className="text-base font-semibold text-gray-900">Possible duplicate upload</h3>
           </div>
           <button onClick={onCancel} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
         </div>
 
-        <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 p-4 text-sm space-y-1.5">
-          <p className="font-medium text-amber-800">Existing upload found:</p>
-          <p className="text-amber-700">
+        <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm space-y-1.5">
+          <p className="font-medium text-gray-800">Existing upload found:</p>
+          <p className="text-gray-700">
             <span className="font-medium">{info.file_name}</span>
           </p>
-          <p className="text-amber-600 text-xs">
+          <p className="text-gray-600 text-xs">
             Uploaded: {new Date(info.uploaded_at).toLocaleString()} ·{" "}
             {info.row_count != null ? `${info.row_count.toLocaleString()} rows` : "unknown rows"}
           </p>
           {info.overlap.length > 0 && (
-            <p className="text-amber-600 text-xs">
+            <p className="text-gray-600 text-xs">
               Overlapping periods: {info.overlap.join(", ")}
             </p>
           )}
@@ -254,12 +254,12 @@ function UploadSection({ endpoint, title, description, infoItems, onUploadComple
             <Stat value={result.unknownBranchCount} label="Unknown branch" warn={result.unknownBranchCount > 0} />
           </div>
           {result.parseWarnings > 0 && (
-            <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            <p className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
               {result.parseWarnings} row(s) had parse warnings and were skipped.
             </p>
           )}
           {(result.uncategorizedCount > 0 || result.unknownBranchCount > 0) && (
-            <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            <p className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
               Some rows are uncategorized. Review GL Mapping and Branches in Settings.
             </p>
           )}
@@ -354,18 +354,18 @@ function LoanCountUploadSection({ onUploadComplete }: { onUploadComplete?: () =>
           <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-2">
-                <AlertCircle size={18} className="shrink-0 text-amber-500" />
+                <AlertCircle size={18} className="shrink-0 text-gray-500" />
                 <h3 className="text-base font-semibold text-gray-900">Existing data found</h3>
               </div>
               <button onClick={() => { setPendingDupe(null); setStatus("idle"); }} className="text-gray-400 hover:text-gray-600">
                 <X size={16} />
               </button>
             </div>
-            <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 p-4 text-sm space-y-1.5">
-              <p className="font-medium text-amber-800">
+            <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm space-y-1.5">
+              <p className="font-medium text-gray-800">
                 {pendingDupe.month} {pendingDupe.year} already has {pendingDupe.existing_count.toLocaleString()} loan records.
               </p>
-              <p className="text-amber-600 text-xs">
+              <p className="text-gray-600 text-xs">
                 Replacing will delete all existing records for that period and load the new file.
               </p>
             </div>
@@ -467,7 +467,7 @@ function LoanCountUploadSection({ onUploadComplete }: { onUploadComplete?: () =>
             </p>
           )}
           {result.warnings > 0 && (
-            <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            <p className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
               {result.warnings} row(s) skipped (invalid loan number format).
             </p>
           )}
@@ -483,10 +483,10 @@ function LoanCountUploadSection({ onUploadComplete }: { onUploadComplete?: () =>
                   <li>✓ {result.completion.completed_from_9} 9-digit numbers completed to 12 digits</li>
                 )}
                 {result.completion.incomplete_no_match > 0 && (
-                  <li className="text-amber-700">⚠ {result.completion.incomplete_no_match} partial loan numbers with no match in Loan Count (loan_number_incomplete)</li>
+                  <li className="text-gray-600">⚠{result.completion.incomplete_no_match} partial loan numbers with no match in Loan Count (loan_number_incomplete)</li>
                 )}
                 {result.completion.incomplete_ambiguous > 0 && (
-                  <li className="text-amber-700">⚠ {result.completion.incomplete_ambiguous} partial loan numbers with multiple possible matches — loan_number_incomplete (más frecuente en 9 dígitos)</li>
+                  <li className="text-gray-600">⚠{result.completion.incomplete_ambiguous} partial loan numbers with multiple possible matches — loan_number_incomplete (más frecuente en 9 dígitos)</li>
                 )}
               </ul>
             </div>
@@ -662,7 +662,7 @@ const SOURCE_LABEL: Record<string, string> = {
 
 const SOURCE_COLOR: Record<string, string> = {
   original: "bg-gray-100 text-gray-700",
-  addback: "bg-purple-100 text-purple-700",
+  addback: "bg-blue-100 text-blue-700",
   offshore_allocations: "bg-blue-100 text-blue-700",
 };
 
@@ -755,7 +755,7 @@ function UploadHistory({ refreshKey }: { refreshKey: number }) {
                     ) : u.status === "error" ? (
                       <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700" title={u.error_message ?? ""}>Error</span>
                     ) : (
-                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">{u.status}</span>
+                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">{u.status}</span>
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-right">

@@ -195,7 +195,7 @@ export default function CostCenterDetailPage() {
 
                   {/* Conditions */}
                   {rule.conditions.length === 0 ? (
-                    <p className="text-xs text-amber-600">No conditions — this rule matches nothing.</p>
+                    <p className="text-xs text-gray-500">No conditions — this rule matches nothing.</p>
                   ) : (
                     <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-gray-600">
                       {[...rule.conditions]
@@ -204,7 +204,7 @@ export default function CostCenterDetailPage() {
                           <span key={c.id} className="inline-flex items-center gap-1">
                             {i > 0 && c.logic_connector && (
                               <span className={`font-bold ${
-                                c.logic_connector === "AND" ? "text-blue-600" : "text-purple-600"
+                                c.logic_connector === "AND" ? "text-blue-600" : "text-gray-500"
                               }`}>
                                 {c.logic_connector}
                               </span>
@@ -224,8 +224,8 @@ export default function CostCenterDetailPage() {
       </div>
 
       {/* Danger zone */}
-      <div className="rounded-xl border border-amber-200 bg-amber-50/30 p-4 space-y-3">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-amber-700">Danger Zone</h3>
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Danger Zone</h3>
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-gray-800">Unassign all transactions</p>
@@ -236,7 +236,7 @@ export default function CostCenterDetailPage() {
             </p>
           </div>
           <button onClick={handleUnassignAll} disabled={unassigning}
-            className="flex-shrink-0 flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50">
+            className="flex-shrink-0 flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
             <Unlink size={12} />
             {unassigning ? "Unassigning…" : "Unassign all"}
           </button>

@@ -55,9 +55,13 @@ function BranchCell({ branches }: { branches: string[] }) {
   return <span title={branches.join(", ")}>{branches[0]} +{branches.length - 1}</span>;
 }
 
+function normGroupKey(assignType: string | null, groupKey: string): string {
+  return assignType === "vendor" ? groupKey.trim().replace(/\s+/g, " ") : groupKey;
+}
+
 function CCCell({ row, splitsMap }: { row: OAGroupRow; splitsMap: Map<string, SplitEntry[]> }) {
   const splits = row.assign_type && row.group_key
-    ? splitsMap.get(`${row.assign_type}:${row.group_key}`)
+    ? splitsMap.get(`${row.assign_type}:${normGroupKey(row.assign_type, row.group_key)}`)
     : undefined;
 
   const hasSplits = splits && splits.length > 0;
@@ -79,7 +83,7 @@ function CCCell({ row, splitsMap }: { row: OAGroupRow; splitsMap: Map<string, Sp
         <span className="text-gray-300 text-[11px]">Unassigned</span>
       )}
       {row.tx_count_unassigned > 0 && (hasSplits || hasLabels) && (
-        <span className="ml-1 text-amber-500 text-[10px]">
+        <span className="ml-1 text-gray-400 text-[10px]">
           ({row.tx_count_unassigned} unassigned)
         </span>
       )}
@@ -123,8 +127,8 @@ function BlockTable({
   const isRoster = block.block_type === "roster";
   const isOther  = block.block_type === "other";
 
-  const headerBg   = isOther ? "bg-amber-50"   : isRoster ? "bg-violet-50" : "bg-blue-50";
-  const headerText = isOther ? "text-amber-800" : isRoster ? "text-violet-800" : "text-blue-800";
+  const headerBg   = isOther ? "bg-gray-50"  : "bg-blue-50";
+  const headerText = isOther ? "text-gray-700" : "text-blue-800";
 
   // Suppress unused costCenters lint (passed down for future use)
   void costCenters;
@@ -132,18 +136,18 @@ function BlockTable({
   return (
     <div className={[
       "rounded-xl border bg-white shadow-sm overflow-hidden",
-      isOther ? "border-amber-200" : "border-gray-200",
+      "border-gray-200",
     ].join(" ")}>
-      <div className={`px-4 py-2.5 border-b ${isOther ? "border-amber-200" : "border-gray-200"} flex items-center justify-between ${headerBg}`}>
+      <div className={`px-4 py-2.5 border-b border-gray-200 flex items-center justify-between ${headerBg}`}>
         <span className={`text-sm font-semibold flex items-center gap-2 ${headerText}`}>
-          {isOther && <AlertTriangle size={14} className="text-amber-500" />}
+          {isOther && <AlertTriangle size={14} className="text-gray-400" />}
           {block.block_key}
         </span>
         <span className="text-xs text-gray-400">{visibleRows.length} rows</span>
       </div>
 
       {isOther && (
-        <div className="px-4 py-2 bg-amber-50/50 border-b border-amber-100 text-[11px] text-amber-700">
+        <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 text-[11px] text-gray-600">
           These transactions have an unexpected or missing Check Description 2 value. Review the source file for formatting errors.
         </div>
       )}
@@ -169,13 +173,13 @@ function BlockTable({
               return (
                 <tr key={row.group_key} className="border-b border-gray-50 hover:bg-gray-50 align-middle">
                   {isOther && (
-                    <td className="px-3 py-2 font-mono text-amber-700 whitespace-nowrap max-w-[180px] truncate"
+                    <td className="px-3 py-2 font-mono text-gray-600 whitespace-nowrap max-w-[180px] truncate"
                         title={row.raw_cd2s?.join(", ")}>
                       {row.raw_cd2s && row.raw_cd2s.length > 0
                         ? row.raw_cd2s.length === 1
                           ? row.raw_cd2s[0]
                           : `${row.raw_cd2s[0]} +${row.raw_cd2s.length - 1}`
-                        : <span className="text-amber-300">(empty)</span>}
+                        : <span className="text-gray-300">(empty)</span>}
                     </td>
                   )}
                   <td className="px-3 py-2 text-gray-700 whitespace-nowrap max-w-[180px] truncate">
@@ -211,7 +215,7 @@ function BlockTable({
                           <span className="text-gray-400 font-normal">({row.tx_count} tx)</span>
                         </button>
                         {/* Unassign — only when a split is already defined */}
-                        {splitsMap.get(`${row.assign_type}:${row.group_key}`) && (
+                        {splitsMap.get(`${row.assign_type}:${normGroupKey(row.assign_type, row.group_key)}`) && (
                           unassigning === row.group_key ? (
                             <span className="flex items-center gap-1 text-[11px]">
                               <span className="text-red-600 font-medium">Remove?</span>
@@ -471,12 +475,12 @@ export default function OffshoreAllocationsPage() {
             onClick={() => { setApplyResult(null); setApplyDialog(true); }}
             disabled={loading || applyCount === 0}
             title={applyCount === 0 ? "No unassigned OA transactions matching existing assignments" : undefined}
-            className="flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-700 hover:bg-teal-100 disabled:opacity-40 disabled:cursor-default"
+            className="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-default"
           >
             <Wand2 size={14} />
             Apply Existing
             {applyCount !== null && applyCount > 0 && (
-              <span className="ml-0.5 rounded-full bg-teal-200 px-1.5 py-0.5 text-[10px] font-semibold text-teal-800">
+              <span className="ml-0.5 rounded-full bg-blue-200 px-1.5 py-0.5 text-[10px] font-semibold text-blue-800">
                 {applyCount}
               </span>
             )}
@@ -485,12 +489,12 @@ export default function OffshoreAllocationsPage() {
             onClick={() => { setReevalResult(null); setReevalDialog(true); }}
             disabled={loading || reevalCount === 0}
             title={reevalCount === 0 ? "No manually assigned OA transactions to re-evaluate" : undefined}
-            className="flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-sm text-purple-700 hover:bg-purple-100 disabled:opacity-40 disabled:cursor-default"
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-default"
           >
             <RotateCcw size={14} />
             Re-evaluate with Rules
             {reevalCount !== null && reevalCount > 0 && (
-              <span className="ml-0.5 rounded-full bg-purple-200 px-1.5 py-0.5 text-[10px] font-semibold text-purple-800">
+              <span className="ml-0.5 rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] font-semibold text-gray-700">
                 {reevalCount}
               </span>
             )}
@@ -539,7 +543,7 @@ export default function OffshoreAllocationsPage() {
           )}
         </div>
         {hasFilters && (
-          <span className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-0.5 border border-amber-100 w-fit">
+          <span className="text-xs text-gray-500 bg-gray-50 rounded px-2 py-0.5 border border-gray-200 w-fit">
             Filters affect display only — allocations apply globally to all historical data
           </span>
         )}
@@ -552,37 +556,37 @@ export default function OffshoreAllocationsPage() {
       )}
 
       {applyResult && (
-        <div className="flex items-center justify-between rounded-lg border border-teal-200 bg-teal-50 px-4 py-3 shrink-0">
+        <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 shrink-0">
           <div className="flex items-center gap-2">
-            <Wand2 size={15} className="shrink-0 text-teal-600" />
-            <span className="text-sm text-teal-800">
+            <Wand2 size={15} className="shrink-0 text-blue-600" />
+            <span className="text-sm text-blue-800">
               Applied existing assignments to{" "}
               <strong>{applyResult.assigned}</strong> transaction{applyResult.assigned !== 1 ? "s" : ""}.
               {applyResult.breakdown.length > 0 && (
-                <span className="ml-1 text-teal-600">
+                <span className="ml-1 text-blue-600">
                   ({applyResult.breakdown.map((b) => `${b.key}: ${b.count}`).join(", ")})
                 </span>
               )}
             </span>
           </div>
-          <button onClick={() => setApplyResult(null)} className="ml-3 text-teal-400 hover:text-teal-600">
+          <button onClick={() => setApplyResult(null)} className="ml-3 text-blue-400 hover:text-blue-600">
             <X size={14} />
           </button>
         </div>
       )}
 
       {reevalResult && (
-        <div className="flex items-center justify-between rounded-lg border border-purple-200 bg-purple-50 px-4 py-3 shrink-0">
+        <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 shrink-0">
           <div className="flex items-center gap-2">
-            <ShieldCheck size={15} className="shrink-0 text-purple-600" />
-            <span className="text-sm text-purple-800">
+            <ShieldCheck size={15} className="shrink-0 text-gray-600" />
+            <span className="text-sm text-gray-800">
               Re-evaluated <strong>{reevalResult.processed}</strong> transaction{reevalResult.processed !== 1 ? "s" : ""} —{" "}
               <strong>{reevalResult.assigned}</strong> assigned by rule,{" "}
               <strong>{reevalResult.conflicts}</strong> conflict{reevalResult.conflicts !== 1 ? "s" : ""},{" "}
               <strong>{reevalResult.unassigned}</strong> unassigned.
             </span>
           </div>
-          <button onClick={() => setReevalResult(null)} className="ml-3 text-purple-400 hover:text-purple-600">
+          <button onClick={() => setReevalResult(null)} className="ml-3 text-gray-400 hover:text-gray-600">
             <X size={14} />
           </button>
         </div>
@@ -639,7 +643,7 @@ export default function OffshoreAllocationsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-xl">
             <div className="flex items-start gap-3 border-b border-gray-100 px-5 py-4">
-              <RotateCcw size={18} className="mt-0.5 shrink-0 text-purple-600" />
+              <RotateCcw size={18} className="mt-0.5 shrink-0 text-gray-600" />
               <div>
                 <h3 className="text-base font-semibold text-gray-900">Re-evaluate with Rules</h3>
                 <p className="mt-1 text-sm text-gray-600">
@@ -648,7 +652,7 @@ export default function OffshoreAllocationsPage() {
                   manually assigned Offshore Allocations transaction{reevalCount !== 1 ? "s" : ""} against
                   all current rules. Their current manual assignments may be overwritten.
                 </p>
-                <p className="mt-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
                   The global Re-apply All Rules continues to skip manual OA assignments — this is the
                   only place where they can be re-evaluated.
                 </p>
@@ -665,7 +669,7 @@ export default function OffshoreAllocationsPage() {
               <button
                 onClick={handleReeval}
                 disabled={reevalRunning}
-                className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg bg-gray-700 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-50"
               >
                 {reevalRunning && (
                   <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />
@@ -684,7 +688,7 @@ export default function OffshoreAllocationsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-xl">
             <div className="flex items-start gap-3 border-b border-gray-100 px-5 py-4">
-              <Wand2 size={18} className="mt-0.5 shrink-0 text-teal-600" />
+              <Wand2 size={18} className="mt-0.5 shrink-0 text-blue-600" />
               <div>
                 <h3 className="text-base font-semibold text-gray-900">Apply Existing Assignments</h3>
                 <p className="mt-1 text-sm text-gray-600">
@@ -710,7 +714,7 @@ export default function OffshoreAllocationsPage() {
               <button
                 onClick={handleApplyExisting}
                 disabled={applyRunning}
-                className="flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {applyRunning && (
                   <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />

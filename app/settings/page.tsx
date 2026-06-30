@@ -116,7 +116,7 @@ export default function SettingsPage() {
             </span>
           )}
           {!isAllBranches && !saved && (
-            <span className="text-xs text-amber-600 bg-amber-50 rounded px-2.5 py-1 border border-amber-100">
+            <span className="text-xs text-gray-600 bg-gray-50 rounded px-2.5 py-1 border border-gray-200">
               Will filter to: {localBranches.join(", ")}
             </span>
           )}

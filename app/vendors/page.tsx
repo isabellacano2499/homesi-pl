@@ -173,12 +173,12 @@ export default function VendorsPage() {
             onClick={() => { setApplyResult(null); setApplyDialog(true); }}
             disabled={loading || applyCount === 0}
             title={applyCount === 0 ? "No unassigned vendor transactions matching existing assignments" : undefined}
-            className="flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-700 hover:bg-teal-100 disabled:opacity-40 disabled:cursor-default"
+            className="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-default"
           >
             <Wand2 size={14} />
             Apply Existing
             {applyCount !== null && applyCount > 0 && (
-              <span className="ml-0.5 rounded-full bg-teal-200 px-1.5 py-0.5 text-[10px] font-semibold text-teal-800">
+              <span className="ml-0.5 rounded-full bg-blue-200 px-1.5 py-0.5 text-[10px] font-semibold text-blue-800">
                 {applyCount}
               </span>
             )}
@@ -217,20 +217,20 @@ export default function VendorsPage() {
       )}
 
       {applyResult && (
-        <div className="flex items-center justify-between rounded-lg border border-teal-200 bg-teal-50 px-4 py-3 shrink-0">
+        <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 shrink-0">
           <div className="flex items-center gap-2">
-            <Wand2 size={15} className="shrink-0 text-teal-600" />
-            <span className="text-sm text-teal-800">
+            <Wand2 size={15} className="shrink-0 text-blue-600" />
+            <span className="text-sm text-blue-800">
               Applied existing assignments to{" "}
               <strong>{applyResult.assigned}</strong> transaction{applyResult.assigned !== 1 ? "s" : ""}.
               {applyResult.breakdown.length > 0 && (
-                <span className="ml-1 text-teal-600">
+                <span className="ml-1 text-blue-600">
                   ({applyResult.breakdown.map((b) => `${b.key}: ${b.count}`).join(", ")})
                 </span>
               )}
             </span>
           </div>
-          <button onClick={() => setApplyResult(null)} className="ml-3 text-teal-400 hover:text-teal-600">
+          <button onClick={() => setApplyResult(null)} className="ml-3 text-blue-400 hover:text-blue-600">
             <X size={14} />
           </button>
         </div>
@@ -267,7 +267,7 @@ export default function VendorsPage() {
                   <td className="px-4 py-2.5 text-gray-600 tabular-nums">{v.tx_count}</td>
                   <td className="px-4 py-2.5">
                     {v.tx_count_unassigned > 0
-                      ? <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700">{v.tx_count_unassigned}</span>
+                      ? <span className="rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-600">{v.tx_count_unassigned}</span>
                       : <span className="text-gray-300">—</span>}
                   </td>
                   <td className="px-4 py-2.5">
@@ -305,7 +305,7 @@ export default function VendorsPage() {
                             <span key={cc} className={[
                               "rounded px-1.5 py-0.5 font-medium",
                               cc === "Unassigned" ? "bg-gray-100 text-gray-500" :
-                              cc === "Conflict"   ? "bg-amber-100 text-amber-700" :
+                              cc === "Conflict"   ? "bg-gray-100 text-gray-600" :
                                                    "bg-green-50 text-green-700",
                             ].join(" ")}>{cc}</span>
                           ))}
@@ -380,7 +380,7 @@ export default function VendorsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-xl">
             <div className="flex items-start gap-3 border-b border-gray-100 px-5 py-4">
-              <Wand2 size={18} className="mt-0.5 shrink-0 text-teal-600" />
+              <Wand2 size={18} className="mt-0.5 shrink-0 text-blue-600" />
               <div>
                 <h3 className="text-base font-semibold text-gray-900">Apply Existing Assignments</h3>
                 <p className="mt-1 text-sm text-gray-600">
@@ -406,7 +406,7 @@ export default function VendorsPage() {
               <button
                 onClick={handleApplyExisting}
                 disabled={applyRunning}
-                className="flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {applyRunning && (
                   <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />

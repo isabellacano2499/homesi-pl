@@ -6,110 +6,134 @@ export const dynamic = "force-dynamic";
 const CHUNK = 500;
 
 type SplitRow = {
+  assign_type: "description3" | "vendor";
   assign_value: string;
   cost_center_id: string;
   percentage: number;
   is_operational: boolean;
 };
 
-/** Builds a map of assign_value → splits[] from cc_allocation_splits. */
-async function loadDescription3Splits(supabase: ReturnType<typeof createServerClient>) {
+function norm(v: string) {
+  return v.trim().replace(/\s+/g, " ");
+}
+
+/** Load all manual splits relevant to OA (description3 + vendor assign types). */
+async function loadOASplits(supabase: ReturnType<typeof createServerClient>) {
   const { data, error } = await supabase
     .from("cc_allocation_splits")
-    .select("assign_value,cost_center_id,percentage,is_operational")
-    .eq("assign_type", "description3");
+    .select("assign_type,assign_value,cost_center_id,percentage,is_operational")
+    .in("assign_type", ["description3", "vendor"]);
 
   if (error) throw new Error(error.message);
   const splits = (data ?? []) as SplitRow[];
 
+  // Key: normalized `type:value` → splits[]
   const byKey = new Map<string, SplitRow[]>();
   for (const s of splits) {
-    if (!byKey.has(s.assign_value)) byKey.set(s.assign_value, []);
-    byKey.get(s.assign_value)!.push(s);
+    const key = `${s.assign_type}:${norm(s.assign_value)}`;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key)!.push(s);
   }
   return byKey;
 }
 
-// GET — count of unassigned OA transactions that have a matching description3 assignment
+/** Fetch ALL unassigned OA transactions (no pagination limit — collect all pages). */
+async function fetchUnassignedOATxs(supabase: ReturnType<typeof createServerClient>) {
+  type TxRow = { id: string; check_description_3: string | null; vendor: string | null };
+  const rows: TxRow[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("pl_transactions")
+      .select("id,check_description_3,vendor")
+      .eq("source", "offshore_allocations")
+      .or("cost_center_status.eq.unassigned,cost_center_status.is.null")
+      .range(offset, offset + 999);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) break;
+    rows.push(...(data as TxRow[]));
+    if (data.length < 1000) break;
+    offset += 1000;
+  }
+  return rows;
+}
+
+// GET — count of unassigned OA txs that have a matching manual assignment
 export async function GET() {
   const supabase = createServerClient();
 
   let byKey: Map<string, SplitRow[]>;
-  try { byKey = await loadDescription3Splits(supabase); } catch (e) {
+  try { byKey = await loadOASplits(supabase); } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+  if (byKey.size === 0) return NextResponse.json({ count: 0, breakdown: [] });
+
+  let txRows: { id: string; check_description_3: string | null; vendor: string | null }[];
+  try { txRows = await fetchUnassignedOATxs(supabase); } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 
-  if (byKey.size === 0) return NextResponse.json({ count: 0, breakdown: [] });
-
-  const assignValues = [...byKey.keys()];
-
-  // Fetch all unassigned OA transactions that match any of the known description3 values
-  const txRows: { check_description_3: string | null }[] = [];
-  for (let i = 0; i < assignValues.length; i += CHUNK) {
-    const chunk = assignValues.slice(i, i + CHUNK);
-    const { data, error } = await supabase
-      .from("pl_transactions")
-      .select("check_description_3")
-      .eq("source", "offshore_allocations")
-      .in("check_description_3", chunk)
-      .or("cost_center_status.eq.unassigned,cost_center_status.is.null");
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    txRows.push(...((data ?? []) as { check_description_3: string | null }[]));
-  }
-
-  const breakdown: { key: string; count: number }[] = [];
   const countMap = new Map<string, number>();
-  for (const row of txRows) {
-    const k = row.check_description_3 ?? "";
-    countMap.set(k, (countMap.get(k) ?? 0) + 1);
-  }
-  for (const [key, count] of countMap) {
-    breakdown.push({ key, count });
+  for (const tx of txRows) {
+    // Try vendor match first, then description3
+    const normVendor = tx.vendor ? norm(tx.vendor) : null;
+    const normCd3 = tx.check_description_3 ? norm(tx.check_description_3) : null;
+    const key =
+      (normVendor && byKey.has(`vendor:${normVendor}`))   ? `vendor:${normVendor}` :
+      (normCd3   && byKey.has(`description3:${normCd3}`)) ? `description3:${normCd3}` :
+      null;
+    if (key) countMap.set(key, (countMap.get(key) ?? 0) + 1);
   }
 
-  const total = txRows.length;
-  return NextResponse.json({ count: total, breakdown });
+  const breakdown = [...countMap.entries()].map(([key, count]) => ({
+    key: key.replace(/^(vendor|description3):/, ""),
+    count,
+  }));
+
+  return NextResponse.json({ count: txRows.filter((tx) => {
+    const nv = tx.vendor ? norm(tx.vendor) : null;
+    const nc = tx.check_description_3 ? norm(tx.check_description_3) : null;
+    return (nv && byKey.has(`vendor:${nv}`)) || (nc && byKey.has(`description3:${nc}`));
+  }).length, breakdown });
 }
 
-// POST — apply existing description3 assignments to all matching unassigned OA transactions
+// POST — apply existing assignments to all matching unassigned OA transactions
 export async function POST() {
   const supabase = createServerClient();
 
   let byKey: Map<string, SplitRow[]>;
-  try { byKey = await loadDescription3Splits(supabase); } catch (e) {
+  try { byKey = await loadOASplits(supabase); } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+  if (byKey.size === 0) return NextResponse.json({ assigned: 0, breakdown: [] });
+
+  let txRows: { id: string; check_description_3: string | null; vendor: string | null }[];
+  try { txRows = await fetchUnassignedOATxs(supabase); } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 
-  if (byKey.size === 0) return NextResponse.json({ assigned: 0, breakdown: [] });
+  // Group txs by matching split key
+  const matchedGroups = new Map<string, string[]>(); // key → [txId]
+  for (const tx of txRows) {
+    const normVendor = tx.vendor ? norm(tx.vendor) : null;
+    const normCd3 = tx.check_description_3 ? norm(tx.check_description_3) : null;
+    const key =
+      (normVendor && byKey.has(`vendor:${normVendor}`))   ? `vendor:${normVendor}` :
+      (normCd3   && byKey.has(`description3:${normCd3}`)) ? `description3:${normCd3}` :
+      null;
+    if (key) {
+      if (!matchedGroups.has(key)) matchedGroups.set(key, []);
+      matchedGroups.get(key)!.push(tx.id);
+    }
+  }
 
   const breakdown: { key: string; count: number }[] = [];
   let totalAssigned = 0;
 
-  for (const [cd3, keySplits] of byKey) {
+  for (const [key, txIds] of matchedGroups) {
+    const keySplits = byKey.get(key)!;
     const primaryCcId = [...keySplits].sort((a, b) => b.percentage - a.percentage)[0].cost_center_id;
     const operationalPct = keySplits.reduce((sum, s) => sum + (s.is_operational ? s.percentage : 0), 0);
-
-    // Collect all unassigned OA transaction IDs with this check_description_3
-    const txIds: string[] = [];
-    let offset = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from("pl_transactions")
-        .select("id")
-        .eq("source", "offshore_allocations")
-        .eq("check_description_3", cd3)
-        .or("cost_center_status.eq.unassigned,cost_center_status.is.null")
-        .range(offset, offset + 999);
-
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-      if (!data || data.length === 0) break;
-      txIds.push(...data.map((r: { id: string }) => r.id));
-      if (data.length < 1000) break;
-      offset += 1000;
-    }
-
-    if (txIds.length === 0) continue;
 
     for (let i = 0; i < txIds.length; i += CHUNK) {
       const { error: updErr } = await supabase
@@ -122,11 +146,10 @@ export async function POST() {
           operational_pct:       operationalPct,
         })
         .in("id", txIds.slice(i, i + CHUNK));
-
       if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
     }
 
-    breakdown.push({ key: cd3, count: txIds.length });
+    breakdown.push({ key: key.replace(/^(vendor|description3):/, ""), count: txIds.length });
     totalAssigned += txIds.length;
   }
 

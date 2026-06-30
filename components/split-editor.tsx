@@ -31,7 +31,7 @@ export function SplitEditor({
   // Load existing splits on open
   useEffect(() => {
     fetch(
-      `/api/cc-allocation-splits?type=${encodeURIComponent(assignType)}&value=${encodeURIComponent(assignValue)}`
+      `/api/cc-allocation-splits?type=${encodeURIComponent(assignType)}&value=${encodeURIComponent(assignValue)}&include_rule=true`
     )
       .then((r) => r.json())
       .then((data: { cost_center_id: string; percentage: number; is_operational?: boolean }[]) => {
@@ -91,8 +91,8 @@ export function SplitEditor({
     : sum > 100  ? `Exceeds 100% by ${(sum - 100).toFixed(3)}% — reduce before saving`
     :              `${(100 - sum).toFixed(3)}% remaining  (total: ${sum.toFixed(3)}%)`;
 
-  const sumColor  = sum === 0 ? "text-gray-400" : sumOk ? "text-green-700" : sum > 100 ? "text-red-600" : "text-amber-700";
-  const sumBorder = sumOk ? "border-green-200 bg-green-50" : sum > 100 ? "border-red-200 bg-red-50" : "border-amber-100 bg-amber-50";
+  const sumColor  = sum === 0 ? "text-gray-400" : sumOk ? "text-green-700" : sum > 100 ? "text-red-600" : "text-gray-600";
+  const sumBorder = sumOk ? "border-green-200 bg-green-50" : sum > 100 ? "border-red-200 bg-red-50" : "border-gray-200 bg-gray-50";
 
   // Check for duplicate CCs
   const ccIds = rows.map((r) => r.cost_center_id).filter(Boolean);

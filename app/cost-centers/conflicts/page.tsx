@@ -850,7 +850,7 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
 function ConflictDetailCell({ tx }: { tx: ConflictTx }) {
   const typeColor = tx.conflict_type === "overassigned"
     ? "bg-red-50 border-red-200 text-red-700"
-    : "bg-amber-50 border-amber-200 text-amber-700";
+    : "bg-gray-50 border-gray-200 text-gray-600";
   const typeLabel = tx.conflict_type === "overassigned"
     ? `Overassigned (${tx.total_matched_percentage.toFixed(0)}%)`
     : `Underassigned (${tx.total_matched_percentage.toFixed(0)}%)`;
@@ -861,15 +861,15 @@ function ConflictDetailCell({ tx }: { tx: ConflictTx }) {
         {typeLabel}
       </span>
       {tx.matched_rules.map((mr: MatchedRuleProposal) => (
-        <div key={mr.rule_id} className="rounded border border-purple-200 bg-purple-50 px-2 py-1.5">
+        <div key={mr.rule_id} className="rounded border border-gray-200 bg-gray-50 px-2 py-1.5">
           <div className="flex items-center gap-1 mb-1">
-            <Percent size={9} className="text-purple-500 shrink-0" />
-            <span className="text-[10px] font-semibold text-purple-700 truncate">{mr.rule_name}</span>
-            <span className="text-[10px] text-purple-400 ml-auto">{mr.rule_total_percentage}%</span>
+            <Percent size={9} className="text-gray-400 shrink-0" />
+            <span className="text-[10px] font-semibold text-gray-700 truncate">{mr.rule_name}</span>
+            <span className="text-[10px] text-gray-400 ml-auto">{mr.rule_total_percentage}%</span>
           </div>
           <div className="flex flex-wrap gap-x-2 gap-y-0.5">
             {mr.allocations.map((a) => (
-              <span key={a.cost_center_id} className="text-[10px] text-purple-600 whitespace-nowrap">
+              <span key={a.cost_center_id} className="text-[10px] text-gray-600 whitespace-nowrap">
                 <span className="font-medium">{a.percentage}%</span> {a.cc_name}
               </span>
             ))}
@@ -1002,15 +1002,15 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
         })}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
-        <AlertTriangle size={14} className="shrink-0 text-amber-500" />
-        <span className="text-xs text-amber-700 font-medium">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+        <AlertTriangle size={14} className="shrink-0 text-gray-400" />
+        <span className="text-xs text-gray-700 font-medium">
           {filteredCount} conflict{filteredCount !== 1 ? "s" : ""}{visibleSelected.length > 0 && ` · ${visibleSelected.length} selected`}
         </span>
         {visibleSelected.length > 0 && (
           <>
             <select value={bulkCcId} onChange={(e) => setBulkCcId(e.target.value)}
-              className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs text-gray-700 focus:border-blue-400 focus:outline-none">
+              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 focus:border-blue-400 focus:outline-none">
               <option value="">Assign to…</option>
               {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
             </select>
@@ -1021,7 +1021,7 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
                 onChange={(e) => setBulkOp(!e.target.checked)}
                 className="h-3 w-3 accent-red-500"
               />
-              <span className="text-[10px] text-amber-700">Non-Op</span>
+              <span className="text-[10px] text-gray-600">Non-Op</span>
             </label>
             <button onClick={() => resolveRows(visibleSelected, bulkCcId, bulkOp)} disabled={!bulkCcId || saving}
               className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40">
@@ -1050,7 +1050,7 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
               {isCollapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
               <span className="text-xs font-semibold font-mono text-gray-800">{group.gl_code}</span>
               <span className="text-xs text-gray-500">{group.gl_name}</span>
-              <span className="ml-auto text-xs text-amber-600 font-medium">{group.transactions.length} conflict{group.transactions.length !== 1 ? "s" : ""}{txSearch && visibleTxs.length !== group.transactions.length ? ` · ${visibleTxs.length} visible` : ""}</span>
+              <span className="ml-auto text-xs text-gray-500 font-medium">{group.transactions.length} conflict{group.transactions.length !== 1 ? "s" : ""}{txSearch && visibleTxs.length !== group.transactions.length ? ` · ${visibleTxs.length} visible` : ""}</span>
             </div>
             {!isCollapsed && (
               <div className="overflow-auto max-h-[500px]">
@@ -1073,7 +1073,7 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
                 </thead>
                 <tbody>
                   {visibleTxs.map((tx) => (
-                    <tr key={tx.id} className={`border-b border-gray-50 hover:bg-amber-50/30 ${selected.has(tx.id) ? "bg-blue-50/40" : ""}`}>
+                    <tr key={tx.id} className={`border-b border-gray-50 hover:bg-gray-50 ${selected.has(tx.id) ? "bg-blue-50/40" : ""}`}>
                       <td className="px-2 py-1">
                         <input type="checkbox" checked={selected.has(tx.id)} onChange={() => toggleRow(tx.id)}
                           className="h-3.5 w-3.5 accent-blue-600 rounded" />
@@ -1362,9 +1362,9 @@ function ConflictResolvedTab({
                           {tx.matched_rules.length > 0 ? (
                             <div className="space-y-0.5">
                               {tx.matched_rules.map((mr) => (
-                                <div key={mr.rule_id} className="text-[10px] text-purple-700">
+                                <div key={mr.rule_id} className="text-[10px] text-gray-700">
                                   <span className="font-medium">{mr.rule_name}</span>
-                                  <span className="text-purple-400 ml-1">({mr.rule_total_percentage}%)</span>
+                                  <span className="text-gray-400 ml-1">({mr.rule_total_percentage}%)</span>
                                 </div>
                               ))}
                             </div>
@@ -1422,7 +1422,7 @@ function ConflictResolvedTab({
                             onClick={() => handleReopen(tx.id)}
                             disabled={reopening === tx.id}
                             title="Reopen conflict"
-                            className="flex items-center gap-1 rounded px-2 py-0.5 text-[10px] text-gray-500 hover:text-amber-700 hover:bg-amber-50 disabled:opacity-40"
+                            className="flex items-center gap-1 rounded px-2 py-0.5 text-[10px] text-gray-500 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-40"
                           >
                             <RotateCcw size={11} /> Reopen
                           </button>
