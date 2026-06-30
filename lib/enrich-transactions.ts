@@ -19,7 +19,7 @@ export function enrichTransactions(
   glMappings: GLMapping[],
   branches: Branch[],
   uploadId: string,
-  source: "original" | "addback" = "original"
+  source: "original" | "addback" | "manual_entry" = "original"
 ): EnrichResult {
   const glMap = new Map<string, GLMapping>(
     glMappings.map((r) => [r.gl_code, r])

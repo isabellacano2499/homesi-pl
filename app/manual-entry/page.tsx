@@ -1,0 +1,396 @@
+"use client";
+
+import { useState, useEffect, useRef } from "react";
+import { Plus, Trash2, Save, CheckCircle, AlertCircle, ExternalLink } from "lucide-react";
+import Link from "next/link";
+import { MONTH_NAMES } from "@/lib/constants";
+import type { Branch, GLMapping } from "@/types";
+
+// ─── GL Code autocomplete cell ────────────────────────────────────────────────
+
+function GLCodeCell({
+  value,
+  glName,
+  onChange,
+}: {
+  value: string;
+  glName: string;
+  onChange: (gl_code: string, gl_name: string) => void;
+}) {
+  const [inputVal, setInputVal] = useState(value ? `${value}${glName ? ` — ${glName}` : ""}` : "");
+  const [results, setResults] = useState<GLMapping[]>([]);
+  const [open, setOpen] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setInputVal(value ? `${value}${glName ? ` — ${glName}` : ""}` : "");
+  }, [value, glName]);
+
+  function handleInput(q: string) {
+    setInputVal(q);
+    setOpen(true);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      if (!q.trim()) { setResults([]); return; }
+      setFetching(true);
+      try {
+        const res = await fetch(`/api/gl-mapping?q=${encodeURIComponent(q)}`);
+        if (res.ok) setResults(await res.json());
+      } finally { setFetching(false); }
+    }, 200);
+  }
+
+  function handleSelect(gl: GLMapping) {
+    onChange(gl.gl_code, gl.gl_name);
+    setInputVal(`${gl.gl_code} — ${gl.gl_name}`);
+    setOpen(false);
+    setResults([]);
+  }
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        type="text"
+        value={inputVal}
+        onChange={(e) => handleInput(e.target.value)}
+        onFocus={() => { if (inputVal) setOpen(true); }}
+        onBlur={() => {
+          // If user cleared the input, clear the selected value
+          if (!inputVal.trim()) onChange("", "");
+        }}
+        placeholder="Search GL Code…"
+        className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none min-w-[140px]"
+      />
+      {open && (inputVal.length > 0) && (
+        <div className="absolute z-50 top-full left-0 mt-0.5 w-72 rounded-lg border border-gray-200 bg-white shadow-lg max-h-52 overflow-y-auto">
+          {fetching && <p className="px-3 py-2 text-xs text-gray-400">Searching…</p>}
+          {!fetching && results.length === 0 && (
+            <p className="px-3 py-2 text-xs text-gray-400">No results for &ldquo;{inputVal}&rdquo;</p>
+          )}
+          {results.map((gl) => (
+            <button
+              key={gl.id}
+              onMouseDown={(e) => { e.preventDefault(); handleSelect(gl); }}
+              className="flex w-full items-baseline gap-2 px-3 py-2 text-left hover:bg-blue-50 text-xs"
+            >
+              <span className="font-mono text-gray-900 shrink-0">{gl.gl_code}</span>
+              <span className="text-gray-500 truncate">{gl.gl_name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Row state ────────────────────────────────────────────────────────────────
+
+interface ManualRow {
+  id: string;
+  gl_code: string;
+  gl_name: string;
+  branch: string;
+  check_description: string;
+  vendor: string;
+  debit: string;
+  credit: string;
+  month: string;
+  year: string;
+}
+
+function newRow(): ManualRow {
+  const now = new Date();
+  return {
+    id: crypto.randomUUID(),
+    gl_code: "",
+    gl_name: "",
+    branch: "",
+    check_description: "",
+    vendor: "",
+    debit: "",
+    credit: "",
+    month: MONTH_NAMES[now.getMonth()],
+    year: String(now.getFullYear()),
+  };
+}
+
+function isComplete(r: ManualRow): boolean {
+  return r.gl_code.trim() !== "" && r.branch !== "" && r.month !== "" && r.year !== "";
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function ManualEntryPage() {
+  const [rows, setRows] = useState<ManualRow[]>([newRow()]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string; uploadId?: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/branches")
+      .then((r) => r.json())
+      .then(setBranches)
+      .catch(console.error);
+  }, []);
+
+  function addRow() {
+    setRows((prev) => [...prev, newRow()]);
+  }
+
+  function removeRow(id: string) {
+    setRows((prev) => prev.length > 1 ? prev.filter((r) => r.id !== id) : prev);
+  }
+
+  function updateRow(id: string, field: keyof ManualRow, value: string) {
+    setRows((prev) => prev.map((r) => r.id === id ? { ...r, [field]: value } : r));
+  }
+
+  function updateGLCode(id: string, gl_code: string, gl_name: string) {
+    setRows((prev) => prev.map((r) => r.id === id ? { ...r, gl_code, gl_name } : r));
+  }
+
+  async function handleSave() {
+    const validRows = rows.filter(isComplete);
+    if (validRows.length === 0) {
+      setResult({ ok: false, message: "Fill in at least GL Code, Branch, Month, and Year for each row." });
+      return;
+    }
+    setSaving(true);
+    setResult(null);
+    try {
+      const payload = validRows.map((r) => ({
+        gl_code: r.gl_code.trim(),
+        branch: r.branch,
+        check_description: r.check_description.trim(),
+        vendor: r.vendor.trim(),
+        debit: parseFloat(r.debit) || 0,
+        credit: parseFloat(r.credit) || 0,
+        month: r.month,
+        year: parseInt(r.year) || new Date().getFullYear(),
+      }));
+      const res = await fetch("/api/manual-entry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: payload }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setResult({ ok: false, message: json.error ?? "Failed to save" });
+        return;
+      }
+      setResult({
+        ok: true,
+        message: `${json.rowCount} transaction${json.rowCount !== 1 ? "s" : ""} saved and processed by Cost Center Rules.`,
+        uploadId: json.uploadId,
+      });
+      setRows([newRow()]);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const validCount = rows.filter(isComplete).length;
+
+  return (
+    <div className="space-y-5 max-w-screen-xl">
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">Manual Entry</h2>
+          <p className="text-sm text-gray-500">
+            Add transactions manually — enriched against GL Mapping and Branches, then evaluated by Cost Center Rules.
+          </p>
+        </div>
+        <Link
+          href="/transactions"
+          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 whitespace-nowrap"
+        >
+          <ExternalLink size={12} /> Transaction Review
+        </Link>
+      </div>
+
+      {result && (
+        <div className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${
+          result.ok
+            ? "border-green-200 bg-green-50 text-green-700"
+            : "border-red-200 bg-red-50 text-red-600"
+        }`}>
+          {result.ok ? <CheckCircle size={15} className="shrink-0" /> : <AlertCircle size={15} className="shrink-0" />}
+          <span>{result.message}</span>
+          {result.ok && (
+            <Link
+              href="/transactions"
+              className="ml-auto text-xs text-green-600 underline hover:text-green-800 whitespace-nowrap"
+            >
+              View in Transaction Review →
+            </Link>
+          )}
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+        <table className="w-full text-xs" style={{ minWidth: 900 }}>
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
+              <th className="px-3 py-2 font-medium">
+                GL Code <span className="text-red-400">*</span>
+              </th>
+              <th className="px-3 py-2 font-medium" style={{ width: 130 }}>
+                Branch <span className="text-red-400">*</span>
+              </th>
+              <th className="px-3 py-2 font-medium">Description</th>
+              <th className="px-3 py-2 font-medium" style={{ width: 130 }}>Vendor</th>
+              <th className="px-3 py-2 font-medium text-right" style={{ width: 100 }}>Debit</th>
+              <th className="px-3 py-2 font-medium text-right" style={{ width: 100 }}>Credit</th>
+              <th className="px-3 py-2 font-medium" style={{ width: 130 }}>
+                Month <span className="text-red-400">*</span>
+              </th>
+              <th className="px-3 py-2 font-medium" style={{ width: 74 }}>
+                Year <span className="text-red-400">*</span>
+              </th>
+              <th className="w-8 px-2 py-2" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {rows.map((row) => (
+              <tr key={row.id} className="hover:bg-gray-50/50">
+                <td className="px-2 py-1.5 min-w-[180px]">
+                  <GLCodeCell
+                    value={row.gl_code}
+                    glName={row.gl_name}
+                    onChange={(code, name) => updateGLCode(row.id, code, name)}
+                  />
+                </td>
+                <td className="px-2 py-1.5">
+                  <select
+                    value={row.branch}
+                    onChange={(e) => updateRow(row.id, "branch", e.target.value)}
+                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+                  >
+                    <option value="">Select…</option>
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.branch}>{b.branch}</option>
+                    ))}
+                  </select>
+                </td>
+                <td className="px-2 py-1.5">
+                  <input
+                    type="text"
+                    value={row.check_description}
+                    onChange={(e) => updateRow(row.id, "check_description", e.target.value)}
+                    placeholder="Description"
+                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+                  />
+                </td>
+                <td className="px-2 py-1.5">
+                  <input
+                    type="text"
+                    value={row.vendor}
+                    onChange={(e) => updateRow(row.id, "vendor", e.target.value)}
+                    placeholder="Vendor"
+                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+                  />
+                </td>
+                <td className="px-2 py-1.5">
+                  <input
+                    type="number"
+                    value={row.debit}
+                    onChange={(e) => updateRow(row.id, "debit", e.target.value)}
+                    placeholder="0.00"
+                    min="0"
+                    step="0.01"
+                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-right text-gray-700 focus:border-blue-400 focus:outline-none"
+                  />
+                </td>
+                <td className="px-2 py-1.5">
+                  <input
+                    type="number"
+                    value={row.credit}
+                    onChange={(e) => updateRow(row.id, "credit", e.target.value)}
+                    placeholder="0.00"
+                    min="0"
+                    step="0.01"
+                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-right text-gray-700 focus:border-blue-400 focus:outline-none"
+                  />
+                </td>
+                <td className="px-2 py-1.5">
+                  <select
+                    value={row.month}
+                    onChange={(e) => updateRow(row.id, "month", e.target.value)}
+                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+                  >
+                    <option value="">Month…</option>
+                    {MONTH_NAMES.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </td>
+                <td className="px-2 py-1.5">
+                  <input
+                    type="number"
+                    value={row.year}
+                    onChange={(e) => updateRow(row.id, "year", e.target.value)}
+                    placeholder={String(new Date().getFullYear())}
+                    min="2000"
+                    max="2099"
+                    className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+                  />
+                </td>
+                <td className="px-1 py-1.5">
+                  <button
+                    onClick={() => removeRow(row.id)}
+                    disabled={rows.length === 1}
+                    title="Remove row"
+                    className="rounded p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 disabled:opacity-0 disabled:pointer-events-none"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <button
+          onClick={addRow}
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+        >
+          <Plus size={13} /> Add Row
+        </button>
+
+        <div className="flex items-center gap-3">
+          {validCount < rows.length && rows.length > 1 && (
+            <span className="text-xs text-gray-400">
+              {rows.length - validCount} row{rows.length - validCount !== 1 ? "s" : ""} incomplete — will be skipped
+            </span>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={saving || validCount === 0}
+            className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
+          >
+            <Save size={13} />
+            {saving ? "Saving…" : `Save ${validCount} row${validCount !== 1 ? "s" : ""}`}
+          </button>
+        </div>
+      </div>
+
+      <p className="text-xs text-gray-400">
+        <span className="text-red-400">*</span> Required fields. Movement is calculated as Credit − Debit. Rows are processed through the Cost Center Rules engine automatically.
+      </p>
+    </div>
+  );
+}

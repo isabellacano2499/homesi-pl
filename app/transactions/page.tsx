@@ -2,14 +2,15 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { RefreshCw, AlertTriangle, Download, Search, X } from "lucide-react";
+import { RefreshCw, AlertTriangle, Download, Search, X, Pencil, Trash2 } from "lucide-react";
 import { downloadCSV } from "@/lib/csv";
 import { ColumnFilter } from "@/components/column-filter";
 import { buildSplitsMap } from "@/lib/apply-splits";
 import { SplitDisplay } from "@/components/split-display";
 import { useActiveBranches, mergeWithGlobal } from "@/components/branch-filter-provider";
+import { MONTH_NAMES } from "@/lib/constants";
 import type { SplitEntry } from "@/lib/apply-splits";
-import type { PLTransaction, FilterOptionsResponse, TransactionTotals } from "@/types";
+import type { PLTransaction, FilterOptionsResponse, TransactionTotals, Branch, GLMapping } from "@/types";
 
 // ─── Virtual scroll constants ─────────────────────────────────────────────────
 
@@ -83,6 +84,7 @@ function buildParams(uploadId: string, f: ServerFilters, ccList: CCRef[], global
     if (val === "Original") p.append("source", "original");
     else if (val === "Addback") p.append("source", "addback");
     else if (val === "Offshore") p.append("source", "offshore_allocations");
+    else if (val === "Manual Entry") p.append("source", "manual_entry");
   }
   return p;
 }
@@ -115,6 +117,212 @@ function TH({ label, children, className = "" }: { label?: string; children?: Re
     <th className={`px-2 py-2.5 font-medium text-left ${className}`}>
       <span className="inline-flex items-center gap-0.5 whitespace-nowrap">{label}{children}</span>
     </th>
+  );
+}
+
+// ─── Manual Entry edit modal ──────────────────────────────────────────────────
+
+function ManualEntryGLAutocomplete({
+  value,
+  glName,
+  onChange,
+}: {
+  value: string;
+  glName: string;
+  onChange: (gl_code: string, gl_name: string) => void;
+}) {
+  const [inputVal, setInputVal] = useState(value ? `${value}${glName ? ` — ${glName}` : ""}` : "");
+  const [results, setResults] = useState<GLMapping[]>([]);
+  const [open, setOpen] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setInputVal(value ? `${value}${glName ? ` — ${glName}` : ""}` : "");
+  }, [value, glName]);
+
+  function handleInput(q: string) {
+    setInputVal(q);
+    setOpen(true);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      if (!q.trim()) { setResults([]); return; }
+      setFetching(true);
+      try {
+        const res = await fetch(`/api/gl-mapping?q=${encodeURIComponent(q)}`);
+        if (res.ok) setResults(await res.json());
+      } finally { setFetching(false); }
+    }, 200);
+  }
+
+  function handleSelect(gl: GLMapping) {
+    onChange(gl.gl_code, gl.gl_name);
+    setInputVal(`${gl.gl_code} — ${gl.gl_name}`);
+    setOpen(false);
+    setResults([]);
+  }
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        type="text"
+        value={inputVal}
+        onChange={(e) => handleInput(e.target.value)}
+        onFocus={() => { if (inputVal) setOpen(true); }}
+        placeholder="Search GL Code…"
+        className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700 focus:border-blue-400 focus:outline-none"
+      />
+      {open && inputVal.length > 0 && (
+        <div className="absolute z-[60] top-full left-0 mt-0.5 w-80 rounded-lg border border-gray-200 bg-white shadow-lg max-h-52 overflow-y-auto">
+          {fetching && <p className="px-3 py-2 text-xs text-gray-400">Searching…</p>}
+          {!fetching && results.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">No results</p>}
+          {results.map((gl) => (
+            <button
+              key={gl.id}
+              onMouseDown={(e) => { e.preventDefault(); handleSelect(gl); }}
+              className="flex w-full items-baseline gap-2 px-3 py-2 text-left hover:bg-blue-50 text-xs"
+            >
+              <span className="font-mono text-gray-900 shrink-0">{gl.gl_code}</span>
+              <span className="text-gray-500 truncate">{gl.gl_name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ManualEntryEditModal({
+  tx,
+  onClose,
+  onSaved,
+}: {
+  tx: PLTransaction;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [glCode, setGlCode] = useState(tx.gl_code ?? "");
+  const [glName, setGlName] = useState(tx.gl_name ?? "");
+  const [branch, setBranch] = useState(tx.branch ?? "");
+  const [description, setDescription] = useState(tx.check_description ?? "");
+  const [vendor, setVendor] = useState(tx.vendor ?? "");
+  const [debit, setDebit] = useState(String(tx.debit ?? ""));
+  const [credit, setCredit] = useState(String(tx.credit ?? ""));
+  const [month, setMonth] = useState(tx.month ?? "");
+  const [year, setYear] = useState(String(tx.year ?? new Date().getFullYear()));
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    fetch("/api/branches").then((r) => r.json()).then(setBranches).catch(() => {});
+  }, []);
+
+  async function handleSave() {
+    if (!glCode || !branch) { setErr("GL Code and Branch are required."); return; }
+    setSaving(true); setErr("");
+    try {
+      const res = await fetch(`/api/manual-entry/${tx.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gl_code: glCode,
+          branch,
+          check_description: description,
+          vendor,
+          debit: parseFloat(debit) || 0,
+          credit: parseFloat(credit) || 0,
+          month,
+          year: parseInt(year) || new Date().getFullYear(),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) { setErr(json.error ?? "Failed to save"); return; }
+      onSaved();
+    } finally { setSaving(false); }
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+      <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white shadow-2xl p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold text-gray-900">Edit Manual Entry</h3>
+          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-gray-600 mb-1">GL Code *</label>
+            <ManualEntryGLAutocomplete value={glCode} glName={glName} onChange={(code, name) => { setGlCode(code); setGlName(name); }} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Branch *</label>
+            <select value={branch} onChange={(e) => setBranch(e.target.value)}
+              className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700 focus:border-blue-400 focus:outline-none">
+              <option value="">Select…</option>
+              {branches.map((b) => <option key={b.id} value={b.branch}>{b.branch}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Vendor</label>
+            <input type="text" value={vendor} onChange={(e) => setVendor(e.target.value)}
+              className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700 focus:border-blue-400 focus:outline-none" />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+            <input type="text" value={description} onChange={(e) => setDescription(e.target.value)}
+              className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700 focus:border-blue-400 focus:outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Debit</label>
+            <input type="number" value={debit} onChange={(e) => setDebit(e.target.value)} min="0" step="0.01"
+              className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-right text-gray-700 focus:border-blue-400 focus:outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Credit</label>
+            <input type="number" value={credit} onChange={(e) => setCredit(e.target.value)} min="0" step="0.01"
+              className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-right text-gray-700 focus:border-blue-400 focus:outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Month</label>
+            <select value={month} onChange={(e) => setMonth(e.target.value)}
+              className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700 focus:border-blue-400 focus:outline-none">
+              <option value="">Month…</option>
+              {MONTH_NAMES.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Year</label>
+            <input type="number" value={year} onChange={(e) => setYear(e.target.value)} min="2000" max="2099"
+              className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700 focus:border-blue-400 focus:outline-none" />
+          </div>
+        </div>
+
+        {err && <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{err}</p>}
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button onClick={onClose} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button onClick={handleSave} disabled={saving}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40">
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -420,6 +628,17 @@ export default function TransactionsPage() {
   // Loan resolution picker state
   const [resolvingTx, setResolvingTx] = useState<PLTransaction | null>(null);
   const [resolveAnchor, setResolveAnchor] = useState<HTMLElement | null>(null);
+
+  // Manual entry edit/delete state
+  const [editingManualTx, setEditingManualTx] = useState<PLTransaction | null>(null);
+
+  async function handleDeleteManual(tx: PLTransaction) {
+    if (!confirm(`Delete this manual entry transaction?\n${tx.check_description || tx.gl_code || tx.id}\n\nThis cannot be undone.`)) return;
+    const res = await fetch(`/api/manual-entry/${tx.id}`, { method: "DELETE" });
+    if (res.ok) {
+      setRows((prev) => prev.filter((r) => r.id !== tx.id));
+    }
+  }
 
   function handleLoanResolved(id: string, loanNumber: string) {
     setRows((prev) => prev.map((r) =>
@@ -738,7 +957,7 @@ export default function TransactionsPage() {
               </TH>
               <TH label="Source">
                 <ColumnFilter label="Source" type="categorical"
-                  options={["Original", "Addback", "Offshore"]} selected={serverFilters.source}
+                  options={["Original", "Addback", "Offshore", "Manual Entry"]} selected={serverFilters.source}
                   onChange={(v) => setSF("source", v)} />
               </TH>
             </tr>
@@ -806,11 +1025,31 @@ export default function TransactionsPage() {
                     </td>
                     <LoanTagsCell tx={tx} />
                     <td className="px-2 py-0 overflow-hidden whitespace-nowrap">
-                      {tx.source === "addback"
-                        ? <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-700">Addback</span>
-                        : tx.source === "offshore_allocations"
-                          ? <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-700">Offshore</span>
-                          : <span className="text-gray-400 text-[10px]">Original</span>}
+                      {tx.source === "addback" ? (
+                        <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-700">Addback</span>
+                      ) : tx.source === "offshore_allocations" ? (
+                        <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-700">Offshore</span>
+                      ) : tx.source === "manual_entry" ? (
+                        <span className="inline-flex items-center gap-1">
+                          <span className="rounded bg-indigo-100 px-1 py-0.5 text-[10px] font-medium text-indigo-700">Manual</span>
+                          <button
+                            onClick={() => setEditingManualTx(tx)}
+                            title="Edit"
+                            className="rounded p-px text-gray-400 hover:text-blue-600 hover:bg-blue-50"
+                          >
+                            <Pencil size={11} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteManual(tx)}
+                            title="Delete"
+                            className="rounded p-px text-gray-400 hover:text-red-600 hover:bg-red-50"
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 text-[10px]">Original</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -830,6 +1069,15 @@ export default function TransactionsPage() {
           anchorEl={resolveAnchor}
           onResolved={handleLoanResolved}
           onClose={() => { setResolvingTx(null); setResolveAnchor(null); }}
+        />
+      )}
+
+      {/* Manual entry edit modal */}
+      {editingManualTx && (
+        <ManualEntryEditModal
+          tx={editingManualTx}
+          onClose={() => setEditingManualTx(null)}
+          onSaved={() => { setEditingManualTx(null); fetchAll(); }}
         />
       )}
     </div>

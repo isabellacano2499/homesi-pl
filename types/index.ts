@@ -76,7 +76,7 @@ export interface PLTransaction {
   cost_center_conflicts: string[] | null;
   loan_number_incomplete: boolean | null;
   cost_centers?: { name: string } | null;
-  source: "original" | "addback" | "offshore_allocations" | null;
+  source: "original" | "addback" | "offshore_allocations" | "manual_entry" | null;
   check_description_2: string | null;
   check_description_3: string | null;
   category: string | null;
@@ -165,7 +165,7 @@ export interface EnrichedTransaction extends NormalizedRow {
   region: string | null;
   branch_manager: string | null;
   manual_override: false;
-  source: "original" | "addback" | "offshore_allocations";
+  source: "original" | "addback" | "offshore_allocations" | "manual_entry";
 }
 
 export interface EnrichResult {

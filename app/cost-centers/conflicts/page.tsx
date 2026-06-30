@@ -157,27 +157,33 @@ function AssignTab({
 
   useEffect(() => { load(); }, [load]);
 
-  const visibleGroups = useMemo(() => {
-    return groups.filter((g) =>
-      (glFilter.length === 0 || glFilter.includes(g.gl_code)) &&
-      (!txSearch || g.transactions.some((tx) => txMatchesSearch(tx, txSearch))) &&
-      (ccFilter.length === 0 || g.transactions.some((tx) => txMatchesCcFilter(tx, ccFilter, splitsMap)))
-    );
-  }, [groups, glFilter, txSearch, ccFilter, splitsMap]);
-
-  const totalCount = visibleGroups.reduce((s, g) => s + g.transactions.length, 0);
-
-  const allVisibleIds = useMemo(() => {
-    const ids = new Set<string>();
-    visibleGroups.forEach((g) => {
+  // Single pass: computes visible groups AND per-group filtered transactions.
+  // Render body reads from visibleTxsMap (O(1) lookup) instead of re-filtering on every render.
+  const { visibleGroups, visibleTxsMap } = useMemo(() => {
+    const visibleGroups: AssignmentGroup[] = [];
+    const visibleTxsMap = new Map<string, AssignmentTx[]>();
+    for (const g of groups) {
+      if (glFilter.length > 0 && !glFilter.includes(g.gl_code)) continue;
       const txs = g.transactions.filter((tx) =>
         (!txSearch || txMatchesSearch(tx, txSearch)) &&
         txMatchesCcFilter(tx, ccFilter, splitsMap)
       );
-      txs.forEach((tx) => ids.add(tx.id));
-    });
+      if (txs.length > 0) {
+        visibleGroups.push(g);
+        visibleTxsMap.set(g.gl_code, txs);
+      }
+    }
+    return { visibleGroups, visibleTxsMap };
+  }, [groups, glFilter, txSearch, ccFilter, splitsMap]);
+
+  let totalCount = 0;
+  for (const txs of visibleTxsMap.values()) totalCount += txs.length;
+
+  const allVisibleIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const txs of visibleTxsMap.values()) txs.forEach((tx) => ids.add(tx.id));
     return ids;
-  }, [visibleGroups, txSearch, ccFilter, splitsMap]);
+  }, [visibleTxsMap]);
 
   const visibleSelected = useMemo(
     () => [...selected].filter((id) => allVisibleIds.has(id)),
@@ -327,10 +333,7 @@ function AssignTab({
       {visibleGroups.map((group) => {
         const key = group.gl_code;
         const isCollapsed = collapsed.has(key);
-        const visibleTxs = group.transactions.filter((tx) =>
-          (!txSearch || txMatchesSearch(tx, txSearch)) &&
-          txMatchesCcFilter(tx, ccFilter, splitsMap)
-        );
+        const visibleTxs = visibleTxsMap.get(key) ?? [];
         const visibleIds = visibleTxs.map((t) => t.id);
         const groupAllSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
 
@@ -541,26 +544,31 @@ function ManualTab({ branches, costCenters, glFilter, txSearch, ccFilter }: { br
 
   useEffect(() => { load(); }, [load]);
 
-  const visibleGroups = useMemo(() =>
-    groups.filter((g) =>
-      (glFilter.length === 0 || glFilter.includes(g.gl_code)) &&
-      (!txSearch || g.transactions.some((tx) => txMatchesSearch(tx, txSearch))) &&
-      (ccFilter.length === 0 || g.transactions.some((tx) => txMatchesCcFilter(tx, ccFilter, splitsMap)))
-    ), [groups, glFilter, txSearch, ccFilter, splitsMap]);
-
-  const totalCount = visibleGroups.reduce((s, g) => s + g.transactions.length, 0);
-
-  const allVisibleIds = useMemo(() => {
-    const ids = new Set<string>();
-    visibleGroups.forEach((g) => {
+  const { visibleGroups, visibleTxsMap } = useMemo(() => {
+    const visibleGroups: AssignmentGroup[] = [];
+    const visibleTxsMap = new Map<string, AssignmentTx[]>();
+    for (const g of groups) {
+      if (glFilter.length > 0 && !glFilter.includes(g.gl_code)) continue;
       const txs = g.transactions.filter((tx) =>
         (!txSearch || txMatchesSearch(tx, txSearch)) &&
         txMatchesCcFilter(tx, ccFilter, splitsMap)
       );
-      txs.forEach((tx) => ids.add(tx.id));
-    });
+      if (txs.length > 0) {
+        visibleGroups.push(g);
+        visibleTxsMap.set(g.gl_code, txs);
+      }
+    }
+    return { visibleGroups, visibleTxsMap };
+  }, [groups, glFilter, txSearch, ccFilter, splitsMap]);
+
+  let totalCount = 0;
+  for (const txs of visibleTxsMap.values()) totalCount += txs.length;
+
+  const allVisibleIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const txs of visibleTxsMap.values()) txs.forEach((tx) => ids.add(tx.id));
     return ids;
-  }, [visibleGroups, txSearch, ccFilter, splitsMap]);
+  }, [visibleTxsMap]);
 
   const visibleSelected = useMemo(
     () => [...selected].filter((id) => allVisibleIds.has(id)),
@@ -721,10 +729,7 @@ function ManualTab({ branches, costCenters, glFilter, txSearch, ccFilter }: { br
       {visibleGroups.map((group) => {
         const key = group.gl_code;
         const isCollapsed = collapsed.has(key);
-        const visibleTxs = group.transactions.filter((tx) =>
-          (!txSearch || txMatchesSearch(tx, txSearch)) &&
-          txMatchesCcFilter(tx, ccFilter, splitsMap)
-        );
+        const visibleTxs = visibleTxsMap.get(key) ?? [];
         const visibleIds = visibleTxs.map((t) => t.id);
         const groupAllSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
         return (
@@ -1259,28 +1264,31 @@ function ConflictResolvedTab({
 
   const allGroupsCount = groups.reduce((s, g) => s + g.transactions.length, 0);
 
-  const visibleGroups = useMemo(() =>
-    groups.filter((g) =>
-      (glFilter.length === 0 || glFilter.includes(g.gl_code)) &&
-      (!txSearch || g.transactions.some((tx) => txMatchesSearch(tx, txSearch))) &&
-      (ccFilter.length === 0 || g.transactions.some((tx) =>
-        tx.resolved_cc?.name != null && ccFilter.includes(tx.resolved_cc.name)
-      ))
-    ), [groups, glFilter, txSearch, ccFilter]);
-
-  const totalCount = visibleGroups.reduce((s, g) => s + g.transactions.length, 0);
-
-  const allVisibleIds = useMemo(() => {
-    const ids = new Set<string>();
-    visibleGroups.forEach((g) => {
+  const { visibleGroups, visibleTxsMap } = useMemo(() => {
+    const visibleGroups: ResolvedConflictGroup[] = [];
+    const visibleTxsMap = new Map<string, ResolvedConflictGroup["transactions"]>();
+    for (const g of groups) {
+      if (glFilter.length > 0 && !glFilter.includes(g.gl_code)) continue;
       const txs = g.transactions.filter((tx) =>
         (!txSearch || txMatchesSearch(tx, txSearch)) &&
         (ccFilter.length === 0 || (tx.resolved_cc?.name != null && ccFilter.includes(tx.resolved_cc.name)))
       );
-      txs.forEach((tx) => ids.add(tx.id));
-    });
+      if (txs.length > 0) {
+        visibleGroups.push(g);
+        visibleTxsMap.set(g.gl_code, txs);
+      }
+    }
+    return { visibleGroups, visibleTxsMap };
+  }, [groups, glFilter, txSearch, ccFilter]);
+
+  let totalCount = 0;
+  for (const txs of visibleTxsMap.values()) totalCount += txs.length;
+
+  const allVisibleIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const txs of visibleTxsMap.values()) txs.forEach((tx) => ids.add(tx.id));
     return ids;
-  }, [visibleGroups, txSearch, ccFilter]);
+  }, [visibleTxsMap]);
 
   const visibleSelected = useMemo(
     () => [...selected].filter((id) => allVisibleIds.has(id)),
@@ -1329,10 +1337,7 @@ function ConflictResolvedTab({
       {visibleGroups.map((group) => {
         const key = group.gl_code;
         const isCollapsed = collapsedGroups.has(key);
-        const visibleTxs = group.transactions.filter((tx) =>
-          (!txSearch || txMatchesSearch(tx, txSearch)) &&
-          (ccFilter.length === 0 || (tx.resolved_cc?.name != null && ccFilter.includes(tx.resolved_cc.name)))
-        );
+        const visibleTxs = visibleTxsMap.get(key) ?? [];
         const visibleIds = visibleTxs.map((t) => t.id);
         const groupAllSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
         return (
@@ -1496,8 +1501,13 @@ export default function CCAssignmentPage() {
   const [allGlCodes, setAllGlCodes] = useState<string[]>([]);
   const [ccFilter, setCcFilter] = useState<string[]>([]);
   const [txSearch, setTxSearch] = useState("");
-  // Effective branches = intersection of global filter and local selection
-  const effectiveBranches = mergeWithGlobal(activeBranches, branches);
+  // Effective branches = intersection of global filter and local selection.
+  // useMemo ensures this produces a stable reference when inputs haven't changed,
+  // preventing the child tabs' useCallback/useEffect from re-firing unnecessarily.
+  const effectiveBranches = useMemo(
+    () => mergeWithGlobal(activeBranches, branches),
+    [activeBranches, branches]
+  );
 
   useEffect(() => {
     fetch("/api/cost-centers")
