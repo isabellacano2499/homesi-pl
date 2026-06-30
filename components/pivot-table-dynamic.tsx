@@ -11,6 +11,7 @@ import {
   type PivotField,
   type PivotNode,
 } from "@/lib/pivot-engine";
+import { fanOutBySplits, type SplitEntry } from "@/lib/apply-splits";
 import type { PLReportTx } from "@/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -53,6 +54,8 @@ function mvClsLight(v: number | undefined): string {
 
 export interface PivotTableDynamicProps {
   txs: PLReportTx[];
+  /** Pass the raw splits map so the component can fan-out when "Cost Center" enters the hierarchy. */
+  splitsMap?: Map<string, SplitEntry[]>;
   defaultLevels: PivotField[];
   availableFields?: PivotField[];
   storageKey?: string;
@@ -274,6 +277,7 @@ function readStorage(key: string, defaultLevels: PivotField[]): PivotField[] {
 
 export function PivotTableDynamic({
   txs,
+  splitsMap,
   defaultLevels,
   availableFields = ALL_FIELDS,
   storageKey,
@@ -358,10 +362,17 @@ export function PivotTableDynamic({
 
   const hasNonOp = useMemo(() => txs.some(t => (t.operational_pct ?? 100) < 100), [txs]);
 
-  const workingTxs = useMemo(
-    () => activeLevels.includes("op_nonop") ? expandForOpNonOp(txs) : txs as ExpandedTx[],
-    [txs, activeLevels],
-  );
+  const workingTxs = useMemo(() => {
+    // Fan out splits when Cost Center is in the hierarchy so each virtual row
+    // carries its prorated movement and its own cost_center_id (same as CC Report).
+    // Only applied when a splitsMap is provided — callers that pre-fan their data
+    // (P&L All CC mode, Cost Center Report) omit splitsMap to avoid double-fanning.
+    const base: PLReportTx[] =
+      activeLevels.includes("cost_center") && splitsMap
+        ? fanOutBySplits(txs, splitsMap)
+        : txs;
+    return activeLevels.includes("op_nonop") ? expandForOpNonOp(base) : base as ExpandedTx[];
+  }, [txs, activeLevels, splitsMap]);
 
   const tree = useMemo(
     () => buildDynamicPivot(workingTxs, activeLevels),

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { Plus, Search, Trash2, RefreshCw, ChevronRight, Unlink } from "lucide-react";
+import { Plus, Search, Trash2, RefreshCw, ChevronRight, Unlink, ArrowUpAZ, ArrowDownAZ, ChevronsUpDown } from "lucide-react";
 import { useActiveBranches } from "@/components/branch-filter-provider";
 import type { CostCenter } from "@/types";
 
@@ -62,11 +62,20 @@ export default function CostCentersPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const [nameSort, setNameSort] = useState<"asc" | "desc" | null>(null);
+
   const filtered = records.filter(
     (r) =>
       r.name.toLowerCase().includes(query.toLowerCase()) ||
       (r.description ?? "").toLowerCase().includes(query.toLowerCase())
   );
+
+  const sorted = nameSort
+    ? [...filtered].sort((a, b) => {
+        const dir = nameSort === "asc" ? 1 : -1;
+        return dir * a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      })
+    : filtered;
 
   async function handleAdd() {
     if (!newName.trim()) { setSaveErr("Name is required"); return; }
@@ -285,14 +294,27 @@ export default function CostCentersPage() {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">
-                <th className="px-4 py-3 font-medium">Cost Center</th>
+                <th className="px-4 py-3 font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Cost Center
+                    <button
+                      onClick={() => setNameSort(d => d === null ? "asc" : d === "asc" ? "desc" : null)}
+                      title={nameSort === null ? "Sort A→Z" : nameSort === "asc" ? "Sort Z→A" : "Clear sort"}
+                      className="rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-blue-600"
+                    >
+                      {nameSort === "asc"  ? <ArrowUpAZ   size={13} className="text-blue-500" /> :
+                       nameSort === "desc" ? <ArrowDownAZ size={13} className="text-blue-500" /> :
+                                             <ChevronsUpDown size={13} />}
+                    </button>
+                  </span>
+                </th>
                 <th className="px-4 py-3 font-medium">Description</th>
                 <th className="px-4 py-3 font-medium text-center">Matching Rules</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody>
-              {filtered.map((cc) => {
+              {sorted.map((cc) => {
                 const color = ACCENT_COLORS[ccColorIndex(cc.id)];
                 return (
                   <tr

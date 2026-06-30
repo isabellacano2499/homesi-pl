@@ -274,6 +274,7 @@ export default function PLAllPage() {
       {(loaded || loading) && viewMode === "gl" && (
         <PivotTableDynamic
           txs={txs}
+          splitsMap={splitsMap}
           defaultLevels={["op_nonop", "category_2", "category_6", "category_7", "gl"]}
           storageKey="pl_all_gl_hierarchy"
           loading={loading}
