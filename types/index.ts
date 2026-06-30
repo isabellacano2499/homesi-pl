@@ -250,6 +250,7 @@ export interface TransactionColumnValues {
   ref_numb: string[];
   check_description_2: string[];
   check_description_3: string[];
+  source: string[];
 }
 
 /** Full filter options including cost centers (replaces /api/transactions/values). */

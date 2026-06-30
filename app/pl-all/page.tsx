@@ -34,6 +34,14 @@ const CSV_COLUMNS = [
 
 type ViewMode = "gl" | "cc";
 
+const SOURCE_LABELS: Record<string, string> = {
+  original:             "Original",
+  addback:              "Addback",
+  offshore_allocations: "OA",
+  manual_entry:         "Manual Entry",
+};
+function srcLabel(s: string) { return SOURCE_LABELS[s] ?? s; }
+
 function FilterChip({ label, value }: { label: string; value: string }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-100 px-2 py-0.5 text-[11px]">
@@ -157,7 +165,7 @@ export default function PLAllPage() {
   if (loadedBranches.length > 0)
     loadedChips.push({ label: "Branch", value: loadedBranches.length === 1 ? loadedBranches[0] : `${loadedBranches.length} branches` });
   if (loadedSources.length > 0)
-    loadedChips.push({ label: "Source", value: loadedSources.map(s => s === "offshore_allocations" ? "OA" : s).join(", ") });
+    loadedChips.push({ label: "Source", value: loadedSources.map(srcLabel).join(", ") });
 
   return (
     <div className="flex flex-col gap-3">
@@ -171,7 +179,7 @@ export default function PLAllPage() {
           <ReportFilter label="Branch" options={opts?.branch ?? []}              selected={branches} onChange={setBranches} />
           <ReportFilter
             label="Source"
-            options={["original", "addback", "offshore_allocations"]}
+            options={opts?.source ?? []}
             selected={sources}
             onChange={setSources}
           />

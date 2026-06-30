@@ -12,7 +12,7 @@ const MONTH_ORDER = [
 const CATEGORICAL_COLS = [
   "month", "year", "gl_code", "gl_name",
   "branch", "vendor", "category_5", "category_6", "ref_numb",
-  "check_description_2", "check_description_3",
+  "check_description_2", "check_description_3", "source",
 ] as const;
 type CatCol = (typeof CATEGORICAL_COLS)[number];
 

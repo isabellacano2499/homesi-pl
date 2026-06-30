@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, ArrowUpAZ, ArrowDownAZ, ChevronsUpDown } from "lucide-react";
 import {
   ALL_FIELDS,
   FIELD_LABELS,
@@ -70,6 +70,7 @@ function renderPivotNodes(
   toggle: (k: string) => void,
   rows: React.ReactNode[],
   pathPrefix: string,
+  descSort: "asc" | "desc" | null,
 ) {
   const ds = DEPTH_STYLES[Math.min(depth, DEPTH_STYLES.length - 1)];
   const pl = depth * 16 + 8;
@@ -85,7 +86,13 @@ function renderPivotNodes(
 
     // Flat (no-level) case: render leaf rows directly without a group header
     if (node.key === "__flat__") {
-      for (const t of node.txLeaves) {
+      const flatLeaves = descSort
+        ? [...node.txLeaves].sort((a, b) => {
+            const dir = descSort === "asc" ? 1 : -1;
+            return dir * (a.desc ?? "").localeCompare(b.desc ?? "", undefined, { sensitivity: "base" });
+          })
+        : node.txLeaves;
+      for (const t of flatLeaves) {
         rows.push(
           <tr key={`flat|leaf:${t.id}`} className="border-b border-gray-50 hover:bg-blue-50/20">
             <td
@@ -167,13 +174,19 @@ function renderPivotNodes(
 
     // Recurse into children
     if (node.children.length > 0) {
-      renderPivotNodes(node.children, depth + 1, months, exp, toggle, rows, nodeKey);
+      renderPivotNodes(node.children, depth + 1, months, exp, toggle, rows, nodeKey, descSort);
     }
 
     // Leaf transaction rows
     if (node.txLeaves.length > 0) {
       const leafPl = (depth + 1) * 16 + 8;
-      for (const t of node.txLeaves) {
+      const sortedLeaves = descSort
+        ? [...node.txLeaves].sort((a, b) => {
+            const dir = descSort === "asc" ? 1 : -1;
+            return dir * (a.desc ?? "").localeCompare(b.desc ?? "", undefined, { sensitivity: "base" });
+          })
+        : node.txLeaves;
+      for (const t of sortedLeaves) {
         rows.push(
           <tr key={`${nodeKey}|leaf:${t.id}`} className="border-b border-gray-50 hover:bg-blue-50/20">
             <td
@@ -272,6 +285,7 @@ export function PivotTableDynamic({
   );
   const [addOpen, setAddOpen] = useState(false);
   const [exp, setExp] = useState<Set<string>>(new Set());
+  const [descSort, setDescSort] = useState<"asc" | "desc" | null>(null);
   const addRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -400,7 +414,7 @@ export function PivotTableDynamic({
     </tr>
   );
 
-  renderPivotNodes(tree, 0, months, exp, toggle, rows, "root");
+  renderPivotNodes(tree, 0, months, exp, toggle, rows, "root", descSort);
 
   return (
     <div className="flex flex-col gap-2">
@@ -481,7 +495,18 @@ export function PivotTableDynamic({
           <thead className="sticky top-0 z-20 bg-gray-50">
             <tr className="border-b border-gray-200">
               <th className="sticky left-0 z-30 bg-gray-50 px-3 py-1.5 text-left text-[10px] font-semibold text-gray-500 whitespace-nowrap">
-                {levelHeader}
+                <span className="inline-flex items-center gap-1.5">
+                  {levelHeader}
+                  <button
+                    onClick={() => setDescSort(d => d === null ? "asc" : d === "asc" ? "desc" : null)}
+                    title={descSort === null ? "Sort descriptions A→Z" : descSort === "asc" ? "Sort descriptions Z→A" : "Clear description sort"}
+                    className="rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-blue-600"
+                  >
+                    {descSort === "asc"  ? <ArrowUpAZ   size={11} className="text-blue-500" /> :
+                     descSort === "desc" ? <ArrowDownAZ size={11} className="text-blue-500" /> :
+                                           <ChevronsUpDown size={11} />}
+                  </button>
+                </span>
               </th>
               {months.map(m => (
                 <th key={m} className="bg-gray-50 px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 whitespace-nowrap">

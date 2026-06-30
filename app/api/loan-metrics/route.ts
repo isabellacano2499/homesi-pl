@@ -11,6 +11,7 @@ type OfficialRow = {
   support_on_demand: boolean;
   affinity: boolean;
   recruitment: boolean;
+  month?: string | null;
 };
 
 function computeMetrics(offs: OfficialRow[]) {
@@ -38,50 +39,36 @@ export async function GET(req: NextRequest) {
   const groupBy  = sp.get("group_by"); // "month" for per-month breakdown
 
   // ── Per-month mode ────────────────────────────────────────────────────────────
+  // Query loan_officials directly (same source as the standalone Loan Count module)
+  // so both views count from the same master list.
   if (groupBy === "month") {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q: any = supabase
-      .from("pl_transactions")
-      .select("month,loan_number")
-      .not("loan_number", "is", null)
-      .not("loan_number_incomplete", "eq", true);
+      .from("loan_officials")
+      .select("month,loan_number,loan_info_channel,b2b,processing,support_on_demand,affinity,recruitment");
 
     if (years.length)    q = q.in("year", years);
     if (branches.length) q = q.in("branch", branches);
-    if (sources.length)  q = q.in("source", sources);
-    if (ccIds.length)    q = q.in("cost_center_id", ccIds);
 
-    const { data: txRows, error: txErr } = await q;
-    if (txErr) return NextResponse.json({ error: txErr.message }, { status: 500 });
-
-    // Group loan_numbers by month
-    const monthToLoans = new Map<string, Set<string>>();
-    for (const row of txRows ?? []) {
-      const m  = row.month as string | null;
-      const ln = row.loan_number as string | null;
-      if (!m || !ln) continue;
-      const s = monthToLoans.get(m) ?? new Set<string>();
-      s.add(ln);
-      monthToLoans.set(m, s);
-    }
-
-    if (monthToLoans.size === 0) return NextResponse.json({ by_month: {} });
-
-    const allLns = [...new Set((txRows ?? []).map((r: { loan_number: string | null }) => r.loan_number).filter(Boolean))] as string[];
-
-    const { data: officials, error: loErr } = await supabase
-      .from("loan_officials")
-      .select("loan_number,loan_info_channel,b2b,processing,support_on_demand,affinity,recruitment")
-      .in("loan_number", allLns);
+    const { data: officials, error: loErr } = await q;
     if (loErr) return NextResponse.json({ error: loErr.message }, { status: 500 });
 
-    const officialMap = new Map<string, OfficialRow>();
-    for (const o of officials ?? []) officialMap.set(o.loan_number as string, o as OfficialRow);
-
     const by_month: Record<string, ReturnType<typeof computeMetrics>> = {};
-    for (const [month, loanSet] of monthToLoans) {
-      const offs = [...loanSet].map((ln) => officialMap.get(ln)).filter((o): o is OfficialRow => !!o);
-      by_month[month] = computeMetrics(offs);
+    for (const o of (officials ?? []) as OfficialRow[]) {
+      const m = o.month;
+      if (!m) continue;
+      if (!by_month[m]) by_month[m] = computeMetrics([]);
+      const existing = by_month[m];
+      // Accumulate counts inline to avoid rebuilding arrays
+      existing.total++;
+      if (o.loan_info_channel === "Banked - Retail") existing.banked++;
+      else if (o.loan_info_channel === "Brokered") existing.brokered++;
+      else if (o.loan_info_channel) existing.other++;
+      if (o.b2b)              existing.b2b++;
+      if (o.processing)       existing.processing++;
+      if (o.support_on_demand)existing.support_on_demand++;
+      if (o.affinity)         existing.affinity++;
+      if (o.recruitment)      existing.recruitment++;
     }
 
     return NextResponse.json({ by_month });

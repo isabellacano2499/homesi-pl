@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { RefreshCw, AlertTriangle, Download, Search, X, Pencil, Trash2 } from "lucide-react";
+import { RefreshCw, AlertTriangle, Download, Search, X, Pencil, Trash2, ChevronsUpDown, ArrowUpAZ, ArrowDownAZ } from "lucide-react";
 import { downloadCSV } from "@/lib/csv";
 import { ColumnFilter } from "@/components/column-filter";
 import { buildSplitsMap } from "@/lib/apply-splits";
@@ -611,7 +611,7 @@ export default function TransactionsPage() {
   const [filterOpts, setFilterOpts] = useState<FilterOptionsResponse>({
     month: [], year: [], gl_code: [], gl_name: [],
     branch: [], vendor: [], category_5: [], category_6: [], ref_numb: [],
-    check_description_2: [], check_description_3: [],
+    check_description_2: [], check_description_3: [], source: [],
     costCenters: [],
   });
 
@@ -621,6 +621,7 @@ export default function TransactionsPage() {
 
   const [serverFilters, setServerFilters] = useState<ServerFilters>(emptyServer());
   const [clientFilters, setClientFilters] = useState<ClientFilters>(emptyClient());
+  const [descSort, setDescSort] = useState<"asc" | "desc" | null>(null);
 
   const [rows, setRows] = useState<PLTransaction[]>([]);
   const [totals, setTotals] = useState<TransactionTotals>({ debit: 0, credit: 0, movement: 0 });
@@ -700,8 +701,15 @@ export default function TransactionsPage() {
       );
     }
 
+    if (descSort) {
+      const dir = descSort === "asc" ? 1 : -1;
+      out = [...out].sort((a, b) =>
+        dir * (a.check_description ?? "").localeCompare(b.check_description ?? "", undefined, { sensitivity: "base" })
+      );
+    }
+
     return out;
-  }, [rows, clientFilters]);
+  }, [rows, clientFilters, descSort]);
 
   const N = displayedRows.length;
   const firstV = Math.floor(scrollTop / ROW_H);
@@ -915,6 +923,15 @@ export default function TransactionsPage() {
                   onChange={(v) => setSF("branch", v)} />
               </TH>
               <TH label="Description">
+                <button
+                  onClick={() => setDescSort(d => d === null ? "asc" : d === "asc" ? "desc" : null)}
+                  title={descSort === null ? "Sort A→Z" : descSort === "asc" ? "Sort Z→A" : "Clear sort"}
+                  className="ml-0.5 text-gray-400 hover:text-blue-600"
+                >
+                  {descSort === "asc"  ? <ArrowUpAZ   size={11} className="text-blue-500" /> :
+                   descSort === "desc" ? <ArrowDownAZ size={11} className="text-blue-500" /> :
+                                         <ChevronsUpDown size={11} />}
+                </button>
                 <ColumnFilter label="Description" type="text"
                   value={serverFilters.description}
                   onChange={(v) => setSF("description", v)} />
