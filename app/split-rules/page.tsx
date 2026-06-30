@@ -326,6 +326,7 @@ function RuleForm({
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [isOperational, setIsOperational] = useState(initial?.is_operational ?? true);
   const [conditions, setConditions] = useState<DraftCondition[]>(() => {
     if (!initial || initial.conditions.length === 0) return [blankCondition(1)];
     return initial.conditions
@@ -393,7 +394,7 @@ function RuleForm({
           fetch(`/api/split-rules/${initial.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: payload.name, description: payload.description }),
+            body: JSON.stringify({ name: payload.name, description: payload.description, is_operational: isOperational }),
           }),
           fetch(`/api/split-rules/${initial.id}/conditions`, {
             method: "PUT",
@@ -420,7 +421,7 @@ function RuleForm({
         const res = await fetch("/api/split-rules", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ ...payload, is_operational: isOperational }),
         });
         const json = await res.json();
         if (!res.ok) { setErr(sanitizeApiError(json.error)); return; }
@@ -454,6 +455,22 @@ function RuleForm({
             className="w-full text-sm border border-gray-300 bg-white text-gray-900 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
           />
         </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-600">Classification:</span>
+        <button
+          type="button"
+          onClick={() => setIsOperational(!isOperational)}
+          className={`text-xs px-3 py-1 rounded-lg border font-medium transition-colors ${
+            isOperational
+              ? "border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
+              : "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+          }`}
+        >
+          {isOperational ? "Operational" : "Non-Operational"}
+        </button>
+        <span className="text-[11px] text-gray-400">— affects all transactions matched by this rule</span>
       </div>
 
       <div>
@@ -553,6 +570,11 @@ function RuleRow({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-900">{rule.name}</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+              rule.is_operational ? "bg-green-100 text-green-700" : "bg-red-50 text-red-600"
+            }`}>
+              {rule.is_operational ? "Op" : "Non-Op"}
+            </span>
             <span className="text-xs text-gray-400">
               {rule.conditions.length} condition{rule.conditions.length !== 1 ? "s" : ""}
             </span>

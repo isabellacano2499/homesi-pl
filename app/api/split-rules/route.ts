@@ -13,9 +13,10 @@ export async function POST(req: NextRequest) {
   const supabase = createServerClient();
 
   const body = await req.json().catch(() => ({}));
-  const { name, description, conditions, allocations } = body as {
+  const { name, description, is_operational = true, conditions, allocations } = body as {
     name: string;
     description?: string;
+    is_operational?: boolean;
     conditions: Omit<SplitRuleCondition, "id" | "split_rule_id" | "created_at">[];
     allocations: Omit<SplitRuleAllocation, "id" | "split_rule_id">[];
   };
@@ -31,7 +32,7 @@ export async function POST(req: NextRequest) {
 
   const { data: rule, error: ruleErr } = await supabase
     .from("split_rules")
-    .insert({ name: name.trim(), description: description?.trim() ?? null })
+    .insert({ name: name.trim(), description: description?.trim() ?? null, is_operational })
     .select()
     .single();
 

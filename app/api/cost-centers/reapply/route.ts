@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
       cost_center_conflicts: string[] | null;
       assignment_origin: string | null;
       conflict_type: string | null;
+      operational_pct: number;
     }[] = [];
 
     for (const tx of rows) {
@@ -141,6 +142,7 @@ export async function POST(req: NextRequest) {
         cost_center_conflicts: r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
         assignment_origin: origin,
         conflict_type: r.conflict_type ?? null,
+        operational_pct: r.operational_pct,
       });
 
       if (r.cost_center_status === "conflict") {
@@ -164,6 +166,7 @@ export async function POST(req: NextRequest) {
               cost_center_conflicts: u.cost_center_conflicts,
               assignment_origin: u.assignment_origin,
               conflict_type: u.conflict_type,
+              operational_pct: u.operational_pct,
             })
             .eq("id", u.id)
         )

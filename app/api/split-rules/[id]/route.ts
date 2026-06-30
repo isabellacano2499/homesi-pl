@@ -28,19 +28,55 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       typeof body.description === "string" ? body.description.trim() || null : null;
   }
 
+  const operationalChanged = "is_operational" in body && typeof body.is_operational === "boolean";
+  const extra: Record<string, boolean> = {};
+  if (operationalChanged) extra.is_operational = body.is_operational as boolean;
+
   if ("name" in allowed && !allowed.name) {
     return NextResponse.json({ error: "Name cannot be empty" }, { status: 400 });
   }
-  if (Object.keys(allowed).length === 0) {
+  if (Object.keys(allowed).length === 0 && Object.keys(extra).length === 0) {
     return NextResponse.json({ error: "No valid fields" }, { status: 400 });
   }
 
   const { error } = await supabase
     .from("split_rules")
-    .update({ ...allowed, updated_at: new Date().toISOString() })
+    .update({ ...allowed, ...extra, updated_at: new Date().toISOString() })
     .eq("id", id);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // When is_operational changes, recompute operational_pct for all rule-assigned transactions
+  if (operationalChanged) {
+    const [splitRules, settingsResult] = await Promise.all([
+      loadAllSplitRules(supabase),
+      supabase.from("app_settings").select("active_branches").limit(1).single(),
+    ]);
+    const activeBranches: string[] = Array.isArray(settingsResult.data?.active_branches)
+      ? settingsResult.data.active_branches
+      : [];
+
+    const txIds: string[] = [];
+    let offset = 0;
+    while (true) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q: any = supabase
+        .from("pl_transactions")
+        .select("id")
+        .in("assignment_origin", ["rule", "rule_split"])
+        .range(offset, offset + 999);
+      if (activeBranches.length > 0) q = q.in("branch", activeBranches);
+      const { data } = await q;
+      if (!data || data.length === 0) break;
+      txIds.push(...(data as { id: string }[]).map((r) => r.id));
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+
+    if (txIds.length > 0) {
+      await reevaluateRuleAssigned(supabase, txIds, splitRules);
+    }
+  }
 
   const rules = await loadAllSplitRules(supabase);
   return NextResponse.json(rules.find((r) => r.id === id) ?? null);

@@ -7,6 +7,7 @@ import type { CostCenter } from "@/types";
 interface SplitRow {
   cost_center_id: string;
   percentage: string;
+  is_operational: boolean;
 }
 
 interface SplitEditorProps {
@@ -22,7 +23,7 @@ interface SplitEditorProps {
 export function SplitEditor({
   assignType, assignValue, displayName, txCount, costCenters, onClose, onSaved,
 }: SplitEditorProps) {
-  const [rows, setRows]       = useState<SplitRow[]>([{ cost_center_id: "", percentage: "100" }]);
+  const [rows, setRows]       = useState<SplitRow[]>([{ cost_center_id: "", percentage: "100", is_operational: true }]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
   const [errMsg, setErrMsg]   = useState("");
@@ -33,11 +34,12 @@ export function SplitEditor({
       `/api/cc-allocation-splits?type=${encodeURIComponent(assignType)}&value=${encodeURIComponent(assignValue)}`
     )
       .then((r) => r.json())
-      .then((data: { cost_center_id: string; percentage: number }[]) => {
+      .then((data: { cost_center_id: string; percentage: number; is_operational?: boolean }[]) => {
         if (data.length > 0) {
           setRows(data.map((d) => ({
             cost_center_id: d.cost_center_id,
             percentage: String(d.percentage),
+            is_operational: d.is_operational ?? true,
           })));
         }
         // else: keep the default [{ cc: "", percentage: "100" }]
@@ -57,7 +59,7 @@ export function SplitEditor({
   function setRowField(idx: number, field: keyof SplitRow, value: string) {
     setRows((prev) => prev.map((r, i) => i === idx ? { ...r, [field]: value } : r));
   }
-  function addRow()         { setRows((prev) => [...prev, { cost_center_id: "", percentage: "" }]); }
+  function addRow()         { setRows((prev) => [...prev, { cost_center_id: "", percentage: "", is_operational: true }]); }
   function removeRow(idx: number) { setRows((prev) => prev.filter((_, i) => i !== idx)); }
 
   async function handleSave() {
@@ -69,7 +71,7 @@ export function SplitEditor({
         body: JSON.stringify({
           assign_type:  assignType,
           assign_value: assignValue,
-          splits: parsedRows.map((r) => ({ cost_center_id: r.cost_center_id, percentage: r.pct })),
+          splits: parsedRows.map((r) => ({ cost_center_id: r.cost_center_id, percentage: r.pct, is_operational: r.is_operational })),
         }),
       });
       const json = await res.json();
@@ -122,16 +124,17 @@ export function SplitEditor({
           ) : (
             <>
               {/* Column labels */}
-              <div className="grid grid-cols-[1fr_6rem_1.5rem] gap-2 px-0.5">
+              <div className="grid grid-cols-[1fr_6rem_5rem_1.5rem] gap-2 px-0.5">
                 <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wide">Cost Center</span>
                 <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wide text-right">%</span>
+                <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wide text-center">Type</span>
                 <span />
               </div>
 
               {/* Rows */}
               <div className="space-y-2">
                 {rows.map((row, idx) => (
-                  <div key={idx} className="grid grid-cols-[1fr_6rem_1.5rem] gap-2 items-center">
+                  <div key={idx} className="grid grid-cols-[1fr_6rem_5rem_1.5rem] gap-2 items-center">
                     <select
                       value={row.cost_center_id}
                       onChange={(e) => setRowField(idx, "cost_center_id", e.target.value)}
@@ -155,6 +158,18 @@ export function SplitEditor({
                       />
                       <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">%</span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setRows((prev) => prev.map((r, i) => i === idx ? { ...r, is_operational: !r.is_operational } : r))}
+                      className={`text-[10px] rounded px-1.5 py-1 font-medium border transition-colors ${
+                        row.is_operational
+                          ? "border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
+                          : "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+                      }`}
+                      title={row.is_operational ? "Operational — click to toggle" : "Non-Operational — click to toggle"}
+                    >
+                      {row.is_operational ? "Op" : "Non-Op"}
+                    </button>
                     <button
                       onClick={() => removeRow(idx)}
                       disabled={rows.length <= 1}

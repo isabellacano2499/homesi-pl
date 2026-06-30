@@ -82,6 +82,7 @@ export interface PLTransaction {
   category: string | null;
   position: string | null;
   branch_allocation: string | null;
+  operational_pct: number;
   created_at: string;
   // Loan Officials tags — populated by Transaction Review API (not stored on pl_transactions)
   b2b?: boolean | null;
@@ -107,6 +108,7 @@ export interface CostCenterEvalResult {
   cost_center_conflicts: string[];  // unified rule IDs that matched (conflicts only)
   conflict_type?: "underassigned" | "overassigned";
   rule_splits?: Array<{ cost_center_id: string; percentage: number }>;
+  operational_pct: number;          // 0–100; proportion of movement that is Operational
 }
 
 // ─── Normalization pipeline ───────────────────────────────────────────────────
@@ -276,10 +278,12 @@ export interface PLReportTx {
   order_3: number | null;
   check_description_2?: string | null;
   check_description_3?: string | null;
+  loan_number?: string | null;
   // Optional CC fields — present when the CC view is requested
   cost_center_id?: string | null;
   cost_center_status?: string | null;
   cost_centers?: { name: string } | null;
+  operational_pct?: number;
 }
 
 /** PLReportTx with guaranteed CC fields — used by the "P&L by Cost Center" pivot */
@@ -330,6 +334,7 @@ export interface SplitRule {
   id: string;
   name: string;
   description: string | null;
+  is_operational: boolean;
   created_at: string;
   updated_at: string;
 }

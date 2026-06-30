@@ -3,14 +3,20 @@
 // ─── Pivot Table — P&L by GL ───────────────────────────────────────────────────
 // Hierarchy (top → bottom):
 //   Total Income  (navy, sticky)
-//   Category 2    (blue-50, order_1)
-//     Category 6  (indigo-50, order_2; "(No Category 6)" last)
-//       Category 7  (gray-50, order_3)
-//         "GL Code - GL Name"  (white, alphabetical by code)
-//             Check Description 2  (sky-50, only for OA transactions)
-//               Check Description 3 (sky-50/30, only for OA transactions)
-//                 Transactions (leaf)
-//             Transactions without CD2 (leaf)
+//   Operational   (emerald, expandable)
+//     Category 2    (blue-50, order_1)
+//       Category 6  (indigo-50, order_2; "(No Category 6)" last)
+//         Category 7  (gray-50, order_3)
+//           "GL Code - GL Name"  (white, alphabetical by code)
+//               Check Description 2  (sky-50, only for OA transactions)
+//                 Check Description 3 (sky-50/30, only for OA transactions)
+//                   Transactions (leaf)
+//               Transactions without CD2 (leaf)
+//     Net Income (Operational)
+//   Non-Operational (slate, expandable)
+//     (same sub-hierarchy)
+//     Net Income (Non-Operational)
+//   Combined Total (navy, bottom)
 
 import { useMemo, useState } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
@@ -168,69 +174,30 @@ function MCell({ v, bold }: { v: number | undefined; bold?: boolean }) {
   return <td className={`${numCell} ${bold ? "font-bold" : ""} ${mvCls(v)}`}>{fmtM(v)}</td>;
 }
 
-// ─── PivotTable ───────────────────────────────────────────────────────────────
+// ─── Scale a tx by a multiplier (for Op/NonOp proportional split) ─────────────
 
-interface PivotTableProps {
-  txs: PLReportTx[];
-  loading?: boolean;
-  emptyMessage?: string;
+function scaleTx(tx: PLReportTx, factor: number): PLReportTx {
+  return {
+    ...tx,
+    movement: (tx.movement ?? 0) * factor,
+    debit:    (tx.debit    ?? 0) * factor,
+    credit:   (tx.credit   ?? 0) * factor,
+  };
 }
 
-const TOTAL_BG = "#1e3a5f";
+// ─── Render cat2 nodes for one Op/NonOp block ─────────────────────────────────
 
-export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTableProps) {
-  const { cat2s, months } = useMemo(() => buildPivot(txs), [txs]);
-  const [exp, setExp] = useState<Set<string>>(new Set());
-
-  function toggle(key: string) {
-    setExp(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 py-8 text-xs text-gray-400">
-        <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
-        Loading…
-      </div>
-    );
-  }
-  if (cat2s.length === 0) {
-    return <p className="py-8 text-center text-xs text-gray-400">{emptyMessage}</p>;
-  }
-
-  const grandTotal = cat2s.reduce((s, c) => s + c.total, 0);
-  const grandByMonth: Record<string,number> = {};
-  for (const c of cat2s)
-    for (const [m, v] of Object.entries(c.byMonth))
-      grandByMonth[m] = (grandByMonth[m] ?? 0) + v;
-
+function renderCat2Nodes(
+  cat2s: Cat2Node[],
+  months: string[],
+  prefix: string,
+  exp: Set<string>,
+  toggle: (k: string) => void,
+): React.ReactNode[] {
   const rows: React.ReactNode[] = [];
 
-  const gtBase: React.CSSProperties = {
-    position: "sticky", top: "30px", zIndex: 14, backgroundColor: TOTAL_BG,
-  };
-
-  rows.push(
-    <tr key="__grand__" className="border-b border-white/10">
-      <td style={{ ...gtBase, left: 0, zIndex: 20 }}
-          className="px-3 py-2 text-[11px] font-extrabold text-white whitespace-nowrap">
-        Total Income
-      </td>
-      {months.map(m => (
-        <td key={m} style={gtBase}
-            className={`${numCell} font-extrabold text-[12px] ${mvClsLight(grandByMonth[m])}`}>
-          {fmtM(grandByMonth[m])}
-        </td>
-      ))}
-      <td style={{ ...gtBase, borderLeft: "1px solid rgba(255,255,255,0.15)" }}
-          className={`${numCell} font-extrabold text-[12px] ${mvClsLight(grandTotal)}`}>
-        {fmtM(grandTotal)}
-      </td>
-    </tr>
-  );
-
   for (const c2 of cat2s) {
-    const k2 = `c2:${c2.cat2}`;
+    const k2 = `${prefix}:c2:${c2.cat2}`;
     const open2 = exp.has(k2);
 
     rows.push(
@@ -251,7 +218,7 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
     if (!open2) continue;
 
     for (const c6 of c2.cat6s) {
-      const k6 = `c6:${c2.cat2}|${c6.cat6}`;
+      const k6 = `${prefix}:c6:${c2.cat2}|${c6.cat6}`;
       const open6 = exp.has(k6);
 
       rows.push(
@@ -272,7 +239,7 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
       if (!open6) continue;
 
       for (const c7 of c6.cat7s) {
-        const k7 = `c7:${c2.cat2}|${c6.cat6}|${c7.cat7}`;
+        const k7 = `${prefix}:c7:${c2.cat2}|${c6.cat6}|${c7.cat7}`;
         const open7 = exp.has(k7);
 
         rows.push(
@@ -293,7 +260,7 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
         if (!open7) continue;
 
         for (const gl of c7.gls) {
-          const kg = `gl:${c2.cat2}|${c6.cat6}|${c7.cat7}|${gl.glKey}`;
+          const kg = `${prefix}:gl:${c2.cat2}|${c6.cat6}|${c7.cat7}|${gl.glKey}`;
           const openG = exp.has(kg);
 
           rows.push(
@@ -313,10 +280,10 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
 
           if (!openG) continue;
 
-          // ── Direct transaction leaves (Original/Addback — no CD2) ─────────
+          // ── Direct transaction leaves (no CD2) ─────────────────────────────
           for (const t of gl.txs) {
             rows.push(
-              <tr key={t.id} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
+              <tr key={`${prefix}:tx:${t.id}`} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
                 <td className="sticky left-0 z-10 bg-white pl-[72px] pr-2 py-0.5 text-[10px] text-gray-400 max-w-[260px] truncate whitespace-nowrap">
                   {t.desc ?? "—"}
                 </td>
@@ -333,9 +300,9 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
             );
           }
 
-          // ── CD2 grouped leaves (Offshore Allocations only) ───────────────
+          // ── CD2 grouped leaves (Offshore Allocations) ──────────────────────
           for (const d2 of gl.desc2s) {
-            const kd2 = `d2:${c2.cat2}|${c6.cat6}|${c7.cat7}|${gl.glKey}|${d2.desc2}`;
+            const kd2 = `${prefix}:d2:${c2.cat2}|${c6.cat6}|${c7.cat7}|${gl.glKey}|${d2.desc2}`;
             const openD2 = exp.has(kd2);
 
             rows.push(
@@ -356,7 +323,7 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
             if (!openD2) continue;
 
             for (const d3 of d2.desc3s) {
-              const kd3 = `d3:${c2.cat2}|${c6.cat6}|${c7.cat7}|${gl.glKey}|${d2.desc2}|${d3.desc3}`;
+              const kd3 = `${prefix}:d3:${c2.cat2}|${c6.cat6}|${c7.cat7}|${gl.glKey}|${d2.desc2}|${d3.desc3}`;
               const openD3 = exp.has(kd3);
 
               rows.push(
@@ -378,7 +345,7 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
 
               for (const t of d3.txs) {
                 rows.push(
-                  <tr key={t.id} className="border-b border-gray-50 bg-white hover:bg-sky-50/20">
+                  <tr key={`${prefix}:tx:${t.id}`} className="border-b border-gray-50 bg-white hover:bg-sky-50/20">
                     <td className="sticky left-0 z-10 bg-white pl-[104px] pr-2 py-0.5 text-[10px] text-gray-400 max-w-[260px] truncate whitespace-nowrap">
                       {t.desc ?? "—"}
                     </td>
@@ -401,6 +368,252 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
     }
   }
 
+  return rows;
+}
+
+// ─── PivotTable ───────────────────────────────────────────────────────────────
+
+interface PivotTableProps {
+  txs: PLReportTx[];
+  loading?: boolean;
+  emptyMessage?: string;
+}
+
+const TOTAL_BG     = "#1e3a5f";
+const OP_ACCENT    = "#16a34a";   // green-600 — left-border accent only
+const OP_HEADER_BG = "#f0fdf4";   // green-50
+const OP_FOOTER_BG = "#dcfce7";   // green-100
+const NOP_ACCENT    = "#64748b";  // slate-500 — left-border accent only
+const NOP_HEADER_BG = "#f8fafc";  // slate-50
+const NOP_FOOTER_BG = "#f1f5f9";  // slate-100
+
+export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTableProps) {
+  // Split txs proportionally into Operational and Non-Operational subsets
+  const opTxs = useMemo(() =>
+    txs
+      .filter(tx => (tx.operational_pct ?? 100) > 0)
+      .map(tx => scaleTx(tx, (tx.operational_pct ?? 100) / 100)),
+    [txs]
+  );
+  const nonOpTxs = useMemo(() =>
+    txs
+      .filter(tx => (tx.operational_pct ?? 100) < 100)
+      .map(tx => scaleTx(tx, (100 - (tx.operational_pct ?? 100)) / 100)),
+    [txs]
+  );
+  const hasNonOp = nonOpTxs.length > 0;
+
+  const { cat2s: opCat2s }    = useMemo(() => buildPivot(opTxs),    [opTxs]);
+  const { cat2s: nonOpCat2s } = useMemo(() => buildPivot(nonOpTxs), [nonOpTxs]);
+
+  const months = useMemo(() => {
+    const s = new Set(txs.map(tx => tx.month).filter(Boolean) as string[]);
+    return MONTH_ORDER.filter(m => s.has(m));
+  }, [txs]);
+
+  const [exp, setExp] = useState<Set<string>>(new Set());
+
+  function toggle(key: string) {
+    setExp(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-8 text-xs text-gray-400">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
+        Loading…
+      </div>
+    );
+  }
+  if (txs.length === 0) {
+    return <p className="py-8 text-center text-xs text-gray-400">{emptyMessage}</p>;
+  }
+
+  // Compute block totals
+  const opTotal    = opCat2s.reduce((s, c) => s + c.total, 0);
+  const nonOpTotal = nonOpCat2s.reduce((s, c) => s + c.total, 0);
+  const combinedTotal = opTotal + nonOpTotal;
+
+  const opByMonth: Record<string,number> = {};
+  for (const c of opCat2s) for (const [m, v] of Object.entries(c.byMonth))
+    opByMonth[m] = (opByMonth[m] ?? 0) + v;
+
+  const nonOpByMonth: Record<string,number> = {};
+  for (const c of nonOpCat2s) for (const [m, v] of Object.entries(c.byMonth))
+    nonOpByMonth[m] = (nonOpByMonth[m] ?? 0) + v;
+
+  const combinedByMonth: Record<string,number> = {};
+  for (const m of months)
+    combinedByMonth[m] = (opByMonth[m] ?? 0) + (nonOpByMonth[m] ?? 0);
+
+  const rows: React.ReactNode[] = [];
+
+  // ── Sticky "Total Income" header ──────────────────────────────────────────
+  const gtBase: React.CSSProperties = {
+    position: "sticky", top: "30px", zIndex: 14, backgroundColor: TOTAL_BG,
+  };
+
+  rows.push(
+    <tr key="__grand__" className="border-b border-white/10">
+      <td style={{ ...gtBase, left: 0, zIndex: 20 }}
+          className="px-3 py-2 text-[11px] font-extrabold text-white whitespace-nowrap">
+        Total Income
+      </td>
+      {months.map(m => (
+        <td key={m} style={gtBase}
+            className={`${numCell} font-extrabold text-[12px] ${mvClsLight(combinedByMonth[m])}`}>
+          {fmtM(combinedByMonth[m])}
+        </td>
+      ))}
+      <td style={{ ...gtBase, borderLeft: "1px solid rgba(255,255,255,0.15)" }}
+          className={`${numCell} font-extrabold text-[12px] ${mvClsLight(combinedTotal)}`}>
+        {fmtM(combinedTotal)}
+      </td>
+    </tr>
+  );
+
+  // ── Operational block ─────────────────────────────────────────────────────
+  const opOpen = exp.has("__op__");
+  rows.push(
+    <tr key="__op__"
+        className="border-b border-emerald-100 cursor-pointer hover:bg-emerald-50/60"
+        style={{ backgroundColor: OP_HEADER_BG }}
+        onClick={() => toggle("__op__")}>
+      <td style={{ backgroundColor: OP_HEADER_BG, borderLeft: `3px solid ${OP_ACCENT}`, position: "sticky", left: 0, zIndex: 10 }}
+          className="px-3 py-1.5 text-[11px] font-bold text-emerald-800 whitespace-nowrap">
+        <span className="inline-flex items-center gap-1.5">
+          {opOpen ? <ChevronDown size={11}/> : <ChevronRight size={11}/>}
+          Operational
+        </span>
+      </td>
+      {months.map(m => (
+        <td key={m} className={`${numCell} font-bold ${mvCls(opByMonth[m])}`}>
+          {fmtM(opByMonth[m])}
+        </td>
+      ))}
+      <td className={`${numCell} font-bold border-l border-emerald-100 ${mvCls(opTotal)}`}>
+        {fmtM(opTotal)}
+      </td>
+    </tr>
+  );
+
+  if (opOpen) {
+    if (opCat2s.length === 0) {
+      rows.push(
+        <tr key="__op_empty__" className="border-b border-emerald-100">
+          <td style={{ position: "sticky", left: 0, zIndex: 10 }}
+              className="bg-white pl-8 pr-3 py-3 text-[11px] italic text-gray-400 whitespace-nowrap">
+            No Operational transactions yet.
+          </td>
+          {months.map(m => <td key={m} className="bg-white" />)}
+          <td className="bg-white border-l border-gray-100" />
+        </tr>
+      );
+    } else {
+      rows.push(...renderCat2Nodes(opCat2s, months, "op", exp, toggle));
+
+      // Net Income (Operational) footer
+      rows.push(
+        <tr key="__op_net__" className="border-b border-emerald-200"
+            style={{ backgroundColor: OP_FOOTER_BG }}>
+          <td style={{ backgroundColor: OP_FOOTER_BG, borderLeft: `3px solid ${OP_ACCENT}`, position: "sticky", left: 0, zIndex: 10 }}
+              className="pl-8 pr-3 py-1.5 text-[11px] font-extrabold text-emerald-900 whitespace-nowrap">
+            Net Income (Operational)
+          </td>
+          {months.map(m => (
+            <td key={m} className={`${numCell} font-extrabold ${mvCls(opByMonth[m])}`}>
+              {fmtM(opByMonth[m])}
+            </td>
+          ))}
+          <td className={`${numCell} font-extrabold border-l border-emerald-200 ${mvCls(opTotal)}`}>
+            {fmtM(opTotal)}
+          </td>
+        </tr>
+      );
+    }
+  }
+
+  // ── Non-Operational block ─────────────────────────────────────────────────
+  const nonOpOpen = exp.has("__nonop__");
+  rows.push(
+    <tr key="__nonop__"
+        className="border-b border-slate-200 cursor-pointer hover:bg-slate-100/60"
+        style={{ backgroundColor: NOP_HEADER_BG }}
+        onClick={() => toggle("__nonop__")}>
+      <td style={{ backgroundColor: NOP_HEADER_BG, borderLeft: `3px solid ${NOP_ACCENT}`, position: "sticky", left: 0, zIndex: 10 }}
+          className="px-3 py-1.5 text-[11px] font-bold text-slate-700 whitespace-nowrap">
+        <span className="inline-flex items-center gap-1.5">
+          {nonOpOpen ? <ChevronDown size={11}/> : <ChevronRight size={11}/>}
+          Non-Operational
+        </span>
+      </td>
+      {months.map(m => (
+        <td key={m} className={`${numCell} font-bold ${mvCls(nonOpByMonth[m])}`}>
+          {fmtM(nonOpByMonth[m])}
+        </td>
+      ))}
+      <td className={`${numCell} font-bold border-l border-slate-200 ${mvCls(nonOpTotal)}`}>
+        {fmtM(nonOpTotal)}
+      </td>
+    </tr>
+  );
+
+  if (nonOpOpen) {
+    if (!hasNonOp) {
+      rows.push(
+        <tr key="__nonop_empty__" className="border-b border-slate-200">
+          <td style={{ position: "sticky", left: 0, zIndex: 10 }}
+              className="bg-white pl-8 pr-3 py-3 text-[11px] italic text-gray-400 whitespace-nowrap">
+            No Non-Operational transactions yet — classify rules or assignments as Non-Operational to see them here.
+          </td>
+          {months.map(m => <td key={m} className="bg-white" />)}
+          <td className="bg-white border-l border-gray-100" />
+        </tr>
+      );
+    } else {
+      rows.push(...renderCat2Nodes(nonOpCat2s, months, "nop", exp, toggle));
+
+      // Net Income (Non-Operational) footer
+      rows.push(
+        <tr key="__nonop_net__" className="border-b border-slate-300"
+            style={{ backgroundColor: NOP_FOOTER_BG }}>
+          <td style={{ backgroundColor: NOP_FOOTER_BG, borderLeft: `3px solid ${NOP_ACCENT}`, position: "sticky", left: 0, zIndex: 10 }}
+              className="pl-8 pr-3 py-1.5 text-[11px] font-extrabold text-slate-800 whitespace-nowrap">
+            Net Income (Non-Operational)
+          </td>
+          {months.map(m => (
+            <td key={m} className={`${numCell} font-extrabold ${mvCls(nonOpByMonth[m])}`}>
+              {fmtM(nonOpByMonth[m])}
+            </td>
+          ))}
+          <td className={`${numCell} font-extrabold border-l border-slate-300 ${mvCls(nonOpTotal)}`}>
+            {fmtM(nonOpTotal)}
+          </td>
+        </tr>
+      );
+    }
+  }
+
+  // ── Combined Total (bottom) — only shown when both blocks have data ───────
+  if (hasNonOp) {
+    rows.push(
+      <tr key="__combined__" className="border-t-2 border-white/20" style={{ backgroundColor: TOTAL_BG }}>
+        <td style={{ backgroundColor: TOTAL_BG, position: "sticky", left: 0, zIndex: 10 }}
+            className="px-3 py-2 text-[11px] font-extrabold text-white whitespace-nowrap">
+          Combined Total
+        </td>
+        {months.map(m => (
+          <td key={m} className={`${numCell} font-extrabold text-[12px] ${mvClsLight(combinedByMonth[m])}`}>
+            {fmtM(combinedByMonth[m])}
+          </td>
+        ))}
+        <td className={`${numCell} font-extrabold text-[12px] border-l border-white/15 ${mvClsLight(combinedTotal)}`}>
+          {fmtM(combinedTotal)}
+        </td>
+      </tr>
+    );
+  }
+
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-auto"
          style={{ maxHeight: "calc(100vh - 160px)" }}>
@@ -408,7 +621,7 @@ export function PivotTable({ txs, loading, emptyMessage = "No data" }: PivotTabl
         <thead className="sticky top-0 z-20 bg-gray-50">
           <tr className="border-b border-gray-200">
             <th className="sticky left-0 z-30 bg-gray-50 px-3 py-1.5 text-left text-[10px] font-semibold text-gray-500 whitespace-nowrap">
-              Cat 2 / Cat 6 / Cat 7 / GL Code — GL Name
+              Op/Non-Op / Cat 2 / Cat 6 / Cat 7 / GL Code — GL Name
             </th>
             {months.map(m => (
               <th key={m} className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 whitespace-nowrap bg-gray-50">

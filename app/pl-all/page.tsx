@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Download } from "lucide-react";
-import { PivotTable } from "@/components/pivot-table";
-import { PivotTableByCC } from "@/components/pivot-table-cc";
+import { PivotTableDynamic } from "@/components/pivot-table-dynamic";
 import { ReportFilter } from "@/components/report-filter";
 import { LoanMetricsByMonthBar } from "@/components/loan-metrics-by-month";
 import { buildSplitsMap, fanOutBySplits } from "@/lib/apply-splits";
@@ -232,9 +231,7 @@ export default function PLAllPage() {
         <div>
           <h2 className="text-xl font-bold text-gray-900">P&amp;L All</h2>
           <p className="text-sm text-gray-500">
-            {viewMode === "gl"
-              ? "Pivot by Category 2 → Category 7 → GL Name → GL Code"
-              : "Pivot by Cost Center → GL Name → Transaction · Vendor/OA allocations prorated by %"}
+            {viewMode === "cc" ? "Vendor/OA allocations prorated by % — use Pivot by: to reorder levels" : "Use Pivot by: to reorder or add hierarchy levels"}
           </p>
         </div>
         {loaded && (
@@ -267,16 +264,20 @@ export default function PLAllPage() {
       )}
 
       {(loaded || loading) && viewMode === "gl" && (
-        <PivotTable
+        <PivotTableDynamic
           txs={txs}
+          defaultLevels={["op_nonop", "category_2", "category_6", "category_7", "gl"]}
+          storageKey="pl_all_gl_hierarchy"
           loading={loading}
           emptyMessage="No transactions found for the selected filters."
         />
       )}
 
       {(loaded || loading) && viewMode === "cc" && (
-        <PivotTableByCC
+        <PivotTableDynamic
           txs={txsForCC}
+          defaultLevels={["op_nonop", "category_6", "cost_center", "gl", "description"]}
+          storageKey="pl_all_cc_hierarchy"
           loading={loading}
           emptyMessage="No transactions found for the selected filters."
         />

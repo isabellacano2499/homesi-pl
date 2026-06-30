@@ -122,7 +122,7 @@ export function evaluateCostCenterRules(
   );
 
   if (matched.length === 0) {
-    return { cost_center_id: null, cost_center_status: "unassigned", cost_center_conflicts: [] };
+    return { cost_center_id: null, cost_center_status: "unassigned", cost_center_conflicts: [], operational_pct: 100 };
   }
 
   // Aggregate allocations across all matched rules, merging same-CC entries
@@ -142,10 +142,19 @@ export function evaluateCostCenterRules(
     for (const [ccId, pct] of ccTotals) {
       if (pct > maxPct) { maxPct = pct; primaryCcId = ccId; }
     }
+    // Operational % = sum of allocation percentages from Operational rules
+    // Since grandTotal ≈ 100, this directly gives the Operational fraction (0–100)
+    let operationalPct = 0;
+    for (const rule of matched) {
+      if (rule.is_operational) {
+        operationalPct += rule.allocations.reduce((s, a) => s + a.percentage, 0);
+      }
+    }
     return {
       cost_center_id: primaryCcId,
       cost_center_status: "assigned",
       cost_center_conflicts: [],
+      operational_pct: operationalPct,
       rule_splits: ccTotals.size > 1
         ? [...ccTotals.entries()].map(([cost_center_id, percentage]) => ({ cost_center_id, percentage }))
         : undefined,
@@ -157,5 +166,6 @@ export function evaluateCostCenterRules(
     cost_center_status: "conflict",
     cost_center_conflicts: matched.map((r) => r.id),
     conflict_type: grandTotal < 100 ? "underassigned" : "overassigned",
+    operational_pct: 100,
   };
 }

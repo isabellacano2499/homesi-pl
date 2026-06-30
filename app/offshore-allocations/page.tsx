@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, RefreshCw, AlertTriangle, Percent, Search, X } from "lucide-react";
+import { Download, RefreshCw, AlertTriangle, Percent, Search, X, RotateCcw, ShieldCheck } from "lucide-react";
 import { downloadCSV } from "@/lib/csv";
 import { ReportFilter } from "@/components/report-filter";
 import { SplitEditor } from "@/components/split-editor";
@@ -278,6 +278,14 @@ export default function OffshoreAllocationsPage() {
   const [unassigning, setUnassigning]   = useState<string | null>(null); // group_key being confirmed
   const [unassignBusy, setUnassignBusy] = useState(false);
 
+  // Re-evaluate with Rules state
+  const [reevalCount,   setReevalCount]   = useState<number | null>(null);
+  const [reevalDialog,  setReevalDialog]  = useState(false);
+  const [reevalRunning, setReevalRunning] = useState(false);
+  const [reevalResult,  setReevalResult]  = useState<{
+    processed: number; assigned: number; conflicts: number; unassigned: number;
+  } | null>(null);
+
   const fetchData = useCallback(async () => {
     setLoading(true); setError("");
     try {
@@ -306,7 +314,28 @@ export default function OffshoreAllocationsPage() {
     }
   }, [activeBranches]);
 
+  const loadReevalCount = useCallback(async () => {
+    const res = await fetch("/api/offshore-allocations/reevaluate-manual");
+    if (res.ok) { const j = await res.json(); setReevalCount(j.count ?? 0); }
+  }, []);
+
   useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { loadReevalCount(); }, [loadReevalCount]);
+
+  async function handleReeval() {
+    setReevalRunning(true);
+    setReevalResult(null);
+    try {
+      const res = await fetch("/api/offshore-allocations/reevaluate-manual", { method: "POST" });
+      if (!res.ok) { const j = await res.json(); setError(j.error ?? "Re-evaluation failed"); return; }
+      const result = await res.json();
+      setReevalResult(result);
+      setReevalDialog(false);
+      await Promise.all([fetchData(), loadReevalCount()]);
+    } finally {
+      setReevalRunning(false);
+    }
+  }
 
   const allYears = useMemo(() => {
     const s = new Set<number>();
@@ -410,6 +439,20 @@ export default function OffshoreAllocationsPage() {
             </button>
           )}
           <button
+            onClick={() => { setReevalResult(null); setReevalDialog(true); }}
+            disabled={loading || reevalCount === 0}
+            title={reevalCount === 0 ? "No manually assigned OA transactions to re-evaluate" : undefined}
+            className="flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-sm text-purple-700 hover:bg-purple-100 disabled:opacity-40 disabled:cursor-default"
+          >
+            <RotateCcw size={14} />
+            Re-evaluate with Rules
+            {reevalCount !== null && reevalCount > 0 && (
+              <span className="ml-0.5 rounded-full bg-purple-200 px-1.5 py-0.5 text-[10px] font-semibold text-purple-800">
+                {reevalCount}
+              </span>
+            )}
+          </button>
+          <button
             onClick={fetchData}
             className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
           >
@@ -465,6 +508,23 @@ export default function OffshoreAllocationsPage() {
         </p>
       )}
 
+      {reevalResult && (
+        <div className="flex items-center justify-between rounded-lg border border-purple-200 bg-purple-50 px-4 py-3 shrink-0">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={15} className="shrink-0 text-purple-600" />
+            <span className="text-sm text-purple-800">
+              Re-evaluated <strong>{reevalResult.processed}</strong> transaction{reevalResult.processed !== 1 ? "s" : ""} —{" "}
+              <strong>{reevalResult.assigned}</strong> assigned by rule,{" "}
+              <strong>{reevalResult.conflicts}</strong> conflict{reevalResult.conflicts !== 1 ? "s" : ""},{" "}
+              <strong>{reevalResult.unassigned}</strong> unassigned.
+            </span>
+          </div>
+          <button onClick={() => setReevalResult(null)} className="ml-3 text-purple-400 hover:text-purple-600">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* Blocks */}
       <div className="flex-1 min-h-0 overflow-auto space-y-5 pb-4">
         {loading ? (
@@ -510,6 +570,51 @@ export default function OffshoreAllocationsPage() {
           ))
         )}
       </div>
+
+      {/* Re-evaluate with Rules confirmation dialog */}
+      {reevalDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white shadow-xl">
+            <div className="flex items-start gap-3 border-b border-gray-100 px-5 py-4">
+              <RotateCcw size={18} className="mt-0.5 shrink-0 text-purple-600" />
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">Re-evaluate with Rules</h3>
+                <p className="mt-1 text-sm text-gray-600">
+                  This will re-evaluate{" "}
+                  <span className="font-semibold text-gray-900">{reevalCount}</span>{" "}
+                  manually assigned Offshore Allocations transaction{reevalCount !== 1 ? "s" : ""} against
+                  all current rules. Their current manual assignments may be overwritten.
+                </p>
+                <p className="mt-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  The global Re-apply All Rules continues to skip manual OA assignments — this is the
+                  only place where they can be re-evaluated.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4">
+              <button
+                onClick={() => setReevalDialog(false)}
+                disabled={reevalRunning}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReeval}
+                disabled={reevalRunning}
+                className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+              >
+                {reevalRunning && (
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                )}
+                {reevalRunning
+                  ? "Re-evaluating…"
+                  : `Re-evaluate ${reevalCount} transaction${reevalCount !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Split editor modal */}
       {editingRow && editingRow.assign_type && (

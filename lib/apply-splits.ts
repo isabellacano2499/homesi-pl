@@ -1,10 +1,11 @@
 import type { PLReportTx, PLReportTxCC } from "@/types";
 
 export type SplitEntry = {
-  assign_type: "vendor" | "description3";
+  assign_type: "vendor" | "description3" | "transaction";
   assign_value: string;
   cost_center_id: string;
   percentage: number;
+  is_operational?: boolean;
   cost_centers?: { name: string } | null;
 };
 
@@ -55,6 +56,7 @@ export function fanOutBySplits(
           cost_center_id:     s.cost_center_id,
           cost_center_status: "assigned",
           cost_centers:       s.cost_centers ?? null,
+          operational_pct:    (s.is_operational ?? true) ? 100 : 0,
         } as PLReportTxCC);
       }
     } else {

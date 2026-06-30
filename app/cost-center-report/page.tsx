@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Download } from "lucide-react";
-import { PivotTable } from "@/components/pivot-table";
+import { PivotTableDynamic } from "@/components/pivot-table-dynamic";
 import { ReportFilter } from "@/components/report-filter";
 import { LoanMetricsByMonthBar } from "@/components/loan-metrics-by-month";
 import { buildSplitsMap, fanOutBySplits } from "@/lib/apply-splits";
@@ -216,7 +216,7 @@ export default function CostCenterReportPage() {
       <div className="flex items-start justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Cost Center Report</h2>
-          <p className="text-sm text-gray-500">Pivot by Category 2 → Category 7 → GL Name → GL Code</p>
+          <p className="text-sm text-gray-500">Use Pivot by: to reorder or add hierarchy levels</p>
         </div>
         {loaded && (
           <button
@@ -249,8 +249,10 @@ export default function CostCenterReportPage() {
       )}
 
       {(loaded || loading) && (
-        <PivotTable
+        <PivotTableDynamic
           txs={txs}
+          defaultLevels={["op_nonop", "category_2", "category_6", "category_7", "gl"]}
+          storageKey="cost_center_report_hierarchy"
           loading={loading}
           emptyMessage="No transactions found for the selected filters."
         />

@@ -3,10 +3,13 @@ import { createServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
+const CHUNK = 500;
+
 export async function POST(req: NextRequest) {
-  const { transaction_ids, cost_center_id } = await req.json() as {
+  const { transaction_ids, cost_center_id, is_operational = true } = await req.json() as {
     transaction_ids: string[];
     cost_center_id: string;
+    is_operational?: boolean;
   };
 
   if (!transaction_ids?.length || !cost_center_id) {
@@ -15,6 +18,7 @@ export async function POST(req: NextRequest) {
 
   const supabase = createServerClient();
   const now = new Date().toISOString();
+  const operational_pct = is_operational ? 100 : 0;
 
   const { error: txErr } = await supabase
     .from("pl_transactions")
@@ -23,6 +27,7 @@ export async function POST(req: NextRequest) {
       cost_center_status: "assigned",
       cost_center_conflicts: null,
       assignment_origin: "conflict_resolved",
+      operational_pct,
     })
     .in("id", transaction_ids);
 
@@ -41,6 +46,28 @@ export async function POST(req: NextRequest) {
   );
 
   if (snapErr) return NextResponse.json({ error: snapErr.message }, { status: 500 });
+
+  // Record operational classification in cc_allocation_splits (transaction-keyed)
+  for (let i = 0; i < transaction_ids.length; i += CHUNK) {
+    const chunk = transaction_ids.slice(i, i + CHUNK);
+
+    await supabase
+      .from("cc_allocation_splits")
+      .delete()
+      .eq("assign_type", "transaction")
+      .in("assign_value", chunk);
+
+    const { error: insErr } = await supabase.from("cc_allocation_splits").insert(
+      chunk.map((tx_id) => ({
+        assign_type: "transaction",
+        assign_value: tx_id,
+        cost_center_id,
+        percentage: 100,
+        is_operational,
+      }))
+    );
+    if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
+  }
 
   return NextResponse.json({ resolved: transaction_ids.length });
 }

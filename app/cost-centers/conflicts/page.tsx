@@ -51,11 +51,11 @@ function CD3Cell({ v }: { v: string | null | undefined }) {
 
 // ─── Shared: assign multiple txs to a CC ─────────────────────────────────────
 
-async function apiAssign(transactionIds: string[], costCenterId: string): Promise<string | null> {
+async function apiAssign(transactionIds: string[], costCenterId: string, is_operational = true): Promise<string | null> {
   const res = await fetch("/api/cost-center-assignment/assign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transaction_ids: transactionIds, cost_center_id: costCenterId }),
+    body: JSON.stringify({ transaction_ids: transactionIds, cost_center_id: costCenterId, is_operational }),
   });
   if (!res.ok) { const j = await res.json(); return j.error ?? "Unknown error"; }
   return null;
@@ -82,6 +82,8 @@ function AssignTab({
   const [bulkCcId, setBulkCcId] = useState("");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
+  const [rowOp, setRowOp] = useState<Record<string, boolean>>({});
+  const [bulkOp, setBulkOp] = useState(true);
 
   // Allocation buttons state (only active when showAllocationButtons)
   const [allSplits, setAllSplits] = useState<SplitEntry[]>([]);
@@ -120,30 +122,43 @@ function AssignTab({
 
   const totalCount = visibleGroups.reduce((s, g) => s + g.transactions.length, 0);
 
+  const allVisibleIds = useMemo(() => {
+    const ids = new Set<string>();
+    visibleGroups.forEach((g) => {
+      const txs = txSearch ? g.transactions.filter((tx) => txMatchesSearch(tx, txSearch)) : g.transactions;
+      txs.forEach((tx) => ids.add(tx.id));
+    });
+    return ids;
+  }, [visibleGroups, txSearch]);
+
+  const visibleSelected = useMemo(
+    () => [...selected].filter((id) => allVisibleIds.has(id)),
+    [selected, allVisibleIds]
+  );
+
   function toggleGroup(key: string) {
     setCollapsed((prev) => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
   }
   function toggleRow(id: string) {
     setSelected((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
   }
-  function toggleGroupRows(group: AssignmentGroup) {
-    const ids = group.transactions.map((t) => t.id);
-    const allSel = ids.every((id) => selected.has(id));
+  function toggleGroupRows(visibleIds: string[]) {
+    const allSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
     setSelected((prev) => {
       const s = new Set(prev);
-      if (allSel) ids.forEach((id) => s.delete(id));
-      else ids.forEach((id) => s.add(id));
+      if (allSel) visibleIds.forEach((id) => s.delete(id));
+      else visibleIds.forEach((id) => s.add(id));
       return s;
     });
   }
 
-  async function assign(txIds: string[], ccId: string) {
+  async function assign(txIds: string[], ccId: string, isOp = true) {
     if (!ccId || !txIds.length) return;
     setSaving(true); setMsg("");
     try {
-      const err = await apiAssign(txIds, ccId);
+      const err = await apiAssign(txIds, ccId, isOp);
       if (err) { setMsg(`Error: ${err}`); return; }
-      setSelected(new Set()); setBulkCcId(""); setRowCc({});
+      setSelected(new Set()); setBulkCcId(""); setRowCc({}); setRowOp({}); setBulkOp(true);
       load();
     } finally { setSaving(false); }
   }
@@ -190,9 +205,9 @@ function AssignTab({
       <div className={`flex flex-wrap items-center gap-3 rounded-xl border ${bgBanner} px-4 py-3`}>
         <span className={`text-xs font-medium ${textBanner}`}>
           {totalCount} transaction{totalCount !== 1 ? "s" : ""}
-          {selected.size > 0 && ` · ${selected.size} selected`}
+          {visibleSelected.length > 0 && ` · ${visibleSelected.length} selected`}
         </span>
-        {selected.size > 0 && (
+        {visibleSelected.length > 0 && (
           <>
             <select
               value={bulkCcId}
@@ -202,12 +217,21 @@ function AssignTab({
               <option value="">{actionLabel} to…</option>
               {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
             </select>
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!bulkOp}
+                onChange={(e) => setBulkOp(!e.target.checked)}
+                className="h-3 w-3 accent-red-500"
+              />
+              <span className="text-[10px] text-gray-500">Non-Op</span>
+            </label>
             <button
-              onClick={() => assign([...selected], bulkCcId)}
+              onClick={() => assign(visibleSelected, bulkCcId, bulkOp)}
               disabled={!bulkCcId || saving}
               className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40"
             >
-              {saving ? "Saving…" : `${actionLabel} ${selected.size}`}
+              {saving ? "Saving…" : `${actionLabel} ${visibleSelected.length}`}
             </button>
           </>
         )}
@@ -218,11 +242,11 @@ function AssignTab({
       {visibleGroups.map((group) => {
         const key = group.gl_code;
         const isCollapsed = collapsed.has(key);
-        const groupIds = group.transactions.map((t) => t.id);
-        const groupAllSel = groupIds.every((id) => selected.has(id));
         const visibleTxs = txSearch
           ? group.transactions.filter((tx) => txMatchesSearch(tx, txSearch))
           : group.transactions;
+        const visibleIds = visibleTxs.map((t) => t.id);
+        const groupAllSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
 
         return (
           <div key={key} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
@@ -232,7 +256,7 @@ function AssignTab({
             >
               <input
                 type="checkbox" checked={groupAllSel}
-                onChange={() => toggleGroupRows(group)}
+                onChange={() => toggleGroupRows(visibleIds)}
                 onClick={(e) => e.stopPropagation()}
                 className="h-3.5 w-3.5 accent-blue-600 rounded"
               />
@@ -257,7 +281,8 @@ function AssignTab({
                     <th className="px-2 py-1 text-right font-medium">Movement</th>
                     {mode === "override" && <th className="px-2 py-1 font-medium">Current CC</th>}
                     <th className="px-2 py-1 font-medium">{actionLabel} to</th>
-                    <th className="w-16 px-2 py-1" />
+                    <th className="w-8 px-1 py-1 text-center font-medium">Op</th>
+                    <th className="w-14 px-2 py-1" />
                     {showAllocationButtons && <th className="px-2 py-1 font-medium">Allocation</th>}
                   </tr>
                 </thead>
@@ -298,9 +323,19 @@ function AssignTab({
                           {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
                         </select>
                       </td>
+                      <td className="px-1 py-1 text-center">
+                        <label className="inline-flex items-center cursor-pointer" title={rowOp[tx.id] !== false ? "Operational" : "Non-Operational"}>
+                          <input
+                            type="checkbox"
+                            checked={rowOp[tx.id] === false}
+                            onChange={(e) => setRowOp((prev) => ({ ...prev, [tx.id]: !e.target.checked }))}
+                            className="h-3 w-3 accent-red-500"
+                          />
+                        </label>
+                      </td>
                       <td className="px-2 py-1">
                         <button
-                          onClick={() => assign([tx.id], rowCc[tx.id] ?? "")}
+                          onClick={() => assign([tx.id], rowCc[tx.id] ?? "", rowOp[tx.id] ?? true)}
                           disabled={!rowCc[tx.id] || saving}
                           className="rounded-lg bg-blue-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-30"
                         >
@@ -386,6 +421,12 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
   const [editingTx, setEditingTx] = useState<AssignmentTx | null>(null);
   const [unassigning, setUnassigning] = useState<string | null>(null);
   const [unassignBusy, setUnassignBusy] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmUnassign, setConfirmUnassign] = useState(false);
+  const [bulkReassignCcId, setBulkReassignCcId] = useState("");
+  const [bulkOp, setBulkOp] = useState(true);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState("");
 
   const splitsMap = useMemo(() => buildSplitsMap(allSplits), [allSplits]);
 
@@ -411,8 +452,61 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
 
   const totalCount = visibleGroups.reduce((s, g) => s + g.transactions.length, 0);
 
+  const allVisibleIds = useMemo(() => {
+    const ids = new Set<string>();
+    visibleGroups.forEach((g) => {
+      const txs = txSearch ? g.transactions.filter((tx) => txMatchesSearch(tx, txSearch)) : g.transactions;
+      txs.forEach((tx) => ids.add(tx.id));
+    });
+    return ids;
+  }, [visibleGroups, txSearch]);
+
+  const visibleSelected = useMemo(
+    () => [...selected].filter((id) => allVisibleIds.has(id)),
+    [selected, allVisibleIds]
+  );
+
   function toggleGroup(key: string) {
     setCollapsed((prev) => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
+  }
+  function toggleRow(id: string) {
+    setSelected((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+  function toggleGroupRows(visibleIds: string[]) {
+    const allSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+    setSelected((prev) => {
+      const s = new Set(prev);
+      if (allSel) visibleIds.forEach((id) => s.delete(id));
+      else visibleIds.forEach((id) => s.add(id));
+      return s;
+    });
+  }
+
+  async function handleBulkUnassign() {
+    const ids = visibleSelected;
+    if (!ids.length) return;
+    setBulkBusy(true); setBulkMsg("");
+    try {
+      const res = await fetch("/api/cost-center-assignment/unassign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_ids: ids }),
+      });
+      if (!res.ok) { const j = await res.json(); setBulkMsg(`Error: ${j.error ?? "Unknown error"}`); return; }
+      setSelected(new Set()); setConfirmUnassign(false); load();
+    } finally { setBulkBusy(false); }
+  }
+
+  async function handleBulkReassign() {
+    if (!bulkReassignCcId) return;
+    const ids = visibleSelected;
+    if (!ids.length) return;
+    setBulkBusy(true); setBulkMsg("");
+    try {
+      const err = await apiAssign(ids, bulkReassignCcId, bulkOp);
+      if (err) { setBulkMsg(`Error: ${err}`); return; }
+      setSelected(new Set()); setBulkReassignCcId(""); setBulkOp(true); load();
+    } finally { setBulkBusy(false); }
   }
 
   if (loading) return (
@@ -435,18 +529,77 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
     <div className="space-y-4">
       <p className="text-xs text-gray-400">{totalCount} manually assigned transaction{totalCount !== 1 ? "s" : ""} — permanent, never re-evaluated by reapply.</p>
 
+      {/* Bulk action bar */}
+      {visibleSelected.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+          <span className="text-xs font-medium text-gray-600">{visibleSelected.length} selected</span>
+          {!confirmUnassign ? (
+            <button
+              onClick={() => setConfirmUnassign(true)}
+              className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+            >
+              Unassign selected
+            </button>
+          ) : (
+            <span className="flex items-center gap-1.5 text-xs">
+              <span className="text-red-600 font-medium">Remove CC from {visibleSelected.length} tx?</span>
+              <button onClick={handleBulkUnassign} disabled={bulkBusy}
+                className="rounded px-2 py-0.5 bg-red-600 text-white text-xs hover:bg-red-700 disabled:opacity-40">
+                {bulkBusy ? "…" : "Yes"}
+              </button>
+              <button onClick={() => setConfirmUnassign(false)}
+                className="rounded px-2 py-0.5 border border-gray-200 text-gray-500 text-xs hover:bg-gray-50">
+                No
+              </button>
+            </span>
+          )}
+          <span className="text-gray-300">|</span>
+          <select
+            value={bulkReassignCcId}
+            onChange={(e) => setBulkReassignCcId(e.target.value)}
+            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 focus:border-blue-400 focus:outline-none"
+          >
+            <option value="">Reassign to…</option>
+            {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
+          </select>
+          {bulkReassignCcId && (
+            <>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={!bulkOp} onChange={(e) => setBulkOp(!e.target.checked)}
+                  className="h-3 w-3 accent-red-500" />
+                <span className="text-[10px] text-gray-500">Non-Op</span>
+              </label>
+              <button onClick={handleBulkReassign} disabled={bulkBusy}
+                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40">
+                {bulkBusy ? "Saving…" : `Reassign ${visibleSelected.length}`}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {bulkMsg && <p className="rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-xs text-red-600">{bulkMsg}</p>}
+
       {visibleGroups.map((group) => {
         const key = group.gl_code;
         const isCollapsed = collapsed.has(key);
         const visibleTxs = txSearch
           ? group.transactions.filter((tx) => txMatchesSearch(tx, txSearch))
           : group.transactions;
+        const visibleIds = visibleTxs.map((t) => t.id);
+        const groupAllSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
         return (
           <div key={key} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             <div
               className="flex cursor-pointer items-center gap-3 border-b border-gray-100 bg-gray-50 px-4 py-2.5 hover:bg-gray-100"
               onClick={() => toggleGroup(key)}
             >
+              <input
+                type="checkbox" checked={groupAllSel}
+                onChange={() => toggleGroupRows(visibleIds)}
+                onClick={(e) => e.stopPropagation()}
+                className="h-3.5 w-3.5 accent-blue-600 rounded"
+              />
               {isCollapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
               <span className="text-xs font-semibold font-mono text-gray-800">{group.gl_code}</span>
               <span className="text-xs text-gray-500">{group.gl_name}</span>
@@ -458,6 +611,7 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
               <table className="w-full text-xs">
                 <thead className="sticky top-0 z-10 bg-gray-50">
                   <tr className="border-b border-gray-100 bg-gray-50/50 text-left text-gray-400">
+                    <th className="w-7 px-2 py-1" />
                     <th className="px-3 py-1 font-medium">Month</th>
                     <th className="px-3 py-1 font-medium">Branch</th>
                     <th className="px-3 py-1 font-medium">Description</th>
@@ -474,7 +628,12 @@ function ManualTab({ branches, costCenters, glFilter, txSearch }: { branches: st
                     const normVendor = tx.vendor?.trim().replace(/\s+/g, " ") || null;
                     const assignValue = normVendor ?? (tx.check_description_3 ?? "");
                     return (
-                      <tr key={tx.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <tr key={tx.id} className={`border-b border-gray-50 hover:bg-gray-50 ${selected.has(tx.id) ? "bg-blue-50/40" : ""}`}>
+                        <td className="px-2 py-1">
+                          <input type="checkbox" checked={selected.has(tx.id)}
+                            onChange={() => toggleRow(tx.id)}
+                            className="h-3.5 w-3.5 accent-blue-600 rounded" />
+                        </td>
                         <td className="px-3 py-1 text-gray-700 whitespace-nowrap">{tx.month ?? "—"}</td>
                         <td className="px-3 py-1 text-gray-700 whitespace-nowrap">{tx.branch ?? "—"}</td>
                         <td className="max-w-[160px] truncate px-3 py-1 text-gray-600" title={tx.check_description ?? ""}>{tx.check_description ?? "—"}</td>
@@ -610,6 +769,8 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
   const [bulkCcId, setBulkCcId] = useState("");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
+  const [rowOp, setRowOp] = useState<Record<string, boolean>>({});
+  const [bulkOp, setBulkOp] = useState(true);
   const [conflictFilter, setConflictFilter] = useState<"all" | "underassigned" | "overassigned">("all");
 
   const load = useCallback(async () => {
@@ -639,6 +800,20 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
 
   const filteredCount = visibleGroups.reduce((s, g) => s + g.transactions.length, 0);
 
+  const allVisibleIds = useMemo(() => {
+    const ids = new Set<string>();
+    visibleGroups.forEach((g) => {
+      const txs = txSearch ? g.transactions.filter((tx) => txMatchesSearch(tx, txSearch)) : g.transactions;
+      txs.forEach((tx) => ids.add(tx.id));
+    });
+    return ids;
+  }, [visibleGroups, txSearch]);
+
+  const visibleSelected = useMemo(
+    () => [...selected].filter((id) => allVisibleIds.has(id)),
+    [selected, allVisibleIds]
+  );
+
   const underCount = groups.reduce((s, g) => s + g.transactions.filter((t) => t.conflict_type === "underassigned").length, 0);
   const overCount = groups.reduce((s, g) => s + g.transactions.filter((t) => t.conflict_type === "overassigned").length, 0);
 
@@ -648,28 +823,27 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
   function toggleRow(id: string) {
     setSelected((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
   }
-  function toggleGroupRows(group: ConflictGroup) {
-    const ids = group.transactions.map((t) => t.id);
-    const allSel = ids.every((id) => selected.has(id));
+  function toggleGroupRows(visibleIds: string[]) {
+    const allSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
     setSelected((prev) => {
       const s = new Set(prev);
-      if (allSel) ids.forEach((id) => s.delete(id));
-      else ids.forEach((id) => s.add(id));
+      if (allSel) visibleIds.forEach((id) => s.delete(id));
+      else visibleIds.forEach((id) => s.add(id));
       return s;
     });
   }
 
-  async function resolveRows(txIds: string[], ccId: string) {
+  async function resolveRows(txIds: string[], ccId: string, is_operational = true) {
     if (!ccId) return;
     setSaving(true); setMsg("");
     try {
       const res = await fetch("/api/conflicts/resolve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transaction_ids: txIds, cost_center_id: ccId }),
+        body: JSON.stringify({ transaction_ids: txIds, cost_center_id: ccId, is_operational }),
       });
       if (!res.ok) { const j = await res.json(); setMsg(`Error: ${j.error}`); return; }
-      setSelected(new Set()); setBulkCcId(""); setRowAssign({}); load();
+      setSelected(new Set()); setBulkCcId(""); setRowAssign({}); setRowOp({}); setBulkOp(true); load();
     } finally { setSaving(false); }
   }
 
@@ -709,18 +883,27 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
         <AlertTriangle size={14} className="shrink-0 text-amber-500" />
         <span className="text-xs text-amber-700 font-medium">
-          {filteredCount} conflict{filteredCount !== 1 ? "s" : ""}{selected.size > 0 && ` · ${selected.size} selected`}
+          {filteredCount} conflict{filteredCount !== 1 ? "s" : ""}{visibleSelected.length > 0 && ` · ${visibleSelected.length} selected`}
         </span>
-        {selected.size > 0 && (
+        {visibleSelected.length > 0 && (
           <>
             <select value={bulkCcId} onChange={(e) => setBulkCcId(e.target.value)}
               className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs text-gray-700 focus:border-blue-400 focus:outline-none">
               <option value="">Assign to…</option>
               {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
             </select>
-            <button onClick={() => resolveRows([...selected], bulkCcId)} disabled={!bulkCcId || saving}
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!bulkOp}
+                onChange={(e) => setBulkOp(!e.target.checked)}
+                className="h-3 w-3 accent-red-500"
+              />
+              <span className="text-[10px] text-amber-700">Non-Op</span>
+            </label>
+            <button onClick={() => resolveRows(visibleSelected, bulkCcId, bulkOp)} disabled={!bulkCcId || saving}
               className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40">
-              {saving ? "Saving…" : `Assign ${selected.size}`}
+              {saving ? "Saving…" : `Assign ${visibleSelected.length}`}
             </button>
           </>
         )}
@@ -731,16 +914,16 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
       {visibleGroups.map((group) => {
         const key = group.gl_code;
         const isCollapsed = collapsedGroups.has(key);
-        const groupIds = group.transactions.map((t) => t.id);
-        const groupAllSel = groupIds.every((id) => selected.has(id));
         const visibleTxs = txSearch
           ? group.transactions.filter((tx) => txMatchesSearch(tx, txSearch))
           : group.transactions;
+        const visibleIds = visibleTxs.map((t) => t.id);
+        const groupAllSel = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
         return (
           <div key={key} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             <div className="flex cursor-pointer items-center gap-3 border-b border-gray-100 bg-gray-50 px-4 py-2.5 hover:bg-gray-100"
               onClick={() => toggleGroup(key)}>
-              <input type="checkbox" checked={groupAllSel} onChange={() => toggleGroupRows(group)}
+              <input type="checkbox" checked={groupAllSel} onChange={() => toggleGroupRows(visibleIds)}
                 onClick={(e) => e.stopPropagation()} className="h-3.5 w-3.5 accent-blue-600 rounded" />
               {isCollapsed ? <ChevronRight size={13} className="text-gray-400" /> : <ChevronDown size={13} className="text-gray-400" />}
               <span className="text-xs font-semibold font-mono text-gray-800">{group.gl_code}</span>
@@ -762,7 +945,8 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
                     <th className="px-2 py-1 text-right font-medium">Movement</th>
                     <th className="px-2 py-1 font-medium">Conflict Details</th>
                     <th className="px-2 py-1 font-medium">Assign to</th>
-                    <th className="w-16 px-2 py-1" />
+                    <th className="w-8 px-1 py-1 text-center font-medium">Op</th>
+                    <th className="w-14 px-2 py-1" />
                   </tr>
                 </thead>
                 <tbody>
@@ -789,8 +973,18 @@ function ConflictTab({ costCenters, branches, glFilter, txSearch }: { costCenter
                           {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
                         </select>
                       </td>
+                      <td className="px-1 py-1 text-center">
+                        <label className="inline-flex items-center cursor-pointer" title={rowOp[tx.id] !== false ? "Operational" : "Non-Operational"}>
+                          <input
+                            type="checkbox"
+                            checked={rowOp[tx.id] === false}
+                            onChange={(e) => setRowOp((prev) => ({ ...prev, [tx.id]: !e.target.checked }))}
+                            className="h-3 w-3 accent-red-500"
+                          />
+                        </label>
+                      </td>
                       <td className="px-2 py-1">
-                        <button onClick={() => resolveRows([tx.id], rowAssign[tx.id] ?? "")}
+                        <button onClick={() => resolveRows([tx.id], rowAssign[tx.id] ?? "", rowOp[tx.id] ?? true)}
                           disabled={!rowAssign[tx.id] || saving}
                           className="rounded-lg bg-blue-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-30">
                           Assign
@@ -824,6 +1018,7 @@ function ConflictResolvedTab({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [reopening, setReopening] = useState<string | null>(null);
   const [rowCcId, setRowCcId] = useState<Record<string, string>>({});
+  const [rowOpResolved, setRowOpResolved] = useState<Record<string, boolean>>({});
   const [reassigning, setReassigning] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
 
@@ -862,14 +1057,14 @@ function ConflictResolvedTab({
     } finally { setReopening(null); }
   }
 
-  async function handleReassign(txId: string, ccId: string) {
+  async function handleReassign(txId: string, ccId: string, is_operational = true) {
     if (!ccId) return;
     setReassigning(txId); setMsg("");
     try {
       const res = await fetch("/api/conflicts/reassign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transaction_id: txId, cost_center_id: ccId }),
+        body: JSON.stringify({ transaction_id: txId, cost_center_id: ccId, is_operational }),
       });
       if (!res.ok) { const j = await res.json(); setMsg(`Error: ${j.error}`); return; }
       load();
@@ -979,13 +1174,24 @@ function ConflictResolvedTab({
                               ))}
                             </select>
                             {isDirty && (
-                              <button
-                                onClick={() => handleReassign(tx.id, currentCcId)}
-                                disabled={reassigning === tx.id}
-                                className="rounded-lg bg-blue-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-blue-700 disabled:opacity-40 whitespace-nowrap"
-                              >
-                                {reassigning === tx.id ? "…" : "Save"}
-                              </button>
+                              <>
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={!(rowOpResolved[tx.id] ?? true)}
+                                    onChange={(e) => setRowOpResolved((prev) => ({ ...prev, [tx.id]: !e.target.checked }))}
+                                    className="h-3 w-3 accent-red-500"
+                                  />
+                                  <span className="text-[10px] text-gray-400">Non-Op</span>
+                                </label>
+                                <button
+                                  onClick={() => handleReassign(tx.id, currentCcId, rowOpResolved[tx.id] ?? true)}
+                                  disabled={reassigning === tx.id}
+                                  className="rounded-lg bg-blue-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-blue-700 disabled:opacity-40 whitespace-nowrap"
+                                >
+                                  {reassigning === tx.id ? "…" : "Save"}
+                                </button>
+                              </>
                             )}
                           </div>
                         </td>

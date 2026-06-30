@@ -1,5 +1,19 @@
 "use client";
 
+// ─── Pivot Table — P&L by Cost Center ─────────────────────────────────────────
+// Hierarchy (top → bottom):
+//   Total Income  (navy, sticky)
+//   Operational   (emerald, expandable)
+//     Category 6  (indigo, order_2)
+//       Cost Center (blue / amber for unassigned/conflict)
+//         GL Code - GL Name (gray)
+//           Transactions (leaf)
+//     Net Income (Operational)
+//   Non-Operational (slate, expandable)
+//     (same sub-hierarchy)
+//     Net Income (Non-Operational)
+//   Combined Total (navy, bottom)
+
 import { useMemo, useState } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import type { PLReportTxCC } from "@/types";
@@ -11,7 +25,7 @@ type GLNode = { glKey: string; byMonth: Record<string, number>; total: number; t
 type CCNode = {
   cc_key: string;
   cc_name: string;
-  order: number;   // 0=named CC, 1=Unassigned, 2=Conflict
+  order: number;
   byMonth: Record<string, number>;
   total: number;
   gl_nodes: GLNode[];
@@ -37,9 +51,15 @@ const MONTH_ORDER = [
   "July","August","September","October","November","December",
 ];
 
-const TOTAL_BG = "#1e3a5f";
+const TOTAL_BG     = "#1e3a5f";
+const OP_ACCENT    = "#16a34a";   // green-600 — left-border accent only
+const OP_HEADER_BG = "#f0fdf4";   // green-50
+const OP_FOOTER_BG = "#dcfce7";   // green-100
+const NOP_ACCENT    = "#64748b";  // slate-500 — left-border accent only
+const NOP_HEADER_BG = "#f8fafc";  // slate-50
+const NOP_FOOTER_BG = "#f1f5f9";  // slate-100
 
-// ─── Build pivot (4-level) ────────────────────────────────────────────────────
+// ─── Build pivot ──────────────────────────────────────────────────────────────
 
 export function buildPivotByCC(txs: PLReportTxCC[]): { cat6Nodes: Cat6Node[]; months: string[] } {
   type WGL  = { bm: Map<string, number>; total: number; txs: TxLeaf[] };
@@ -113,10 +133,19 @@ export function buildPivotByCC(txs: PLReportTxCC[]): { cat6Nodes: Cat6Node[]; mo
   }).sort((a, b) => {
     if (a.cat6_key === "(No Category)") return 1;
     if (b.cat6_key === "(No Category)") return -1;
-    return a.order2 - b.order2;  // order_2 sort (was alphabetical before)
+    return a.order2 - b.order2;
   });
 
   return { cat6Nodes, months };
+}
+
+// ─── Scale a tx by a multiplier ───────────────────────────────────────────────
+
+function scaleTxCC(tx: PLReportTxCC, factor: number): PLReportTxCC {
+  return {
+    ...tx,
+    movement: (tx.movement ?? 0) * factor,
+  };
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -136,68 +165,21 @@ function mvClsLight(n: number | undefined) {
 
 const numCell = "px-2 py-0.5 text-right tabular-nums font-mono text-[11px] whitespace-nowrap";
 
-// ─── PivotTableByCC ───────────────────────────────────────────────────────────
+// ─── Render cat6 nodes for one Op/NonOp block ─────────────────────────────────
 
-export function PivotTableByCC({
-  txs, loading, emptyMessage = "No data",
-}: {
-  txs: PLReportTxCC[]; loading?: boolean; emptyMessage?: string;
-}) {
-  const { cat6Nodes, months } = useMemo(() => buildPivotByCC(txs), [txs]);
-  const [exp, setExp] = useState<Set<string>>(new Set());
-
-  function toggle(key: string) {
-    setExp((prev) => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 py-8 text-xs text-gray-400">
-        <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
-        Loading…
-      </div>
-    );
-  }
-  if (cat6Nodes.length === 0) {
-    return <p className="py-8 text-center text-xs text-gray-400">{emptyMessage}</p>;
-  }
-
-  const grandTotal = cat6Nodes.reduce((s, c) => s + c.total, 0);
-  const grandByMonth: Record<string, number> = {};
-  for (const c of cat6Nodes) for (const [m, v] of Object.entries(c.byMonth))
-    grandByMonth[m] = (grandByMonth[m] ?? 0) + v;
-
-  const gtBase: React.CSSProperties = {
-    position: "sticky", top: "30px", zIndex: 14, backgroundColor: TOTAL_BG,
-  };
-
+function renderCat6Nodes(
+  cat6Nodes: Cat6Node[],
+  months: string[],
+  prefix: string,
+  exp: Set<string>,
+  toggle: (k: string) => void,
+): React.ReactNode[] {
   const rows: React.ReactNode[] = [];
 
-  // Grand total row
-  rows.push(
-    <tr key="__grand__" className="border-b border-white/10">
-      <td style={{ ...gtBase, left: 0, zIndex: 20 }}
-          className="px-3 py-2 text-[11px] font-extrabold text-white whitespace-nowrap">
-        Total Income
-      </td>
-      {months.map((m) => (
-        <td key={m} style={gtBase}
-            className={`${numCell} font-extrabold text-[12px] ${mvClsLight(grandByMonth[m])}`}>
-          {fmtM(grandByMonth[m])}
-        </td>
-      ))}
-      <td style={{ ...gtBase, borderLeft: "1px solid rgba(255,255,255,0.15)" }}
-          className={`${numCell} font-extrabold text-[12px] ${mvClsLight(grandTotal)}`}>
-        {fmtM(grandTotal)}
-      </td>
-    </tr>
-  );
-
   for (const cat6Node of cat6Nodes) {
-    const kCat6  = `cat6:${cat6Node.cat6_key}`;
+    const kCat6   = `${prefix}:cat6:${cat6Node.cat6_key}`;
     const openCat6 = exp.has(kCat6);
 
-    // Category 6 row (level 1)
     rows.push(
       <tr key={kCat6}
           className="border-b border-indigo-100 bg-indigo-50 hover:bg-indigo-100 cursor-pointer"
@@ -220,16 +202,15 @@ export function PivotTableByCC({
     if (!openCat6) continue;
 
     for (const ccNode of cat6Node.cc_nodes) {
-      const kCC = `cc:${cat6Node.cat6_key}|${ccNode.cc_key}`;
+      const kCC    = `${prefix}:cc:${cat6Node.cat6_key}|${ccNode.cc_key}`;
       const openCC = exp.has(kCC);
 
       const isSentinel = ccNode.cc_key === "unassigned" || ccNode.cc_key === "conflict";
-      const ccBg = isSentinel ? "bg-amber-50" : "bg-blue-50";
-      const ccHover = isSentinel ? "hover:bg-amber-100" : "hover:bg-blue-100";
-      const ccBorder = isSentinel ? "border-amber-100" : "border-blue-100";
-      const ccText = isSentinel ? "text-amber-800" : "text-blue-900";
+      const ccBg     = isSentinel ? "bg-amber-50"   : "bg-blue-50";
+      const ccHover  = isSentinel ? "hover:bg-amber-100" : "hover:bg-blue-100";
+      const ccBorder = isSentinel ? "border-amber-100"   : "border-blue-100";
+      const ccText   = isSentinel ? "text-amber-800"     : "text-blue-900";
 
-      // Cost Center row (level 2)
       rows.push(
         <tr key={kCC}
             className={`border-b ${ccBorder} ${ccBg} ${ccHover} cursor-pointer`}
@@ -252,10 +233,9 @@ export function PivotTableByCC({
       if (!openCC) continue;
 
       for (const glNode of ccNode.gl_nodes) {
-        const kGL = `gl:${cat6Node.cat6_key}|${ccNode.cc_key}|${glNode.glKey}`;
+        const kGL    = `${prefix}:gl:${cat6Node.cat6_key}|${ccNode.cc_key}|${glNode.glKey}`;
         const openGL = exp.has(kGL);
 
-        // GL row (level 3)
         rows.push(
           <tr key={kGL}
               className="border-b border-gray-100 bg-gray-50 hover:bg-gray-100 cursor-pointer"
@@ -277,10 +257,9 @@ export function PivotTableByCC({
 
         if (!openGL) continue;
 
-        // Transaction leaf rows (level 4)
         for (const tx of glNode.txs) {
           rows.push(
-            <tr key={tx.id} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
+            <tr key={`${prefix}:tx:${tx.id}`} className="border-b border-gray-50 bg-white hover:bg-blue-50/10">
               <td className="sticky left-0 z-10 bg-white pl-12 pr-2 py-0.5 text-[10px] text-gray-400 max-w-[280px] truncate whitespace-nowrap">
                 {tx.desc ?? "—"}
               </td>
@@ -300,6 +279,239 @@ export function PivotTableByCC({
     }
   }
 
+  return rows;
+}
+
+// ─── PivotTableByCC ───────────────────────────────────────────────────────────
+
+export function PivotTableByCC({
+  txs, loading, emptyMessage = "No data",
+}: {
+  txs: PLReportTxCC[]; loading?: boolean; emptyMessage?: string;
+}) {
+  // Split proportionally into Operational and Non-Operational subsets
+  const opTxs = useMemo(() =>
+    txs
+      .filter(tx => (tx.operational_pct ?? 100) > 0)
+      .map(tx => scaleTxCC(tx, (tx.operational_pct ?? 100) / 100)),
+    [txs]
+  );
+  const nonOpTxs = useMemo(() =>
+    txs
+      .filter(tx => (tx.operational_pct ?? 100) < 100)
+      .map(tx => scaleTxCC(tx, (100 - (tx.operational_pct ?? 100)) / 100)),
+    [txs]
+  );
+
+  const hasNonOp = nonOpTxs.length > 0;
+
+  const { cat6Nodes: opCat6s }    = useMemo(() => buildPivotByCC(opTxs),    [opTxs]);
+  const { cat6Nodes: nonOpCat6s } = useMemo(() => buildPivotByCC(nonOpTxs), [nonOpTxs]);
+
+  const months = useMemo(() => {
+    const s = new Set(txs.map(tx => tx.month).filter(Boolean) as string[]);
+    return MONTH_ORDER.filter(m => s.has(m));
+  }, [txs]);
+
+  const [exp, setExp] = useState<Set<string>>(new Set());
+
+  function toggle(key: string) {
+    setExp((prev) => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-8 text-xs text-gray-400">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
+        Loading…
+      </div>
+    );
+  }
+  if (txs.length === 0) {
+    return <p className="py-8 text-center text-xs text-gray-400">{emptyMessage}</p>;
+  }
+
+  // Block totals
+  const opTotal    = opCat6s.reduce((s, c) => s + c.total, 0);
+  const nonOpTotal = nonOpCat6s.reduce((s, c) => s + c.total, 0);
+  const combinedTotal = opTotal + nonOpTotal;
+
+  const opByMonth: Record<string, number> = {};
+  for (const c of opCat6s) for (const [m, v] of Object.entries(c.byMonth))
+    opByMonth[m] = (opByMonth[m] ?? 0) + v;
+
+  const nonOpByMonth: Record<string, number> = {};
+  for (const c of nonOpCat6s) for (const [m, v] of Object.entries(c.byMonth))
+    nonOpByMonth[m] = (nonOpByMonth[m] ?? 0) + v;
+
+  const combinedByMonth: Record<string, number> = {};
+  for (const m of months)
+    combinedByMonth[m] = (opByMonth[m] ?? 0) + (nonOpByMonth[m] ?? 0);
+
+  const gtBase: React.CSSProperties = {
+    position: "sticky", top: "30px", zIndex: 14, backgroundColor: TOTAL_BG,
+  };
+
+  const rows: React.ReactNode[] = [];
+
+  // ── Sticky "Total Income" header ──────────────────────────────────────────
+  rows.push(
+    <tr key="__grand__" className="border-b border-white/10">
+      <td style={{ ...gtBase, left: 0, zIndex: 20 }}
+          className="px-3 py-2 text-[11px] font-extrabold text-white whitespace-nowrap">
+        Total Income
+      </td>
+      {months.map((m) => (
+        <td key={m} style={gtBase}
+            className={`${numCell} font-extrabold text-[12px] ${mvClsLight(combinedByMonth[m])}`}>
+          {fmtM(combinedByMonth[m])}
+        </td>
+      ))}
+      <td style={{ ...gtBase, borderLeft: "1px solid rgba(255,255,255,0.15)" }}
+          className={`${numCell} font-extrabold text-[12px] ${mvClsLight(combinedTotal)}`}>
+        {fmtM(combinedTotal)}
+      </td>
+    </tr>
+  );
+
+  // ── Operational block ─────────────────────────────────────────────────────
+  const opOpen = exp.has("__op__");
+  rows.push(
+    <tr key="__op__"
+        className="border-b border-emerald-100 cursor-pointer hover:bg-emerald-50/60"
+        style={{ backgroundColor: OP_HEADER_BG }}
+        onClick={() => toggle("__op__")}>
+      <td style={{ backgroundColor: OP_HEADER_BG, borderLeft: `3px solid ${OP_ACCENT}`, position: "sticky", left: 0, zIndex: 10 }}
+          className="px-3 py-1.5 text-[11px] font-bold text-emerald-800 whitespace-nowrap">
+        <span className="inline-flex items-center gap-1.5">
+          {opOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          Operational
+        </span>
+      </td>
+      {months.map((m) => (
+        <td key={m} className={`${numCell} font-bold ${mvCls(opByMonth[m])}`}>
+          {fmtM(opByMonth[m])}
+        </td>
+      ))}
+      <td className={`${numCell} font-bold border-l border-emerald-100 ${mvCls(opTotal)}`}>
+        {fmtM(opTotal)}
+      </td>
+    </tr>
+  );
+
+  if (opOpen) {
+    if (opCat6s.length === 0) {
+      rows.push(
+        <tr key="__op_empty__" className="border-b border-emerald-100">
+          <td style={{ position: "sticky", left: 0, zIndex: 10 }}
+              className="bg-white pl-8 pr-3 py-3 text-[11px] italic text-gray-400 whitespace-nowrap">
+            No Operational transactions yet.
+          </td>
+          {months.map((m) => <td key={m} className="bg-white" />)}
+          <td className="bg-white border-l border-gray-100" />
+        </tr>
+      );
+    } else {
+      rows.push(...renderCat6Nodes(opCat6s, months, "op", exp, toggle));
+
+      rows.push(
+        <tr key="__op_net__" className="border-b border-emerald-200" style={{ backgroundColor: OP_FOOTER_BG }}>
+          <td style={{ backgroundColor: OP_FOOTER_BG, borderLeft: `3px solid ${OP_ACCENT}`, position: "sticky", left: 0, zIndex: 10 }}
+              className="pl-8 pr-3 py-1.5 text-[11px] font-extrabold text-emerald-900 whitespace-nowrap">
+            Net Income (Operational)
+          </td>
+          {months.map((m) => (
+            <td key={m} className={`${numCell} font-extrabold ${mvCls(opByMonth[m])}`}>
+              {fmtM(opByMonth[m])}
+            </td>
+          ))}
+          <td className={`${numCell} font-extrabold border-l border-emerald-200 ${mvCls(opTotal)}`}>
+            {fmtM(opTotal)}
+          </td>
+        </tr>
+      );
+    }
+  }
+
+  // ── Non-Operational block ─────────────────────────────────────────────────
+  const nonOpOpen = exp.has("__nonop__");
+  rows.push(
+    <tr key="__nonop__"
+        className="border-b border-slate-200 cursor-pointer hover:bg-slate-100/60"
+        style={{ backgroundColor: NOP_HEADER_BG }}
+        onClick={() => toggle("__nonop__")}>
+      <td style={{ backgroundColor: NOP_HEADER_BG, borderLeft: `3px solid ${NOP_ACCENT}`, position: "sticky", left: 0, zIndex: 10 }}
+          className="px-3 py-1.5 text-[11px] font-bold text-slate-700 whitespace-nowrap">
+        <span className="inline-flex items-center gap-1.5">
+          {nonOpOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          Non-Operational
+        </span>
+      </td>
+      {months.map((m) => (
+        <td key={m} className={`${numCell} font-bold ${mvCls(nonOpByMonth[m])}`}>
+          {fmtM(nonOpByMonth[m])}
+        </td>
+      ))}
+      <td className={`${numCell} font-bold border-l border-slate-200 ${mvCls(nonOpTotal)}`}>
+        {fmtM(nonOpTotal)}
+      </td>
+    </tr>
+  );
+
+  if (nonOpOpen) {
+    if (!hasNonOp) {
+      rows.push(
+        <tr key="__nonop_empty__" className="border-b border-slate-200">
+          <td style={{ position: "sticky", left: 0, zIndex: 10 }}
+              className="bg-white pl-8 pr-3 py-3 text-[11px] italic text-gray-400 whitespace-nowrap">
+            No Non-Operational transactions yet — classify rules or assignments as Non-Operational to see them here.
+          </td>
+          {months.map((m) => <td key={m} className="bg-white" />)}
+          <td className="bg-white border-l border-gray-100" />
+        </tr>
+      );
+    } else {
+      rows.push(...renderCat6Nodes(nonOpCat6s, months, "nop", exp, toggle));
+
+      rows.push(
+        <tr key="__nonop_net__" className="border-b border-slate-300" style={{ backgroundColor: NOP_FOOTER_BG }}>
+          <td style={{ backgroundColor: NOP_FOOTER_BG, borderLeft: `3px solid ${NOP_ACCENT}`, position: "sticky", left: 0, zIndex: 10 }}
+              className="pl-8 pr-3 py-1.5 text-[11px] font-extrabold text-slate-800 whitespace-nowrap">
+            Net Income (Non-Operational)
+          </td>
+          {months.map((m) => (
+            <td key={m} className={`${numCell} font-extrabold ${mvCls(nonOpByMonth[m])}`}>
+              {fmtM(nonOpByMonth[m])}
+            </td>
+          ))}
+          <td className={`${numCell} font-extrabold border-l border-slate-300 ${mvCls(nonOpTotal)}`}>
+            {fmtM(nonOpTotal)}
+          </td>
+        </tr>
+      );
+    }
+  }
+
+  // ── Combined Total (bottom) — only shown when both blocks have data ───────
+  if (hasNonOp) {
+    rows.push(
+      <tr key="__combined__" className="border-t-2 border-white/20" style={{ backgroundColor: TOTAL_BG }}>
+        <td style={{ backgroundColor: TOTAL_BG, position: "sticky", left: 0, zIndex: 10 }}
+            className="px-3 py-2 text-[11px] font-extrabold text-white whitespace-nowrap">
+          Combined Total
+        </td>
+        {months.map((m) => (
+          <td key={m} className={`${numCell} font-extrabold text-[12px] ${mvClsLight(combinedByMonth[m])}`}>
+            {fmtM(combinedByMonth[m])}
+          </td>
+        ))}
+        <td className={`${numCell} font-extrabold text-[12px] border-l border-white/15 ${mvClsLight(combinedTotal)}`}>
+          {fmtM(combinedTotal)}
+        </td>
+      </tr>
+    );
+  }
+
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-auto"
          style={{ maxHeight: "calc(100vh - 160px)" }}>
@@ -307,7 +519,7 @@ export function PivotTableByCC({
         <thead className="sticky top-0 z-20 bg-gray-50">
           <tr className="border-b border-gray-200">
             <th className="sticky left-0 z-30 bg-gray-50 px-3 py-1.5 text-left text-[10px] font-semibold text-gray-500 whitespace-nowrap">
-              Category 6 / Cost Center / GL Code — GL Name
+              Op/Non-Op / Category 6 / Cost Center / GL Code — GL Name
             </th>
             {months.map((m) => (
               <th key={m} className="px-2 py-1.5 text-right text-[10px] font-semibold text-gray-500 whitespace-nowrap bg-gray-50">

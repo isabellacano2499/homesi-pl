@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let q: any = supabase
     .from("cc_allocation_splits")
-    .select("id,assign_type,assign_value,cost_center_id,percentage,cost_centers(name)")
+    .select("id,assign_type,assign_value,cost_center_id,percentage,is_operational,cost_centers(name)")
     .order("percentage", { ascending: false });
 
   if (type && value) {
@@ -37,7 +37,7 @@ export async function PUT(req: NextRequest) {
   const body = await req.json() as {
     assign_type: "vendor" | "description3";
     assign_value: string;
-    splits: { cost_center_id: string; percentage: number }[];
+    splits: { cost_center_id: string; percentage: number; is_operational?: boolean }[];
   };
 
   const { assign_type, assign_value, splits } = body;
@@ -67,12 +67,14 @@ export async function PUT(req: NextRequest) {
       assign_value,
       cost_center_id: s.cost_center_id,
       percentage: s.percentage,
+      is_operational: s.is_operational ?? true,
     }))
   );
   if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
 
-  // 2. Determine primary CC (highest %)
+  // 2. Determine primary CC (highest %) and compute Operational %
   const primaryCcId = [...splits].sort((a, b) => b.percentage - a.percentage)[0].cost_center_id;
+  const operationalPct = splits.reduce((s, r) => s + ((r.is_operational ?? true) ? r.percentage : 0), 0);
 
   // 3. Find matching transaction IDs
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -89,16 +91,17 @@ export async function PUT(req: NextRequest) {
 
   const txIds: string[] = (txRows ?? []).map((r: { id: string }) => r.id);
 
-  // 4. Update pl_transactions with primary CC
+  // 4. Update pl_transactions with primary CC and operational_pct
   if (txIds.length > 0) {
     for (let i = 0; i < txIds.length; i += CHUNK) {
       const { error: updErr } = await supabase
         .from("pl_transactions")
         .update({
-          cost_center_id:       primaryCcId,
-          cost_center_status:   "assigned",
+          cost_center_id:        primaryCcId,
+          cost_center_status:    "assigned",
           cost_center_conflicts: null,
-          assignment_origin:    "manual",
+          assignment_origin:     "manual",
+          operational_pct:       operationalPct,
         })
         .in("id", txIds.slice(i, i + CHUNK));
       if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
@@ -155,6 +158,7 @@ export async function DELETE(req: NextRequest) {
           cost_center_status:    "unassigned",
           cost_center_conflicts: null,
           assignment_origin:     null,
+          operational_pct:       100,
         })
         .in("id", txIds.slice(i, i + CHUNK));
       if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });

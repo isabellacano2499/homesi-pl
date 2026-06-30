@@ -11,6 +11,7 @@ import { evaluateCostCenterRules } from "@/lib/evaluate-cost-center-rules";
 import { createServerClient } from "@/lib/supabase-server";
 import type {
   PLTransaction,
+  SplitRule,
   SplitRuleWithDetails,
   SplitRuleCondition,
   SplitRuleAllocation,
@@ -116,7 +117,7 @@ export async function loadAllSplitRules(supabase: SupabaseClient): Promise<Split
   }
 
   return (rules ?? []).map((sr) => ({
-    ...(sr as { id: string; name: string; description: string | null; created_at: string; updated_at: string }),
+    ...(sr as SplitRule),
     conditions: condsByRule.get(sr.id as string) ?? [],
     allocations: allocsByRule.get(sr.id as string) ?? [],
   }));
@@ -185,6 +186,7 @@ export async function reevaluateRuleAssigned(
     cost_center_conflicts: string[] | null;
     assignment_origin: string | null;
     conflict_type: string | null;
+    operational_pct: number;
   }[] = [];
   const snapshotUpserts: { transaction_id: string; conflicting_cc_ids: string[] }[] = [];
   const snapshotDeletes: string[] = [];
@@ -201,6 +203,7 @@ export async function reevaluateRuleAssigned(
       cost_center_conflicts: r.cost_center_conflicts.length > 0 ? r.cost_center_conflicts : null,
       assignment_origin: origin,
       conflict_type: r.conflict_type ?? null,
+      operational_pct: r.operational_pct,
     });
 
     if (r.cost_center_status === "conflict") {
@@ -221,6 +224,7 @@ export async function reevaluateRuleAssigned(
             cost_center_conflicts: u.cost_center_conflicts,
             assignment_origin: u.assignment_origin,
             conflict_type: u.conflict_type,
+            operational_pct: u.operational_pct,
           })
           .eq("id", u.id)
       )
