@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase-server";
+import { loadAllSplitRules, reevaluateRuleAssigned } from "@/lib/reevaluate-rule-assigned";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -45,6 +46,38 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     .from("split_rules")
     .update({ updated_at: new Date().toISOString() })
     .eq("id", split_rule_id);
+
+  // Re-evaluate all rule-assigned transactions so cc_allocation_splits reflects the
+  // new allocation immediately — without this, stale split rows (from the previous
+  // multi-CC allocation) would remain and fanOutBySplits would still fan to old CCs.
+  const [splitRules, settingsResult] = await Promise.all([
+    loadAllSplitRules(supabase),
+    supabase.from("app_settings").select("active_branches").limit(1).single(),
+  ]);
+  const activeBranches: string[] = Array.isArray(settingsResult.data?.active_branches)
+    ? settingsResult.data.active_branches
+    : [];
+
+  const txIds: string[] = [];
+  let offset = 0;
+  while (true) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q: any = supabase
+      .from("pl_transactions")
+      .select("id")
+      .in("assignment_origin", ["rule", "rule_split"])
+      .range(offset, offset + 999);
+    if (activeBranches.length > 0) q = q.in("branch", activeBranches);
+    const { data: txData } = await q;
+    if (!txData || txData.length === 0) break;
+    txIds.push(...(txData as { id: string }[]).map((r) => r.id));
+    if (txData.length < 1000) break;
+    offset += 1000;
+  }
+
+  if (txIds.length > 0) {
+    await reevaluateRuleAssigned(supabase, txIds, splitRules);
+  }
 
   return NextResponse.json(data);
 }
