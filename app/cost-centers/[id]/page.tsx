@@ -6,6 +6,9 @@ import Link from "next/link";
 import { ArrowLeft, ExternalLink, Pencil, Save, X, Unlink } from "lucide-react";
 import { CC_FIELDS, operatorsForField } from "@/lib/cost-center-constants";
 import type { CostCenter, SplitRuleWithDetails } from "@/types";
+import { CCSummaryTab } from "./cc-summary";
+
+type PageTab = "rules" | "summary";
 
 // ─── Color accents (mirrors cost-centers list page) ──────────────────────────
 
@@ -40,6 +43,8 @@ export default function CostCenterDetailPage() {
   const [cc, setCC] = useState<CostCenter | null>(null);
   const [rules, setRules] = useState<SplitRuleWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [activeTab, setActiveTab] = useState<PageTab>("rules");
 
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState("");
@@ -154,6 +159,26 @@ export default function CostCenterDetailPage() {
         {cc.description && <p className="mt-0.5 text-sm text-gray-500">{cc.description}</p>}
       </div>
 
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-gray-200">
+        {(["rules", "summary"] as PageTab[]).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-4 py-2 text-sm font-medium capitalize transition-colors border-b-2 -mb-px ${
+              activeTab === tab
+                ? "border-blue-500 text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            {tab === "rules" ? "Rules" : "Summary"}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "summary" && <CCSummaryTab ccId={id} />}
+
+      {activeTab === "rules" && <>
       {/* Rules card */}
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
         <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-4 py-3">
@@ -248,6 +273,7 @@ export default function CostCenterDetailPage() {
           <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{unassignErr}</p>
         )}
       </div>
+      </>}
     </div>
   );
 }
